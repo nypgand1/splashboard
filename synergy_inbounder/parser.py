@@ -5,6 +5,16 @@ from synergy_inbounder.communicator import Communicator
 
 class Parser:
     @staticmethod
+    def parse_season_game_list_df(org_id, season_id):
+        season_game_list = Communicator.get_season_game_list(org_id, season_id)['data']
+        df = pd.DataFrame(season_game_list)
+
+        df[['teamA', 'teamAIsHome', 'teamAScore']] = df['competitors'].apply(pd.Series)[0].apply(pd.Series)[['entityId', 'isHome', 'score']]
+        df[['teamB', 'teamBIsHome', 'teamBScore']] = df['competitors'].apply(pd.Series)[1].apply(pd.Series)[['entityId', 'isHome', 'score']]
+
+        return df[['startTimeLocal', 'status', 'teamA', 'teamAIsHome', 'teamAScore', 'teamB', 'teamBIsHome', 'teamBScore']]
+
+    @staticmethod
     def parse_game_pbp_df(org_id, game_id, period_id_list):
         pbp_json_list = [Communicator.get_game_play_by_play_synergy(org_id, game_id, p)['data'] for p in period_id_list]
         df = pd.DataFrame(sum(pbp_json_list, []))
@@ -20,7 +30,7 @@ class Parser:
         
         #TODO parse player stats
         for p in player_stats_list:
-            print p['statistics']['minutes']
+            print(p['statistics']['minutes'])
 
         team_id_set = {p['entityId'] for p in player_stats_list}
         starter_dict = {team_id: {p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id}
