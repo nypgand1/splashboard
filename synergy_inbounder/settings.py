@@ -11,6 +11,7 @@ SYNERGY_PLAY_BY_PLAY_URL = 'https://api.dc.prod.cloud.atriumsports.com/v1/basket
 SYNERGY_PLAYER_STATS_URL = 'https://api.dc.prod.cloud.atriumsports.com/v1/basketball/o/{organizationId}/statistics/for/person/in/fixtures/{fixtureId}/live'
 SYNERGY_ORG_PERSONS_URL = 'https://api.dc.prod.cloud.atriumsports.com/v1/basketball/o/{organizationId}/persons'
 SYNERGY_ORG_ENTITIES_URL = 'https://api.dc.prod.cloud.atriumsports.com/v1/basketball/o/{organizationId}/entities'
+SYNERGY_ORG_VENUES_URL = 'https://api.dc.prod.cloud.atriumsports.com/v1/basketball/o/{organizationId}/venues'
 
 SYNERGY_CREDENTIAL_ID = '213ZjhWhtFf4AWNu6kwULbQ49kgyUz'
 SYNERGY_CREDENTIAL_SECRET = 'hgjCozSsvhHfdzzVdsCCp16EmzLhie'

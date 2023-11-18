@@ -51,4 +51,7 @@ class Parser:
         entities_json_list = Communicator.get_org_entities_synergy(org_id)['data']
         id_table.update({t['entityId']: t['nameFullLocal'] for t in entities_json_list})
 
+        venues_json_list = Communicator.get_org_venues_synergy(org_id)['data']
+        id_table.update({t['venueId']: t['nameLocal'] for t in venues_json_list})
+        
         return id_table
