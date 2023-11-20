@@ -1,4 +1,5 @@
 from dash import html, dash_table, register_page
+import dash_bootstrap_components as dbc
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
@@ -13,9 +14,7 @@ register_page(
 def layout():
     df = df_data()
     layout = html.Div([
-        dash_table.DataTable(
-            data=df.to_dict('records'),
-            columns=[{'name': i, 'id': i} for i in df.columns])
+        dbc.Table.from_dataframe(df, striped=True, bordered=True, hover=True)
     ])
     return layout
 
