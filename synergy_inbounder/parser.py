@@ -17,7 +17,7 @@ class Parser:
         df['teamIdAway'] = df.apply(lambda x: x['teamAId'] if not x['teamAIsHome'] else x['teamBId'], axis=1)
         df['teamScoreAway'] = df.apply(lambda x: x['teamAScore'] if not x['teamAIsHome'] else x['teamBScore'], axis=1)
 
-        return df[['startTimeLocal', 'venueId', 'status', 'teamIdHome', 'teamScoreHome', 'teamIdAway', 'teamScoreAway']]
+        return df[['startTimeLocal', 'fixtureId', 'venueId', 'status', 'teamIdHome', 'teamScoreHome', 'teamIdAway', 'teamScoreAway']]
 
     @staticmethod
     def parse_game_pbp_df(org_id, game_id, period_id_list):

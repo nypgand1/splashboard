@@ -17,7 +17,7 @@ df['Home Team'] = df.apply(lambda x: id_table.get(x['teamIdHome'], x['teamIdHome
 df['Away Team'] = df.apply(lambda x: id_table.get(x['teamIdAway'], x['teamIdAway']), axis=1)
 df['Score'] = df.apply(lambda x: '{h}:{a}'.format(h=x['teamScoreHome'], a=x['teamScoreAway']), axis=1)
 
-df = df[['Time', 'Venue', 'Home Team', 'Score', 'Away Team']]
+df = df[['Time', 'Venue', 'Home Team', 'Score', 'Away Team', 'fixtureId']]
 
 app = Dash(external_stylesheets=[dbc.themes.LITERA])
 
