@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import requests
+import requests_cache
+
 from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
@@ -9,6 +11,8 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_ORG_VENUES_URL, \
         SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
         SYNERGY_ORGANIZATION_ID
+
+requests_cache.install_cache()
 
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token):
