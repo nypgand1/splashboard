@@ -34,16 +34,17 @@ class Parser:
         team_stats_list = [team_stats_row(t) for t in Communicator.get_game_team_stats_synergy(org_id, game_id)['data']]
         team_stats_df = pd.DataFrame(team_stats_list)
 
-        player_stats_list = [p for p in Communicator.get_game_player_stats_synergy(org_id, game_id)['data'] if p['participated']]
+        def player_stats_row(p):
+            p['statistics']['entityId'] = p['entityId']
+            p['statistics']['personId'] = p['personId']
+            p['statistics']['starter'] = p['starter']
+            return p['statistics']
+        player_stats_list = [player_stats_row(p) for p in Communicator.get_game_player_stats_synergy(org_id, game_id)['data'] if p['participated']]
         player_stats_df = pd.DataFrame(player_stats_list)
-        
-        #TODO parse player stats
-        for p in player_stats_list:
-            print(p['statistics']['minutes'])
 
-        team_id_set = {p['entityId'] for p in player_stats_list}
+        team_id_list = team_stats_df['entityId'].to_list()
         starter_dict = {team_id: {p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id}
-                for team_id in team_id_set}
+                for team_id in team_id_list}
 
         return team_stats_df, player_stats_df, starter_dict
 
