@@ -12,7 +12,7 @@ class PostGameReport():
         
         org_id = SYNERGY_ORGANIZATION_ID
         self.id_table = Parser.parse_id_tables(org_id)
-        self.player_stats_df, self.starter_dict = Parser.parse_game_stats_df(org_id, game_id)
+        self.team_stats_df, self.player_stats_df, self.starter_dict = Parser.parse_game_stats_df(org_id, game_id)
         
         self.pbp_df = Parser.parse_game_pbp_df(org_id, game_id, period_id_list)
         update_lineup_pbp(self.pbp_df, self.starter_dict, self.id_table)

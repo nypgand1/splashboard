@@ -28,8 +28,12 @@ class Parser:
 
     @staticmethod
     def parse_game_stats_df(org_id, game_id):
-        #TODO get team stats
-        
+        def team_stats_row(t):
+            t['statistics']['entityId'] = t['entityId']
+            return t['statistics']
+        team_stats_list = [team_stats_row(t) for t in Communicator.get_game_team_stats_synergy(org_id, game_id)['data']]
+        team_stats_df = pd.DataFrame(team_stats_list)
+
         player_stats_list = [p for p in Communicator.get_game_player_stats_synergy(org_id, game_id)['data'] if p['participated']]
         player_stats_df = pd.DataFrame(player_stats_list)
         
@@ -41,7 +45,7 @@ class Parser:
         starter_dict = {team_id: {p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id}
                 for team_id in team_id_set}
 
-        return player_stats_df, starter_dict
+        return team_stats_df, player_stats_df, starter_dict
 
     @staticmethod
     def parse_id_tables(org_id):
