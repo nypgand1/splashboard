@@ -91,6 +91,7 @@ def update_player_stats_table(n, game_id):
         p_df_dict[t] = pd.DataFrame()
         p_df_dict[t]['Player'] = p_df.apply(lambda x: id_table.get(x['personId'], x['personId']), axis=1)
         p_df_dict[t]['Min'] = p_df['minutes']
+        p_df_dict[t]['+/-'] = p_df['plusMinus']
         p_df_dict[t]['2PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
         p_df_dict[t]['3PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:.1f}%)" if x['pointsThreeAttempted'] !=0 else '', axis=1)
         p_df_dict[t]['FTM-A (%)'] = p_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:.1f}%)" if x['freeThrowsAttempted']!=0 else '', axis=1)
@@ -106,8 +107,7 @@ def update_player_stats_table(n, game_id):
         p_df_dict[t]['eFG%'] = p_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
         p_df_dict[t]['USG%'] = p_df.apply(lambda x: f"{x['usageRate']:.1f}%", axis=1)
         p_df_dict[t]['Plus-Minus'] = p_df.apply(lambda x: f"{x['plus']}-{x['minus']}", axis=1)
-        p_df_dict[t]['+/-'] = p_df['plusMinus']
 
-        p_df_dict[t].sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
+        p_df_dict[t].sort_values(by=['PTS', '+/-', 'REB', 'AST'], ascending=False, inplace=True)
 
     return [dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap') for t in p_df_dict]
