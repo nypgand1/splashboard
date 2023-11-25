@@ -1,4 +1,6 @@
-from dash import html, dash_table, register_page
+import datetime
+
+from dash import dcc, html, Input, Output, callback, dash_table, register_page
 import dash_bootstrap_components as dbc
 import pandas as pd
 
@@ -21,8 +23,23 @@ def layout(game_id):
     for t in p_df_dict:
         table_list.append(dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
-    layout = html.Div(table_list)
+    layout = html.Div([
+        html.Div(id='live-update-text'),
+        html.Div(id='live-update-team'),
+        html.Div(id='live-update-key'),
+        html.Div(id='live-update-play'),
+        dcc.Interval(
+            id='interval-component',
+            interval=30*1000, #in milliseconds
+            n_intervals=0
+        )
+    ])
     return layout
+
+@callback(Output('live-update-text', 'children'), 
+        Input('interval-component', 'n_intervals'))
+def update_datetime_now(n):
+    return html.Span(f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}')
 
 def df_data(game_id):
     team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
