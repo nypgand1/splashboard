@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 import requests
+import requests_cache
+
 from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
-        SYNERGY_PLAY_BY_PLAY_URL, SYNERGY_PLAYER_STATS_URL, \
+        SYNERGY_PLAY_BY_PLAY_URL, \
+        SYNERGY_PLAYER_STATS_URL, SYNERGY_TEAM_STATS_URL, \
         SYNERGY_ORG_PERSONS_URL, SYNERGY_ORG_ENTITIES_URL, \
         SYNERGY_ORG_VENUES_URL, \
         SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
         SYNERGY_ORGANIZATION_ID
+
+requests_cache.install_cache()
 
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token):
@@ -52,6 +57,12 @@ class Communicator:
         url = SYNERGY_SEASON_GAME_LIST_URL.format(organizationId=org_id, seasonId=season_id)
         params = {'limit': 1000, 'sortBy': 'startTimeUTC'}
         r = Communicator.get_synergy(url, params=params)
+        return r.json()
+
+    @staticmethod
+    def get_game_team_stats_synergy(org_id, game_id):
+        url = SYNERGY_TEAM_STATS_URL.format(organizationId=org_id, fixtureId=game_id)
+        r = Communicator.get_synergy(url)
         return r.json()
 
     @staticmethod
