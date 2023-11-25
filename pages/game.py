@@ -1,4 +1,6 @@
-from dash import html, dash_table, register_page
+import datetime
+
+from dash import dcc, html, Input, Output, callback, dash_table, register_page
 import dash_bootstrap_components as dbc
 import pandas as pd
 
@@ -13,18 +15,29 @@ register_page(
 )
 
 def layout(game_id):
-    t_df, k_df, p_df_dict = df_data(game_id)
-
-    table_list = [
-        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'),
-        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')]
-    for t in p_df_dict:
-        table_list.append(dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
-    
-    layout = html.Div(table_list)
+    layout = html.Div([
+        html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
+        html.Div(id='live-update-text'),
+        html.Div(id='live-update-team'),
+        html.Div(id='live-update-key'),
+        html.Div(id='live-update-player'),
+        dcc.Interval(
+            id='interval-component',
+            interval=30*1000, #in milliseconds
+            n_intervals=0
+        )
+    ])
     return layout
 
-def df_data(game_id):
+@callback(Output('live-update-text', 'children'), 
+        Input('interval-component', 'n_intervals'))
+def update_datetime_now(n):
+    return html.Span(f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}')
+
+@callback(Output('live-update-team', 'children'), 
+        Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'))
+def update_team_stats_table(n, game_id):
     team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
 
@@ -44,6 +57,15 @@ def df_data(game_id):
     t_df['PF'] = team_stats_df['foulsTotal']
     t_df['PTS'] = team_stats_df['points']
 
+    return dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')
+
+@callback(Output('live-update-key', 'children'), 
+        Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'))
+def update_key_stats_table(n, game_id):
+    team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+
     k_df = pd.DataFrame()
     k_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
     k_df['PIPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted']!=0 else '', axis=1)
@@ -54,12 +76,22 @@ def df_data(game_id):
     k_df['POT'] = team_stats_df['pointsFromTurnover']
     k_df['BP'] = team_stats_df['pointsFromBench']
 
+    return dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')
+
+@callback(Output('live-update-player', 'children'), 
+        Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'))
+def update_player_stats_table(n, game_id):
+    team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+
     p_df_dict = dict()
     for t in team_stats_df['entityId'].to_list():
         p_df = player_stats_df[player_stats_df['entityId']==t]
         p_df_dict[t] = pd.DataFrame()
         p_df_dict[t]['Player'] = p_df.apply(lambda x: id_table.get(x['personId'], x['personId']), axis=1)
         p_df_dict[t]['Min'] = p_df['minutes']
+        p_df_dict[t]['+/-'] = p_df['plusMinus']
         p_df_dict[t]['2PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
         p_df_dict[t]['3PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:.1f}%)" if x['pointsThreeAttempted'] !=0 else '', axis=1)
         p_df_dict[t]['FTM-A (%)'] = p_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:.1f}%)" if x['freeThrowsAttempted']!=0 else '', axis=1)
@@ -75,8 +107,7 @@ def df_data(game_id):
         p_df_dict[t]['eFG%'] = p_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
         p_df_dict[t]['USG%'] = p_df.apply(lambda x: f"{x['usageRate']:.1f}%", axis=1)
         p_df_dict[t]['Plus-Minus'] = p_df.apply(lambda x: f"{x['plus']}-{x['minus']}", axis=1)
-        p_df_dict[t]['+/-'] = p_df['plusMinus']
 
-        p_df_dict[t].sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
+        p_df_dict[t].sort_values(by=['PTS', '+/-', 'REB', 'AST'], ascending=False, inplace=True)
 
-    return t_df, k_df, p_df_dict
+    return [dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap') for t in p_df_dict]
