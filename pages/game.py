@@ -15,19 +15,12 @@ register_page(
 )
 
 def layout(game_id):
-    t_df, k_df, p_df_dict = df_data(game_id)
-
-    table_list = [
-        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'),
-        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')]
-    for t in p_df_dict:
-        table_list.append(dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
-    
     layout = html.Div([
+        html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
         html.Div(id='live-update-text'),
         html.Div(id='live-update-team'),
         html.Div(id='live-update-key'),
-        html.Div(id='live-update-play'),
+        html.Div(id='live-update-player'),
         dcc.Interval(
             id='interval-component',
             interval=30*1000, #in milliseconds
@@ -41,7 +34,10 @@ def layout(game_id):
 def update_datetime_now(n):
     return html.Span(f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}')
 
-def df_data(game_id):
+@callback(Output('live-update-team', 'children'), 
+        Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'))
+def update_team_stats_table(n, game_id):
     team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
 
@@ -61,6 +57,15 @@ def df_data(game_id):
     t_df['PF'] = team_stats_df['foulsTotal']
     t_df['PTS'] = team_stats_df['points']
 
+    return dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')
+
+@callback(Output('live-update-key', 'children'), 
+        Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'))
+def update_key_stats_table(n, game_id):
+    team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+
     k_df = pd.DataFrame()
     k_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
     k_df['PIPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted']!=0 else '', axis=1)
@@ -70,6 +75,15 @@ def df_data(game_id):
     k_df['FBP'] = team_stats_df['pointsFastBreak']
     k_df['POT'] = team_stats_df['pointsFromTurnover']
     k_df['BP'] = team_stats_df['pointsFromBench']
+
+    return dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')
+
+@callback(Output('live-update-player', 'children'), 
+        Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'))
+def update_player_stats_table(n, game_id):
+    team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
 
     p_df_dict = dict()
     for t in team_stats_df['entityId'].to_list():
@@ -96,4 +110,4 @@ def df_data(game_id):
 
         p_df_dict[t].sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
 
-    return t_df, k_df, p_df_dict
+    return [dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap') for t in p_df_dict]
