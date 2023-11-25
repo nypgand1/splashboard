@@ -12,7 +12,7 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
         SYNERGY_ORGANIZATION_ID
 
-requests_cache.install_cache()
+requests_cache.install_cache(expire_after=30)
 
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token):
