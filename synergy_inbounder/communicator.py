@@ -12,7 +12,13 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
         SYNERGY_ORGANIZATION_ID
 
-requests_cache.install_cache()
+
+urls_expire_after = {
+        SYNERGY_ORG_PERSONS_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
+        SYNERGY_ORG_ENTITIES_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
+        SYNERGY_ORG_VENUES_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60
+}
+requests_cache.install_cache(expire_after=30, urls_expire_after=urls_expire_after)
 
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token):

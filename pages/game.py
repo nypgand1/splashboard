@@ -16,10 +16,10 @@ def layout(game_id):
     t_df, k_df, p_df_dict = df_data(game_id)
 
     table_list = [
-        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True),
-        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True)]
+        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'),
+        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')]
     for t in p_df_dict:
-        table_list.append(dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True))
+        table_list.append(dbc.Table.from_dataframe(p_df_dict[t], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     layout = html.Div(table_list)
     return layout
