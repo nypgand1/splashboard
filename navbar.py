@@ -18,7 +18,7 @@ def create_navbar():
         brand='Splashboard TFB',
         brand_href='/',
         sticky='top',  # Uncomment if you want the navbar to always appear at the top on scroll.
-        color='#008CCA',  # Change this to change color of the navbar e.g. "primary", "secondary" etc.
+        color='#0a1434',  # Change this to change color of the navbar e.g. "primary", "secondary" etc.
         dark=True,  # Change this to change color of text within the navbar (False for dark text)
     )
 

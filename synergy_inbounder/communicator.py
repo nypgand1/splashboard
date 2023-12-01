@@ -2,7 +2,7 @@
 import requests
 import requests_cache
 
-from synergy_inbounder.settings import LOGGER
+from synergy_inbounder.settings import LOGGER, REDIS_URL
 from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
         SYNERGY_PLAY_BY_PLAY_URL, \
@@ -16,9 +16,13 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
 urls_expire_after = {
         SYNERGY_ORG_PERSONS_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
         SYNERGY_ORG_ENTITIES_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
-        SYNERGY_ORG_VENUES_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60
+        SYNERGY_ORG_VENUES_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
+        '*/playbyplay/live': 3*60
 }
-requests_cache.install_cache(expire_after=30, urls_expire_after=urls_expire_after)
+
+requests_cache.install_cache(
+        backend=requests_cache.RedisCache(host=REDIS_URL),
+        expire_after=30, urls_expire_after=urls_expire_after)
 
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token):
@@ -79,9 +83,12 @@ class Communicator:
         return r.json()
 
     @staticmethod
-    def get_game_play_by_play_synergy(org_id, game_id, period_id):
+    def get_game_play_by_play_synergy(org_id, game_id, period_id=None):
         url = SYNERGY_PLAY_BY_PLAY_URL.format(organizationId=org_id, fixtureId=game_id)
-        params = {'periodId': period_id}
+        if period_id:
+            params = {'periodId': period_id}
+        else:
+            params = None
         r = Communicator.get_synergy(url, params=params)
         return r.json()       
 

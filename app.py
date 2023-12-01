@@ -11,19 +11,10 @@ app = Dash(
 server = app.server
 
 NAVBAR = create_navbar()
-app.layout = dcc.Loading(
-    id='loading_page_content',
-    children=[
-        html.Div(
-            [
-                NAVBAR,
-                page_container
-            ]
-        )
-    ],
-    color='primary',
-    fullscreen=True
-)
+app.layout = html.Div([
+        NAVBAR,
+        page_container
+    ])
 
 if __name__ == '__main__':
     app.run(debug=True)
