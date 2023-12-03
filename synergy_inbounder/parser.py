@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
+import json
 
 from synergy_inbounder.communicator import Communicator
 
@@ -23,6 +24,7 @@ class Parser:
     def parse_game_pbp_df(org_id, game_id):
         pbp_json_list = Communicator.get_game_play_by_play_synergy(org_id, game_id)['data']
         df = pd.DataFrame(pbp_json_list)
+        df['scores'] = df.apply(lambda x: json.dumps(x['scores']), axis=1)
 
         return df
 

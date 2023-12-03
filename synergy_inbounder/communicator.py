@@ -12,7 +12,6 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
         SYNERGY_ORGANIZATION_ID
 
-
 urls_expire_after = {
         SYNERGY_ORG_PERSONS_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
         SYNERGY_ORG_ENTITIES_URL.format(organizationId=SYNERGY_ORGANIZATION_ID): 8*60*60,
