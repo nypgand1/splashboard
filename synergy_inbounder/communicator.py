@@ -83,10 +83,9 @@ class Communicator:
     @staticmethod
     def get_game_play_by_play_synergy(org_id, game_id, period_id=None):
         url = SYNERGY_PLAY_BY_PLAY_URL.format(organizationId=org_id, fixtureId=game_id)
+        params = {'limit': 2000}
         if period_id:
-            params = {'periodId': period_id}
-        else:
-            params = None
+            params['periodId'] = period_id
         r = Communicator.get_synergy(url, params=params)
         return r.json()       
 

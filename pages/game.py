@@ -147,6 +147,6 @@ def update_tab_content(active_tab, bs_store, pbp_store):
         
     elif active_tab == 'tab-pbp':
         pbp_df = pd.read_json(pbp_store, orient='split')
-        content_list.append(dbc.Table.from_dataframe(pbp_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
+        content_list.append(dbc.Table.from_dataframe(pbp_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     return content_list
