@@ -2,7 +2,7 @@
 import requests
 import requests_cache
 
-from synergy_inbounder.settings import LOGGER, REDIS_URL
+from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
         SYNERGY_PLAY_BY_PLAY_URL, \
@@ -19,8 +19,7 @@ urls_expire_after = {
         '*/playbyplay/live': 3*60
 }
 
-requests_cache.install_cache(
-        backend=requests_cache.RedisCache(host=REDIS_URL),
+requests_cache.install_cache('synergy_communicator_cache',
         expire_after=30, urls_expire_after=urls_expire_after)
 
 class BearerAuth(requests.auth.AuthBase):

@@ -5,7 +5,7 @@ from dash import dcc, html, Input, Output, callback, dash_table, register_page
 import dash_bootstrap_components as dbc
 import pandas as pd
 
-from synergy_inbounder.settings import REDIS_URL, SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
+from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
 
 register_page(
