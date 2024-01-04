@@ -134,6 +134,9 @@ def update_pbp_store(n, game_id):
     
     col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'eventType', 'subType', 'success', 'entityId', 'personId', 'scores']
     col_list.extend(team_name_list)
+    if 'ERROR' in playbyplay_df:
+        col_list.append('ERROR')
+
     pbp_df = playbyplay_df[col_list]
     return pbp_df.to_json(date_format='iso', orient='split')
 
