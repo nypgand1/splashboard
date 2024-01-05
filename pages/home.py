@@ -27,9 +27,9 @@ def df_data():
     df['Venue'] = df.apply(lambda x: id_table.get(x['venueId'], x['venueId']), axis=1)
     df['Home Team'] = df.apply(lambda x: id_table.get(x['teamIdHome'], x['teamIdHome']), axis=1)
     df['Away Team'] = df.apply(lambda x: id_table.get(x['teamIdAway'], x['teamIdAway']), axis=1)
-    df['Score'] = df.apply(lambda x: html.A(html.P('{h}:{a}'.format(h=x['teamScoreHome'], a=x['teamScoreAway'])), 
+    df['Score'] = df.apply(lambda x: html.A(html.P('{h} : {a}'.format(h=x['teamScoreHome'], a=x['teamScoreAway'])), 
         href='/game/{url}'.format(url=x['fixtureId']))
-            if x['status'] in ['IN_PROGRESS', 'FINISHED ', 'CONFIRMED'] else x['status'], axis=1)
+            if x['status'] in ['PENDING', 'IN_PROGRESS', 'FINISHED ', 'CONFIRMED'] else x['status'], axis=1)
     
     return df[['Time', 'Venue', 'Home Team', 'Score', 'Away Team']]
 

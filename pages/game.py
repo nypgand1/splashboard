@@ -22,6 +22,7 @@ def layout(game_id=None):
         dbc.Tabs([
                 dbc.Tab(label='Box Score', tab_id='tab-bs'),
                 dbc.Tab(label='Play-By-Play', tab_id='tab-pbp'),
+                dbc.Tab(label='Lineup Stats', tab_id='tab-lineup'),
             ],
             id='tabs',
             active_tab='tab-bs',
@@ -35,6 +36,7 @@ def layout(game_id=None):
         ),
         dcc.Store(id='bs_store'),
         dcc.Store(id='pbp_store'),
+        dcc.Store(id='lineup_store'),
     ])
     return layout
 
@@ -140,12 +142,20 @@ def update_pbp_store(n, game_id):
     pbp_df = playbyplay_df[col_list]
     return pbp_df.to_json(date_format='iso', orient='split')
 
+@callback(Output('lineup_store', 'data'), 
+        [Input('pbp_store', 'data'),]
+)
+def update_lineup_store(pbp_store):
+    pbp_df = pd.read_json(pbp_store, orient='split')
+    return pbp_df.to_json(date_format='iso', orient='split')
+
 @callback(Output('tab_content', 'children'), 
         [Input('tabs', 'active_tab'),
         Input('bs_store', 'data'),
-        Input('pbp_store', 'data')],
+        Input('pbp_store', 'data'),
+        Input('lineup_store', 'data'),],
 )
-def update_tab_content(active_tab, bs_store, pbp_store):
+def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
     content_list = [html.Span(f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}')]
     
     if active_tab == 'tab-bs':
@@ -163,5 +173,9 @@ def update_tab_content(active_tab, bs_store, pbp_store):
     elif active_tab == 'tab-pbp':
         pbp_df = pd.read_json(pbp_store, orient='split')
         content_list.append(dbc.Table.from_dataframe(pbp_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
+    
+    elif active_tab == 'tab-lineup':
+        lineup_df = pd.read_json(lineup_store, orient='split')
+        content_list.append(dbc.Table.from_dataframe(lineup_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     return content_list
