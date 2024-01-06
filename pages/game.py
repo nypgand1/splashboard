@@ -160,12 +160,15 @@ def update_lineup_store(pbp_store):
         team_lineup_df = lineup_df_dict[t]
         team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
 
-        team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"PT{x['duration']//60:.0f}M{x['duration']%60:.0f}S", axis=1)
+        team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{x['duration']//60:02.0f}:{x['duration']%60:02.0f}", axis=1)
+        team_lineup_df['+/-'] = team_lineup_df['PTS']-team_lineup_df['Opp_PTS']
         team_lineup_df['2PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['2M']}-{x['2A']} ({x['2M']/x['2A']:.1%})" if x['2A'] else None, axis=1)
         team_lineup_df['3PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['3M']}-{x['3A']} ({x['3M']/x['3A']:.1%})" if x['3A'] else None, axis=1)
         team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
+        team_lineup_df['Plus-Minus'] = team_lineup_df.apply(lambda x: f"{x['PTS']}-{x['Opp_PTS']}", axis=1)
         
-        team_lineup_df = team_lineup_df[['Lineup', 'Min', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS']]
+        team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Plus-Minus']]
+        team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
         lineup_list.append(team_lineup_df.to_json(date_format='iso', orient='split'))
 
     return json.dumps(lineup_list)
