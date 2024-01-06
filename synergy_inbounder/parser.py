@@ -24,6 +24,7 @@ class Parser:
     def parse_game_pbp_df(org_id, game_id):
         pbp_json_list = Communicator.get_game_play_by_play_synergy(org_id, game_id)['data']
         df = pd.DataFrame(pbp_json_list)
+        df['options'] = df.apply(lambda x: json.dumps(x['options']) if not pd.isna(x['options']) else None, axis=1)
         df['scores'] = df.apply(lambda x: json.dumps(x['scores']), axis=1)
 
         return df

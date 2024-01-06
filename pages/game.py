@@ -7,7 +7,7 @@ import pandas as pd
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
-from synergy_inbounder.pre_processing_func import process_lineup_pbp
+from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
 
 register_page(
     __name__,
@@ -120,9 +120,9 @@ def update_pbp_store(n, game_id):
     process_lineup_pbp(playbyplay_df, starter_dict)
     team_id_list = playbyplay_df['entityId'].dropna().unique()
     
-    playbyplay_df['entityId'] = playbyplay_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
-    playbyplay_df['personId'] = playbyplay_df.apply(lambda x: id_table.get(x['personId'], x['personId']), axis=1)
-    team_name_list = playbyplay_df['entityId'].dropna().unique()
+    playbyplay_df['Team'] = playbyplay_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
+    playbyplay_df['Player'] = playbyplay_df.apply(lambda x: id_table.get(x['personId'], x['personId']), axis=1)
+    team_name_list = playbyplay_df['Team'].dropna().unique()
     
     def decode_scores(scores):
         d = json.loads(scores)
@@ -130,12 +130,13 @@ def update_pbp_store(n, game_id):
     playbyplay_df['scores'] = playbyplay_df['scores'].apply(lambda x: decode_scores(x))
 
     def decode_lineup(lineup):
-        return str({id_table.get(p ,p) for p in lineup})[1:-1].replace('\'', '')
+        return str(sorted([id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
     for t in team_id_list:
-        playbyplay_df[id_table.get(t, t)] = playbyplay_df[t].apply(lambda x: decode_lineup(x))
+        playbyplay_df[id_table.get(t, f"name_{t}")] = playbyplay_df[t].apply(lambda x: decode_lineup(x))
     
-    col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'eventType', 'subType', 'success', 'entityId', 'personId', 'scores']
+    col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
     col_list.extend(team_name_list)
+    col_list.extend(team_id_list)
     if 'ERROR' in playbyplay_df:
         col_list.append('ERROR')
 
@@ -147,7 +148,10 @@ def update_pbp_store(n, game_id):
 )
 def update_lineup_store(pbp_store):
     pbp_df = pd.read_json(pbp_store, orient='split')
-    return pbp_df.to_json(date_format='iso', orient='split')
+    lineup_df_dict = process_lineup_stats(pbp_df)
+
+    lineup_list = [lineup_df_dict[t].to_json(date_format='iso', orient='split') for t in lineup_df_dict]
+    return json.dumps(lineup_list)
 
 @callback(Output('tab_content', 'children'), 
         [Input('tabs', 'active_tab'),
@@ -172,10 +176,18 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
         
     elif active_tab == 'tab-pbp':
         pbp_df = pd.read_json(pbp_store, orient='split')
+        
+        team_name_list = pbp_df['Team'].dropna().unique()
+        col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores'] 
+        col_list.extend(team_name_list)
+        pbp_df = pbp_df[col_list]
+
         content_list.append(dbc.Table.from_dataframe(pbp_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     elif active_tab == 'tab-lineup':
-        lineup_df = pd.read_json(lineup_store, orient='split')
-        content_list.append(dbc.Table.from_dataframe(lineup_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
+        lineup_list = json.loads(lineup_store)
+        for l_json in lineup_list:
+            l_df = pd.read_json(l_json, orient='split')
+            content_list.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     return content_list

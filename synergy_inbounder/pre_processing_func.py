@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import pandas as pd
 from synergy_inbounder.settings import LOGGER
 
@@ -21,6 +22,46 @@ def process_lineup_pbp(df, starter_dict):
                 df.loc[i, t] = [set(lineup)]
             else:
                 df.loc[i, t] = [df.loc[i-1, t]]
+
+def process_lineup_stats(df):
+    lineup_df = df.dropna(subset=['clock'])
+    lineup_df.loc[:, 'clock'] = pd.to_datetime(lineup_df['clock'], format='PT%MM%SS')
+    lineup_df.loc[:, 'periodId_next'] = lineup_df['periodId'].shift(-1)
+    lineup_df.loc[:, 'clock_next'] = lineup_df['clock'].shift(-1)
+    lineup_df.loc[:, 'duration'] = lineup_df.apply(lambda x: 0 if x['periodId']!= x['periodId_next'] else (x['clock']-x['clock_next']).total_seconds(), axis=1)
+   
+    lineup_df_dict = dict()
+    for t in lineup_df['entityId'].dropna().unique():
+        lineup_df.loc[:, 'POSS'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='possession')  else None, axis=1)
+        lineup_df.loc[:, '2M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='2pt' and x['success']==1) else None, axis=1)
+        lineup_df.loc[:, '2A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='2pt') else None, axis=1)
+        lineup_df.loc[:, '3M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='3pt' and x['success']==1) else None, axis=1)
+        lineup_df.loc[:, '3A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='3pt') else None, axis=1)
+        lineup_df.loc[:, '1M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='freeThrow' and x['success']==1) else None, axis=1)
+        lineup_df.loc[:, '1A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='freeThrow') else None, axis=1)
+
+        lineup_df.loc[:, 'OR'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='rebound' and x['subType']=='offensive') else None, axis=1)
+        lineup_df.loc[:, 'DR'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='rebound' and x['subType']=='defensive') else None, axis=1)
+        lineup_df.loc[:, 'REB'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='rebound') else None, axis=1)
+        lineup_df.loc[:, 'AST'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='assist') else None, axis=1)
+        lineup_df.loc[:, 'TOV'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='turnover') else None, axis=1)
+        lineup_df.loc[:, 'STL'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='steal') else None, axis=1)
+        lineup_df.loc[:, 'BLK'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='block') else None, axis=1)
+        lineup_df.loc[:, 'PF'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='foul' and x['subType']!='drawn') else None, axis=1)
+        lineup_df.loc[:, 'PTS'] = 2*lineup_df.loc[:, '2M'].fillna(0) + 3*lineup_df.loc[:, '3M'].fillna(0) + lineup_df.loc[:, '1M'].fillna(0)
+ 
+        lineup_df.loc[:, 'plus'] = lineup_df.apply(lambda x: x['PTS'] if x['entityId']==t else None, axis=1)
+        
+        lineup_df.loc[:, t] = lineup_df.apply(lambda x: json.dumps(sorted(list(x[t]))), axis=1)
+        team_lineup_df = lineup_df.groupby(t).sum(min_count=1).reset_index()
+        team_lineup_df.loc[:, t] = team_lineup_df.apply(lambda x: json.loads(x[t]), axis=1)
+        
+        team_lineup_df = team_lineup_df[team_lineup_df['duration'] > 0]
+        col_list = [t]
+        col_list.extend(['duration', 'POSS', '2M', '2A', '3M', '3A', '1M', '1A', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'plus'])
+        lineup_df_dict[t] = team_lineup_df[col_list]
+
+    return lineup_df_dict
 
 def get_sub_map(df): 
     result_list = list()
