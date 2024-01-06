@@ -51,9 +51,9 @@ def update_bs_store(n, game_id):
     t_df = pd.DataFrame()
     t_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
     t_df['Min'] = team_stats_df['minutes']
-    t_df['2PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
-    t_df['3PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:.1f}%)" if x['pointsThreeAttempted']!=0 else '', axis=1)
-    t_df['FTM-A (%)'] = team_stats_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:.1f}%)"if x['freeThrowsAttempted']!=0 else '', axis=1)
+    t_df['2PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:.1f}%)" if x['pointsTwoAttempted'] else None, axis=1)
+    t_df['3PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:.1f}%)" if x['pointsThreeAttempted'] else None, axis=1)
+    t_df['FTM-A (%)'] = team_stats_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:.1f}%)"if x['freeThrowsAttempted'] else None, axis=1)
     t_df['OR'] = team_stats_df['reboundsOffensive']
     t_df['DR'] = team_stats_df['reboundsDefensive']
     t_df['REB'] = team_stats_df['rebounds']
@@ -66,9 +66,9 @@ def update_bs_store(n, game_id):
         
     k_df = pd.DataFrame()
     k_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
-    k_df['PIPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted']!=0 else '', axis=1)
+    k_df['PIPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted'] else None, axis=1)
     k_df['PIP'] = team_stats_df['pointsInThePaint']
-    k_df['SCPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsSecondChanceMade']}-{x['pointsSecondChanceAttempted']}" if x['pointsSecondChanceAttempted']!=0 else '', axis=1)
+    k_df['SCPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsSecondChanceMade']}-{x['pointsSecondChanceAttempted']}" if x['pointsSecondChanceAttempted'] else None, axis=1)
     k_df['SCP'] = team_stats_df['pointsSecondChance']
     k_df['FBP'] = team_stats_df['pointsFastBreak']
     k_df['POT'] = team_stats_df['pointsFromTurnover']
@@ -147,10 +147,27 @@ def update_pbp_store(n, game_id):
         [Input('pbp_store', 'data'),]
 )
 def update_lineup_store(pbp_store):
+    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+    
     pbp_df = pd.read_json(pbp_store, orient='split')
     lineup_df_dict = process_lineup_stats(pbp_df)
 
-    lineup_list = [lineup_df_dict[t].to_json(date_format='iso', orient='split') for t in lineup_df_dict]
+    def decode_lineup(lineup):
+        return str(sorted([id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
+
+    lineup_list = list()
+    for t in lineup_df_dict:
+        team_lineup_df = lineup_df_dict[t]
+        team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
+
+        team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"PT{x['duration']//60:.0f}M{x['duration']%60:.0f}S", axis=1)
+        team_lineup_df['2PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['2M']}-{x['2A']} ({x['2M']/x['2A']:.1%})" if x['2A'] else None, axis=1)
+        team_lineup_df['3PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['3M']}-{x['3A']} ({x['3M']/x['3A']:.1%})" if x['3A'] else None, axis=1)
+        team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
+        
+        team_lineup_df = team_lineup_df[['Lineup', 'Min', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS']]
+        lineup_list.append(team_lineup_df.to_json(date_format='iso', orient='split'))
+
     return json.dumps(lineup_list)
 
 @callback(Output('tab_content', 'children'), 

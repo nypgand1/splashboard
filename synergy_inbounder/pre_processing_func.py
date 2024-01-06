@@ -32,13 +32,13 @@ def process_lineup_stats(df):
    
     lineup_df_dict = dict()
     for t in lineup_df['entityId'].dropna().unique():
-        lineup_df.loc[:, 'POSS'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='possession')  else None, axis=1)
-        lineup_df.loc[:, '2M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='2pt' and x['success']==1) else None, axis=1)
-        lineup_df.loc[:, '2A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='2pt') else None, axis=1)
-        lineup_df.loc[:, '3M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='3pt' and x['success']==1) else None, axis=1)
-        lineup_df.loc[:, '3A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='3pt') else None, axis=1)
-        lineup_df.loc[:, '1M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='freeThrow' and x['success']==1) else None, axis=1)
-        lineup_df.loc[:, '1A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='freeThrow') else None, axis=1)
+        lineup_df.loc[:, 'POSS'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='possession')  else 0, axis=1)
+        lineup_df.loc[:, '2M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='2pt' and x['success']==1) else 0, axis=1)
+        lineup_df.loc[:, '2A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='2pt') else 0, axis=1)
+        lineup_df.loc[:, '3M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='3pt' and x['success']==1) else 0, axis=1)
+        lineup_df.loc[:, '3A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='3pt') else 0, axis=1)
+        lineup_df.loc[:, '1M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='freeThrow' and x['success']==1) else 0, axis=1)
+        lineup_df.loc[:, '1A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='freeThrow') else 0, axis=1)
 
         lineup_df.loc[:, 'OR'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='rebound' and x['subType']=='offensive') else None, axis=1)
         lineup_df.loc[:, 'DR'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='rebound' and x['subType']=='defensive') else None, axis=1)
@@ -48,7 +48,7 @@ def process_lineup_stats(df):
         lineup_df.loc[:, 'STL'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='steal') else None, axis=1)
         lineup_df.loc[:, 'BLK'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='block') else None, axis=1)
         lineup_df.loc[:, 'PF'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['entityId']==t and x['eventType']=='foul' and x['subType']!='drawn') else None, axis=1)
-        lineup_df.loc[:, 'PTS'] = 2*lineup_df.loc[:, '2M'].fillna(0) + 3*lineup_df.loc[:, '3M'].fillna(0) + lineup_df.loc[:, '1M'].fillna(0)
+        lineup_df.loc[:, 'PTS'] = 2*lineup_df.loc[:, '2M'] + 3*lineup_df.loc[:, '3M'] + lineup_df.loc[:, '1M']
  
         lineup_df.loc[:, 'plus'] = lineup_df.apply(lambda x: x['PTS'] if x['entityId']==t else None, axis=1)
         
