@@ -1,5 +1,6 @@
 dash==2.14.1
 pandas==1.1.5
+numpy==1.19.5
 dash-bootstrap-components==1.2.1
 requests-cache==0.7.5
 redis==4.3.6
