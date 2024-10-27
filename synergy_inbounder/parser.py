@@ -19,7 +19,7 @@ class Parser:
         df['teamIdAway'] = df.apply(lambda x: x['teamAId'] if not x['teamAIsHome'] else x['teamBId'], axis=1)
         df['teamScoreAway'] = df.apply(lambda x: x['teamAScore'] if not x['teamAIsHome'] else x['teamBScore'], axis=1)
 
-        return df[['startTimeLocal', 'fixtureId', 'venueId', 'status', 'teamIdHome', 'teamScoreHome', 'teamIdAway', 'teamScoreAway']]
+        return df[['startTimeLocal', 'fixtureId', 'fixtureType', 'venueId', 'status', 'teamIdHome', 'teamScoreHome', 'teamIdAway', 'teamScoreAway']]
 
     @staticmethod
     def parse_game_pbp_df(org_id, game_id):
@@ -48,7 +48,7 @@ class Parser:
         player_stats_df = pd.DataFrame(player_stats_list)
 
         team_id_list = team_stats_df['entityId'].to_list()
-        starter_dict = {team_id: {p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id}
+        starter_dict = {team_id: [p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id]
                 for team_id in team_id_list}
 
         return team_stats_df, player_stats_df, starter_dict
