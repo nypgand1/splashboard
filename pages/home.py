@@ -24,6 +24,7 @@ def df_data():
     
     df = game_list_df
     df['Time'] = df['startTimeLocal']
+    df['Game Type'] = df['fixtureType']
     df['Venue'] = df.apply(lambda x: id_table.get(x['venueId'], x['venueId']), axis=1)
     df['Home Team'] = df.apply(lambda x: id_table.get(x['teamIdHome'], x['teamIdHome']), axis=1)
     df['Away Team'] = df.apply(lambda x: id_table.get(x['teamIdAway'], x['teamIdAway']), axis=1)
@@ -31,5 +32,5 @@ def df_data():
         href='/game/{url}'.format(url=x['fixtureId']))
             if x['status'] in ['PENDING', 'IN_PROGRESS', 'FINISHED ', 'CONFIRMED'] else x['status'], axis=1)
     
-    return df[['Time', 'Venue', 'Home Team', 'Score', 'Away Team']]
+    return df[['Time', 'Game Type','Venue', 'Home Team', 'Score', 'Away Team']]
 
