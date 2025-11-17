@@ -45,9 +45,15 @@ def layout(game_id=None):
         Input('game_id', 'children')]
 )
 def update_bs_store(n, game_id):
-    team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+    team_stats_df, team_stats_periods_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-    
+ 
+    qt_df = pd.DataFrame()
+    qt_df['Team'] = team_stats_periods_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
+    qt_df['Period'] = team_stats_periods_df.apply(lambda x: id_table.get(x['periodId'], x['periodId']), axis=1)
+    qt_df['PTS'] = team_stats_periods_df['points']
+    qt_df = qt_df.pivot(index='Team', columns='Period', values='PTS').reset_index()
+   
     t_df = pd.DataFrame()
     t_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
     t_df['Min'] = team_stats_df['minutes']
@@ -101,6 +107,7 @@ def update_bs_store(n, game_id):
         p_df_list.append(p_df_t.to_json(date_format='iso', orient='split'))
 
     bs_dict = {
+        'qt_df': qt_df.to_json(date_format='iso', orient='split'),
         't_df': t_df.to_json(date_format='iso', orient='split'),
         'k_df': k_df.to_json(date_format='iso', orient='split'),
         'p_df_list': p_df_list
@@ -113,7 +120,7 @@ def update_bs_store(n, game_id):
         Input('game_id', 'children'),]
 )
 def update_pbp_store(n, game_id):
-    team_stats_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+    team_stats_df, team_stats_periods_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
     playbyplay_df = Parser.parse_game_pbp_df(SYNERGY_ORGANIZATION_ID, game_id)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
  
@@ -184,9 +191,11 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
     
     if active_tab == 'tab-bs':
         bs_dict = json.loads(bs_store)
+        qt_df = pd.read_json(bs_dict['qt_df'], orient='split')
         t_df = pd.read_json(bs_dict['t_df'], orient='split')
         k_df = pd.read_json(bs_dict['k_df'], orient='split')
 
+        content_list.append(dbc.Table.from_dataframe(qt_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         content_list.append(dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         content_list.append(dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     

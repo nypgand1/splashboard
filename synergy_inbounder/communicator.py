@@ -6,7 +6,7 @@ from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
         SYNERGY_PLAY_BY_PLAY_URL, \
-        SYNERGY_PLAYER_STATS_URL, SYNERGY_TEAM_STATS_URL, \
+        SYNERGY_PLAYER_STATS_URL, SYNERGY_TEAM_STATS_URL, SYNERGY_TEAM_STATS_PERIODS_URL, \
         SYNERGY_ORG_PERSONS_URL, SYNERGY_ORG_ENTITIES_URL, \
         SYNERGY_ORG_VENUES_URL, \
         SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
@@ -73,6 +73,12 @@ class Communicator:
         r = Communicator.get_synergy(url)
         return r.json()
 
+    @staticmethod
+    def get_game_team_stats_periods_synergy(org_id, game_id):
+        url = SYNERGY_TEAM_STATS_PERIODS_URL.format(organizationId=org_id, fixtureId=game_id)
+        r = Communicator.get_synergy(url)
+        return r.json()
+ 
     @staticmethod
     def get_game_player_stats_synergy(org_id, game_id):
         url = SYNERGY_PLAYER_STATS_URL.format(organizationId=org_id, fixtureId=game_id)
