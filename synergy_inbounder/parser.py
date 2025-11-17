@@ -39,6 +39,13 @@ class Parser:
         team_stats_list = [team_stats_row(t) for t in Communicator.get_game_team_stats_synergy(org_id, game_id)['data']]
         team_stats_df = pd.DataFrame(team_stats_list)
 
+        def team_stats_periods_row(t):
+            t['statistics']['entityId'] = t['entityId']
+            t['statistics']['periodId'] = t['periodId']
+            return t['statistics']
+        team_stats_periods_list = [team_stats_periods_row(t) for t in Communicator.get_game_team_stats_periods_synergy(org_id, game_id)['data']]
+        team_stats_periods_df = pd.DataFrame(team_stats_periods_list)
+
         def player_stats_row(p):
             p['statistics']['entityId'] = p['entityId']
             p['statistics']['personId'] = p['personId']
@@ -51,7 +58,7 @@ class Parser:
         starter_dict = {team_id: [p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id]
                 for team_id in team_id_list}
 
-        return team_stats_df, player_stats_df, starter_dict
+        return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict
 
     @staticmethod
     def parse_id_tables(org_id):
