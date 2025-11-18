@@ -1,5 +1,6 @@
 import datetime
 import json
+import io
 
 from dash import dcc, html, Input, Output, callback, dash_table, register_page
 import dash_bootstrap_components as dbc
@@ -48,18 +49,40 @@ def update_bs_store(n, game_id):
     team_stats_df, team_stats_periods_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
  
-    qt_df = pd.DataFrame()
-    qt_df['Team'] = team_stats_periods_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
-    qt_df['Period'] = team_stats_periods_df.apply(lambda x: id_table.get(x['periodId'], x['periodId']), axis=1)
-    qt_df['PTS'] = team_stats_periods_df['points']
-    qt_df = qt_df.pivot(index='Team', columns='Period', values='PTS').reset_index()
-   
+    qt_pts_df = pd.DataFrame()
+    qt_pts_df['Team'] = team_stats_periods_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
+    qt_pts_df['Period'] = team_stats_periods_df['periodId']
+    qt_pts_df['PTS'] = team_stats_periods_df['points']
+    qt_pts_df = qt_pts_df.pivot(index='Team', columns='Period', values='PTS').reset_index()
+
+    qt_foul_df = pd.DataFrame()
+    qt_foul_df['Team'] = team_stats_periods_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
+    qt_foul_df['Period'] = team_stats_periods_df['periodId']
+    qt_foul_df['Foul'] = team_stats_periods_df.get('foulsTotal', '')
+    qt_foul_df = qt_foul_df.pivot(index='Team', columns='Period', values='Foul').reset_index()
+    
+    qt_tout_df = pd.DataFrame()
+    qt_tout_df['Team'] = team_stats_periods_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
+    qt_tout_df['Period'] = team_stats_periods_df['periodId']
+    qt_tout_df['TOut'] = team_stats_periods_df.get('timeoutsUsed', '')
+    qt_tout_df = qt_tout_df.pivot(index='Team', columns='Period', values='TOut').reset_index()
+
+    t_adv_df = pd.DataFrame()
+    t_adv_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
+    team_stats_df['poss'] = team_stats_df['fieldGoalsAttempted'] + 0.4 * team_stats_df['freeThrowsAttempted'] + team_stats_df['turnovers'] - team_stats_df['reboundsOffensive']
+    t_adv_df['Poss'] = team_stats_df.apply(lambda x: f"{x['poss']:0.1f}", axis=1)
+    t_adv_df['PPP'] = team_stats_df.apply(lambda x: f"{(x['points']/x['poss']):0.2f}" if pd.notnull(x['poss']) else '', axis=1)
+    t_adv_df['eFG%'] = team_stats_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
+    t_adv_df['TOV%'] = team_stats_df.apply(lambda x: f"{(100*x['turnovers']/x['poss']):0.1f}%" if pd.notnull(x['poss']) else '', axis=1)
+    t_adv_df['ORB%'] = team_stats_df.apply(lambda x: f"{(100*x['reboundsOffensive']/(x['reboundsOffensive']+x['reboundsDefensiveAgainst'])):0.1f}%" if pd.notnull(x['reboundsOffensive']+x['reboundsDefensiveAgainst']) else '', axis=1)
+    t_adv_df['FT-R'] = team_stats_df.apply(lambda x: f"{(100*x['freeThrowsAttempted']/x['fieldGoalsAttempted']):0.1f}%" if pd.notnull(x['fieldGoalsAttempted']) else '', axis=1)
+
     t_df = pd.DataFrame()
     t_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
     t_df['Min'] = team_stats_df['minutes']
-    t_df['2PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:.1f}%)" if x['pointsTwoAttempted'] else None, axis=1)
-    t_df['3PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:.1f}%)" if x['pointsThreeAttempted'] else None, axis=1)
-    t_df['FTM-A (%)'] = team_stats_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:.1f}%)"if x['freeThrowsAttempted'] else None, axis=1)
+    t_df['2PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:0.1f}%)" if x['pointsTwoAttempted'] else '', axis=1)
+    t_df['3PM-A (%)'] = team_stats_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:0.1f}%)" if x['pointsThreeAttempted'] else '', axis=1)
+    t_df['FTM-A (%)'] = team_stats_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:0.1f}%)"if x['freeThrowsAttempted'] else '', axis=1)
     t_df['OR'] = team_stats_df['reboundsOffensive']
     t_df['DR'] = team_stats_df['reboundsDefensive']
     t_df['REB'] = team_stats_df['rebounds']
@@ -72,9 +95,9 @@ def update_bs_store(n, game_id):
         
     k_df = pd.DataFrame()
     k_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
-    k_df['PIPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted'] else None, axis=1)
+    k_df['PIPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted'] else '', axis=1)
     k_df['PIP'] = team_stats_df['pointsInThePaint']
-    k_df['SCPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsSecondChanceMade']}-{x['pointsSecondChanceAttempted']}" if x['pointsSecondChanceAttempted'] else None, axis=1)
+    k_df['SCPM-A'] = team_stats_df.apply(lambda x: f"{x['pointsSecondChanceMade']}-{x['pointsSecondChanceAttempted']}" if x['pointsSecondChanceAttempted'] else '', axis=1)
     k_df['SCP'] = team_stats_df['pointsSecondChance']
     k_df['FBP'] = team_stats_df['pointsFastBreak']
     k_df['POT'] = team_stats_df['pointsFromTurnover']
@@ -87,9 +110,9 @@ def update_bs_store(n, game_id):
         p_df_t['Player'] = p_df.apply(lambda x: id_table.get(x['personId'], x['personId']), axis=1)
         p_df_t['Min'] = p_df['minutes']
         p_df_t['+/-'] = p_df['plusMinus']
-        p_df_t['2PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
-        p_df_t['3PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:.1f}%)" if x['pointsThreeAttempted'] !=0 else '', axis=1)
-        p_df_t['FTM-A (%)'] = p_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:.1f}%)" if x['freeThrowsAttempted']!=0 else '', axis=1)
+        p_df_t['2PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:0.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
+        p_df_t['3PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:0.1f}%)" if x['pointsThreeAttempted'] !=0 else '', axis=1)
+        p_df_t['FTM-A (%)'] = p_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:0.1f}%)" if x['freeThrowsAttempted']!=0 else '', axis=1)
         p_df_t['OR'] = p_df['reboundsOffensive']
         p_df_t['DR'] = p_df['reboundsDefensive']
         p_df_t['REB'] = p_df['rebounds']
@@ -99,15 +122,18 @@ def update_bs_store(n, game_id):
         p_df_t['BLK'] = p_df['blocks']
         p_df_t['PF'] = p_df['foulsTotal']
         p_df_t['PTS'] = p_df['points']
-        p_df_t['eFG%'] = p_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
-        p_df_t['USG%'] = p_df.apply(lambda x: f"{x['usageRate']:.1f}%", axis=1)
+        p_df_t['eFG%'] = p_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
+        p_df_t['USG%'] = p_df.apply(lambda x: f"{x['usageRate']:0.1f}%", axis=1)
         p_df_t['Plus-Minus'] = p_df.apply(lambda x: f"{x['plus']}-{x['minus']}", axis=1)
 
         p_df_t.sort_values(by=['PTS', '+/-', 'REB', 'AST'], ascending=False, inplace=True)
         p_df_list.append(p_df_t.to_json(date_format='iso', orient='split'))
 
     bs_dict = {
-        'qt_df': qt_df.to_json(date_format='iso', orient='split'),
+        'qt_pts_df': qt_pts_df.to_json(date_format='iso', orient='split'),
+        'qt_foul_df': qt_foul_df.to_json(date_format='iso', orient='split'),
+        'qt_tout_df': qt_tout_df.to_json(date_format='iso', orient='split'),
+        't_adv_df': t_adv_df.to_json(date_format='iso', orient='split'),
         't_df': t_df.to_json(date_format='iso', orient='split'),
         'k_df': k_df.to_json(date_format='iso', orient='split'),
         'p_df_list': p_df_list
@@ -156,7 +182,7 @@ def update_pbp_store(n, game_id):
 def update_lineup_store(pbp_store):
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
     
-    pbp_df = pd.read_json(pbp_store, orient='split')
+    pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
     lineup_df_dict = process_lineup_stats(pbp_df)
 
     def decode_lineup(lineup):
@@ -174,7 +200,7 @@ def update_lineup_store(pbp_store):
         team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
         team_lineup_df['Plus-Minus'] = team_lineup_df.apply(lambda x: f"{x['PTS']}-{x['Opp_PTS']}", axis=1)
         
-        team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Plus-Minus']]
+        team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Plus-Minus']].copy()
         team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
         lineup_list.append(team_lineup_df.to_json(date_format='iso', orient='split'))
 
@@ -191,20 +217,37 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
     
     if active_tab == 'tab-bs':
         bs_dict = json.loads(bs_store)
-        qt_df = pd.read_json(bs_dict['qt_df'], orient='split')
-        t_df = pd.read_json(bs_dict['t_df'], orient='split')
-        k_df = pd.read_json(bs_dict['k_df'], orient='split')
 
-        content_list.append(dbc.Table.from_dataframe(qt_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
+        qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
+        qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
+        qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
+        
+        t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
+        t_adv_df['Poss'] = t_adv_df['Poss'].apply(lambda x: f"{x:.1f}")
+        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{x:.2f}")
+        
+        t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
+        k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
+        
+        content_list.append(
+            html.Div(
+                dbc.Row([
+                    dbc.Col(dbc.Table.from_dataframe(qt_pts_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')),
+                    dbc.Col(dbc.Table.from_dataframe(qt_foul_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')),
+                    dbc.Col(dbc.Table.from_dataframe(qt_tout_df, striped=True, bordered=True, hover=True, class_name='text-nowrap')),
+                ])
+            )
+        )
+        content_list.append(dbc.Table.from_dataframe(t_adv_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         content_list.append(dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         content_list.append(dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
         for p_json in bs_dict['p_df_list']:
-            p_df = pd.read_json(p_json, orient='split')
+            p_df = pd.read_json(io.StringIO(p_json), orient='split')
             content_list.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         
     elif active_tab == 'tab-pbp':
-        pbp_df = pd.read_json(pbp_store, orient='split')
+        pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
         
         team_name_list = pbp_df['Team'].dropna().unique()
         col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores'] 
@@ -216,7 +259,7 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
     elif active_tab == 'tab-lineup':
         lineup_list = json.loads(lineup_store)
         for l_json in lineup_list:
-            l_df = pd.read_json(l_json, orient='split')
+            l_df = pd.read_json(io.StringIO(l_json), orient='split')
             content_list.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     return content_list
