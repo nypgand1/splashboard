@@ -70,7 +70,11 @@ def update_bs_store(n, game_id):
     t_adv_df = pd.DataFrame()
     t_adv_df['Team'] = team_stats_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
     team_stats_df['poss'] = team_stats_df['fieldGoalsAttempted'] + 0.4 * team_stats_df['freeThrowsAttempted'] + team_stats_df['turnovers'] - team_stats_df['reboundsOffensive']
+    team_stats_df['timedelta'] = pd.to_timedelta(team_stats_df['minutes'].str.replace('PT', '', regex=False) \
+                                                                    .str.replace('M', 'm', regex=False) \
+                                                                    .str.replace('S', 's', regex=False)).dt.total_seconds()/5
     t_adv_df['Poss'] = team_stats_df.apply(lambda x: f"{x['poss']:0.1f}", axis=1)
+    t_adv_df['Pace'] = team_stats_df.apply(lambda x: f"{48*60*x['poss']/x['timedelta']:0.1f}" if pd.notnull(x['timedelta']) else '', axis=1)
     t_adv_df['PPP'] = team_stats_df.apply(lambda x: f"{(x['points']/x['poss']):0.2f}" if pd.notnull(x['poss']) else '', axis=1)
     t_adv_df['eFG%'] = team_stats_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
     t_adv_df['TOV%'] = team_stats_df.apply(lambda x: f"{(100*x['turnovers']/x['poss']):0.1f}%" if pd.notnull(x['poss']) else '', axis=1)
@@ -224,6 +228,7 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
         
         t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
         t_adv_df['Poss'] = t_adv_df['Poss'].apply(lambda x: f"{x:.1f}")
+        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{x:.1f}")
         t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{x:.2f}")
         
         t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
