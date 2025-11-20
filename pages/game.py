@@ -54,7 +54,7 @@ def update_bs_store(n, game_id):
         't_adv_df': report.get_team_advance_stats_df().to_json(date_format='iso', orient='split'),
         't_df': report.get_team_stats_df().to_json(date_format='iso', orient='split'),
         'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
-        'p_df_list': report.get_player_stats_df_list()
+        'p_df_dict': report.get_player_stats_json_dict()
     }
 
     return json.dumps(bs_dict)
@@ -73,7 +73,7 @@ def update_pbp_store(n, game_id):
 )
 def update_lineup_store(n, game_id):
     report = PostGameReport(game_id)
-    return json.dumps(report.get_lineup_stats_df_list())
+    return json.dumps(report.get_lineup_stats_json_dict())
 
 @callback(Output('tab_content', 'children'), 
         [Input('tabs', 'active_tab'),
@@ -112,7 +112,8 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
         content_list.append(dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         content_list.append(dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
-        for p_json in bs_dict['p_df_list']:
+        for team_name, p_json in sorted(bs_dict['p_df_dict'].items()):
+            content_list.append(html.H4(team_name))
             p_df = pd.read_json(io.StringIO(p_json), orient='split')
             content_list.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
         
@@ -127,8 +128,9 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
         content_list.append(dbc.Table.from_dataframe(pbp_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     elif active_tab == 'tab-lineup':
-        lineup_list = json.loads(lineup_store)
-        for l_json in lineup_list:
+        lineup_dict = json.loads(lineup_store)
+        for team_name, l_json in sorted(lineup_dict.items()):
+            content_list.append(html.H4(team_name))
             l_df = pd.read_json(io.StringIO(l_json), orient='split')
             content_list.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
