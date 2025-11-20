@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import os
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
@@ -11,13 +12,14 @@ class PostGameReport():
         self.team_stats_df, self.team_stats_periods_df, self.player_stats_df, self.starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
         self.playbyplay_df = Parser.parse_game_pbp_df(SYNERGY_ORGANIZATION_ID, game_id)
         self.id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-   
+
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
         qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
         qt_pts_df['Period'] = self.team_stats_periods_df['periodId']
         qt_pts_df['PTS'] = self.team_stats_periods_df['points']
         qt_pts_df = qt_pts_df.pivot(index='Team', columns='Period', values='PTS').reset_index()
+        qt_pts_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return qt_pts_df
     
     def get_period_team_fouls_df(self):
@@ -26,6 +28,7 @@ class PostGameReport():
         qt_foul_df['Period'] = self.team_stats_periods_df['periodId']
         qt_foul_df['Foul'] = self.team_stats_periods_df.get('foulsTotal', '')
         qt_foul_df = qt_foul_df.pivot(index='Team', columns='Period', values='Foul').reset_index()
+        qt_foul_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return qt_foul_df
         
     def get_period_team_timeout_df(self):
@@ -34,6 +37,7 @@ class PostGameReport():
         qt_tout_df['Period'] = self.team_stats_periods_df['periodId']
         qt_tout_df['TOut'] = self.team_stats_periods_df.get('timeoutsUsed', '')
         qt_tout_df = qt_tout_df.pivot(index='Team', columns='Period', values='TOut').reset_index()
+        qt_tout_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return qt_tout_df
 
     def get_team_advance_stats_df(self):
@@ -51,6 +55,7 @@ class PostGameReport():
         t_adv_df['TOV%'] = self.team_stats_df.apply(lambda x: f"{(100*x['turnovers']/x['poss']):0.1f}%" if pd.notnull(x['poss']) else '', axis=1)
         t_adv_df['ORB%'] = self.team_stats_df.apply(lambda x: f"{(100*x['reboundsOffensive']/(x['reboundsOffensive']+x['reboundsDefensiveAgainst'])):0.1f}%" if pd.notnull(x['reboundsOffensive']+x['reboundsDefensiveAgainst']) else '', axis=1)
         t_adv_df['FT-R'] = self.team_stats_df.apply(lambda x: f"{(100*x['freeThrowsAttempted']/x['fieldGoalsAttempted']):0.1f}%" if pd.notnull(x['fieldGoalsAttempted']) else '', axis=1)
+        t_adv_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return t_adv_df
 
     def get_team_stats_df(self):
@@ -69,6 +74,7 @@ class PostGameReport():
         t_df['BLK'] = self.team_stats_df['blocks']
         t_df['PF'] = self.team_stats_df['foulsTotal']
         t_df['PTS'] = self.team_stats_df['points']
+        t_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return t_df
             
     def get_team_key_stats_df(self):
@@ -81,11 +87,13 @@ class PostGameReport():
         k_df['FBP'] = self.team_stats_df['pointsFastBreak']
         k_df['POT'] = self.team_stats_df['pointsFromTurnover']
         k_df['BP'] = self.team_stats_df['pointsFromBench']
+        k_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return k_df
     
-    def get_player_stats_df_list(self):
-        p_df_list = list()
+    def _get_player_stats_df_dict(self):
+        p_df_dict = dict()
         for t in self.team_stats_df['entityId'].to_list():
+            team_name = self.id_table.get(t, t)
             p_df = self.player_stats_df[self.player_stats_df['entityId']==t]
             p_df_t = pd.DataFrame()
             p_df_t['Player'] = p_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
@@ -108,18 +116,19 @@ class PostGameReport():
             p_df_t['Plus-Minus'] = p_df.apply(lambda x: f"{x['plus']}-{x['minus']}", axis=1)
     
             p_df_t.sort_values(by=['PTS', '+/-', 'REB', 'AST'], ascending=False, inplace=True)
-            p_df_list.append(p_df_t.to_json(date_format='iso', orient='split'))
-        return p_df_list
+            p_df_dict[team_name] = p_df_t
+        return p_df_dict
 
-    def get_lineup_stats_df_list(self):
+    def _get_lineup_stats_df_dict(self):
         pbp_df = self.get_play_by_play_df()
         lineup_df_dict = process_lineup_stats(pbp_df)
     
         def decode_lineup(lineup):
             return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
     
-        lineup_list = list()
+        u_df_dict = dict()
         for t in lineup_df_dict:
+            team_name = self.id_table.get(t, t)
             team_lineup_df = lineup_df_dict[t]
             team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
     
@@ -132,10 +141,18 @@ class PostGameReport():
             
             team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Plus-Minus']].copy()
             team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
-            lineup_list.append(team_lineup_df.to_json(date_format='iso', orient='split'))
+            u_df_dict[team_name] = team_lineup_df
 
-        return lineup_list
+        return u_df_dict
     
+    def get_player_stats_json_dict(self):
+        player_stats_df_dict = self._get_player_stats_df_dict()
+        return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in player_stats_df_dict.items()}
+
+    def get_lineup_stats_json_dict(self):
+        lineup_stats_df_dict = self._get_lineup_stats_df_dict()
+        return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in lineup_stats_df_dict.items()}
+   
     def get_play_by_play_df(self):
         process_lineup_pbp(self.playbyplay_df, self.starter_dict)
         team_id_list = self.playbyplay_df['entityId'].dropna().unique()
@@ -162,9 +179,28 @@ class PostGameReport():
     
         return self.playbyplay_df[col_list]
  
+    def save_all_reports_to_csv(self):
+        if not os.path.exists('csv_output'):
+            os.makedirs('csv_output')
+        self.get_period_team_pts_df().to_csv('csv_output/period_team_pts.csv', index=False)
+        self.get_period_team_fouls_df().to_csv('csv_output/period_team_fouls.csv', index=False)
+        self.get_period_team_timeout_df().to_csv('csv_output/period_team_timeout.csv', index=False)
+        self.get_team_advance_stats_df().to_csv('csv_output/team_advance_stats.csv', index=False)
+        self.get_team_stats_df().to_csv('csv_output/team_stats.csv', index=False)
+        self.get_team_key_stats_df().to_csv('csv_output/team_key_stats.csv', index=False)
+
+        player_stats_dfs = self._get_player_stats_df_dict()
+        for team_name, df in player_stats_dfs.items():
+            df.to_csv(f'csv_output/player_stats_{team_name}.csv', index=False)
+
+        lineup_stats_dfs = self._get_lineup_stats_df_dict()
+        for team_name, df in lineup_stats_dfs.items():
+            df.to_csv(f'csv_output/lineup_stats_{team_name}.csv', index=False)
+ 
 def main():
-    game_id = raw_input('Game Id? ')
+    game_id = input('Game Id? ')
     r = PostGameReport(str(game_id))
+    r.save_all_reports_to_csv()
 
 if __name__ == '__main__':
     main()
