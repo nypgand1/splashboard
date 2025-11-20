@@ -1,14 +1,16 @@
-# -*- coding: utf-8 -*-
-
 import pandas as pd
+import json
+
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
+from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
 #from synergy_inbounder.pre_processing_func import update_lineup_pbp
 
 class PostGameReport():
     def __init__(self, game_id):
         
         self.team_stats_df, self.team_stats_periods_df, self.player_stats_df, self.starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
+        self.playbyplay_df = Parser.parse_game_pbp_df(SYNERGY_ORGANIZATION_ID, game_id)
         self.id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
         
         #TODO get period_id_list
@@ -19,6 +21,32 @@ class PostGameReport():
         #self.sub_df = self.pbp_df[self.pbp_df['eventType'].isin(['substitution', 'period'])]
         #self.shot_df = self.pbp_df[self.pbp_df['eventType'].isin(['2pt', '3pt', 'freeThrow'])]
 
+    def get_play_by_play_df(self):
+        process_lineup_pbp(self.playbyplay_df, self.starter_dict)
+        team_id_list = self.playbyplay_df['entityId'].dropna().unique()
+        
+        self.playbyplay_df['Team'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        self.playbyplay_df['Player'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+        team_name_list = self.playbyplay_df['Team'].dropna().unique()
+        
+        def decode_scores(scores):
+            d = json.loads(scores)
+            return str({self.id_table.get(t ,t):  d[t] for t in d})[1:-1].replace('\'', '')
+        self.playbyplay_df['scores'] = self.playbyplay_df['scores'].apply(lambda x: decode_scores(x))
+    
+        def decode_lineup(lineup):
+            return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
+        for t in team_id_list:
+            self.playbyplay_df[self.id_table.get(t, f"name_{t}")] = self.playbyplay_df[t].apply(lambda x: decode_lineup(x))
+        
+        col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
+        col_list.extend(team_name_list)
+        col_list.extend(team_id_list)
+        if 'ERROR' in self.playbyplay_df:
+            col_list.append('ERROR')
+    
+        return self.playbyplay_df[col_list]
+     
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
         qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)

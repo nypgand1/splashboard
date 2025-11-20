@@ -66,35 +66,8 @@ def update_bs_store(n, game_id):
         Input('game_id', 'children'),]
 )
 def update_pbp_store(n, game_id):
-    team_stats_df, team_stats_periods_df, player_stats_df, starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
-    playbyplay_df = Parser.parse_game_pbp_df(SYNERGY_ORGANIZATION_ID, game_id)
-    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
- 
-    process_lineup_pbp(playbyplay_df, starter_dict)
-    team_id_list = playbyplay_df['entityId'].dropna().unique()
-    
-    playbyplay_df['Team'] = playbyplay_df.apply(lambda x: id_table.get(x['entityId'], x['entityId']), axis=1)
-    playbyplay_df['Player'] = playbyplay_df.apply(lambda x: id_table.get(x['personId'], x['personId']), axis=1)
-    team_name_list = playbyplay_df['Team'].dropna().unique()
-    
-    def decode_scores(scores):
-        d = json.loads(scores)
-        return str({id_table.get(t ,t):  d[t] for t in d})[1:-1].replace('\'', '')
-    playbyplay_df['scores'] = playbyplay_df['scores'].apply(lambda x: decode_scores(x))
-
-    def decode_lineup(lineup):
-        return str(sorted([id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
-    for t in team_id_list:
-        playbyplay_df[id_table.get(t, f"name_{t}")] = playbyplay_df[t].apply(lambda x: decode_lineup(x))
-    
-    col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
-    col_list.extend(team_name_list)
-    col_list.extend(team_id_list)
-    if 'ERROR' in playbyplay_df:
-        col_list.append('ERROR')
-
-    pbp_df = playbyplay_df[col_list]
-    return pbp_df.to_json(date_format='iso', orient='split')
+    report = PostGameReport(game_id)
+    return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
 
 @callback(Output('lineup_store', 'data'), 
         [Input('pbp_store', 'data'),]
