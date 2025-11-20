@@ -27,7 +27,7 @@ def process_lineup_pbp(df, starter_dict):
 
 def process_lineup_stats(df):
     #lineup_df = df.dropna(subset=['.atk'])
-    lineup_df = df
+    lineup_df = df.copy()
     lineup_df['clock'] = pd.to_datetime(lineup_df['clock'], format='PT%MM%SS')
     lineup_df['periodId_next'] = lineup_df['periodId'].shift(-1)
     lineup_df['clock_next'] = lineup_df['clock'].shift(-1)
@@ -87,7 +87,7 @@ def get_sub_map(df):
 
             player_sub_map = {'entityId': t, 'personId': p, 'fixtureId': [f for f in df['fixtureId'] if not pd.isna(f)][0]}
             for i, r in df_duration.iterrows():
-                #TODO: if it's not 12-min period
+                #TODO: assume a 12 mins period
                 if r['periodId'] not in [1, 2, 3, 4]: #overtime
                     player_sub_map['OT'] = player_sub_map.get('OT', 0) + (r['.atk_prev']-r['clock']).seconds
                 elif r['.atk'].minute == r['clock_prev'].minute:
