@@ -7,8 +7,6 @@ import dash_bootstrap_components as dbc
 import pandas as pd
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
-from synergy_inbounder.parser import Parser
-from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
 from synergy_reporter.post_game_report import PostGameReport
 
 register_page(
@@ -70,34 +68,12 @@ def update_pbp_store(n, game_id):
     return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
 
 @callback(Output('lineup_store', 'data'), 
-        [Input('pbp_store', 'data'),]
+        [Input('interval-component', 'n_intervals'),
+        Input('game_id', 'children'),]
 )
-def update_lineup_store(pbp_store):
-    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-    
-    pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
-    lineup_df_dict = process_lineup_stats(pbp_df)
-
-    def decode_lineup(lineup):
-        return str(sorted([id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
-
-    lineup_list = list()
-    for t in lineup_df_dict:
-        team_lineup_df = lineup_df_dict[t]
-        team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
-
-        team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{x['duration']//60:02.0f}:{x['duration']%60:02.0f}", axis=1)
-        team_lineup_df['+/-'] = team_lineup_df['PTS']-team_lineup_df['Opp_PTS']
-        team_lineup_df['2PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['2M']}-{x['2A']} ({x['2M']/x['2A']:.1%})" if x['2A'] else None, axis=1)
-        team_lineup_df['3PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['3M']}-{x['3A']} ({x['3M']/x['3A']:.1%})" if x['3A'] else None, axis=1)
-        team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
-        team_lineup_df['Plus-Minus'] = team_lineup_df.apply(lambda x: f"{x['PTS']}-{x['Opp_PTS']}", axis=1)
-        
-        team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Plus-Minus']].copy()
-        team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
-        lineup_list.append(team_lineup_df.to_json(date_format='iso', orient='split'))
-
-    return json.dumps(lineup_list)
+def update_lineup_store(n, game_id):
+    report = PostGameReport(game_id)
+    return json.dumps(report.get_lineup_stats_df_list())
 
 @callback(Output('tab_content', 'children'), 
         [Input('tabs', 'active_tab'),

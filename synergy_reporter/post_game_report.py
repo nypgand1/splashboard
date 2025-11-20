@@ -4,7 +4,6 @@ import json
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
-#from synergy_inbounder.pre_processing_func import update_lineup_pbp
 
 class PostGameReport():
     def __init__(self, game_id):
@@ -12,41 +11,7 @@ class PostGameReport():
         self.team_stats_df, self.team_stats_periods_df, self.player_stats_df, self.starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
         self.playbyplay_df = Parser.parse_game_pbp_df(SYNERGY_ORGANIZATION_ID, game_id)
         self.id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-        
-        #TODO get period_id_list
-        #period_id_list = [1, 2, 3, 4]
-        #self.pbp_df = Parser.parse_game_pbp_df(org_id, game_id, period_id_list)
-        #update_lineup_pbp(self.pbp_df, self.starter_dict, self.id_table)
-
-        #self.sub_df = self.pbp_df[self.pbp_df['eventType'].isin(['substitution', 'period'])]
-        #self.shot_df = self.pbp_df[self.pbp_df['eventType'].isin(['2pt', '3pt', 'freeThrow'])]
-
-    def get_play_by_play_df(self):
-        process_lineup_pbp(self.playbyplay_df, self.starter_dict)
-        team_id_list = self.playbyplay_df['entityId'].dropna().unique()
-        
-        self.playbyplay_df['Team'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        self.playbyplay_df['Player'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
-        team_name_list = self.playbyplay_df['Team'].dropna().unique()
-        
-        def decode_scores(scores):
-            d = json.loads(scores)
-            return str({self.id_table.get(t ,t):  d[t] for t in d})[1:-1].replace('\'', '')
-        self.playbyplay_df['scores'] = self.playbyplay_df['scores'].apply(lambda x: decode_scores(x))
-    
-        def decode_lineup(lineup):
-            return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
-        for t in team_id_list:
-            self.playbyplay_df[self.id_table.get(t, f"name_{t}")] = self.playbyplay_df[t].apply(lambda x: decode_lineup(x))
-        
-        col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
-        col_list.extend(team_name_list)
-        col_list.extend(team_id_list)
-        if 'ERROR' in self.playbyplay_df:
-            col_list.append('ERROR')
-    
-        return self.playbyplay_df[col_list]
-     
+   
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
         qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
@@ -79,7 +44,7 @@ class PostGameReport():
                                                                                     .str.replace('M', ' min ', regex=False) \
                                                                                     .str.replace('S', 'sec', regex=False)).dt.total_seconds()/5
         t_adv_df['Poss'] = self.team_stats_df.apply(lambda x: f"{x['poss']:0.1f}", axis=1)
-        # assume a 48 mins game
+        #TODO: assume a 48 mins game
         t_adv_df['Pace'] = self.team_stats_df.apply(lambda x: f"{48*60*x['poss']/x['duration']:0.1f}" if pd.notnull(x['duration']) else '', axis=1)
         t_adv_df['PPP'] = self.team_stats_df.apply(lambda x: f"{(x['points']/x['poss']):0.2f}" if pd.notnull(x['poss']) else '', axis=1)
         t_adv_df['eFG%'] = self.team_stats_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
@@ -146,6 +111,57 @@ class PostGameReport():
             p_df_list.append(p_df_t.to_json(date_format='iso', orient='split'))
         return p_df_list
 
+    def get_lineup_stats_df_list(self):
+        pbp_df = self.get_play_by_play_df()
+        lineup_df_dict = process_lineup_stats(pbp_df)
+    
+        def decode_lineup(lineup):
+            return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
+    
+        lineup_list = list()
+        for t in lineup_df_dict:
+            team_lineup_df = lineup_df_dict[t]
+            team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
+    
+            team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{x['duration']//60:02.0f}:{x['duration']%60:02.0f}", axis=1)
+            team_lineup_df['+/-'] = team_lineup_df['PTS']-team_lineup_df['Opp_PTS']
+            team_lineup_df['2PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['2M']}-{x['2A']} ({x['2M']/x['2A']:.1%})" if x['2A'] else None, axis=1)
+            team_lineup_df['3PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['3M']}-{x['3A']} ({x['3M']/x['3A']:.1%})" if x['3A'] else None, axis=1)
+            team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
+            team_lineup_df['Plus-Minus'] = team_lineup_df.apply(lambda x: f"{x['PTS']}-{x['Opp_PTS']}", axis=1)
+            
+            team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Plus-Minus']].copy()
+            team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
+            lineup_list.append(team_lineup_df.to_json(date_format='iso', orient='split'))
+
+        return lineup_list
+    
+    def get_play_by_play_df(self):
+        process_lineup_pbp(self.playbyplay_df, self.starter_dict)
+        team_id_list = self.playbyplay_df['entityId'].dropna().unique()
+        
+        self.playbyplay_df['Team'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        self.playbyplay_df['Player'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+        team_name_list = self.playbyplay_df['Team'].dropna().unique()
+        
+        def decode_scores(scores):
+            d = json.loads(scores)
+            return str({self.id_table.get(t ,t):  d[t] for t in d})[1:-1].replace('\'', '')
+        self.playbyplay_df['scores'] = self.playbyplay_df['scores'].apply(lambda x: decode_scores(x))
+    
+        def decode_lineup(lineup):
+            return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
+        for t in team_id_list:
+            self.playbyplay_df[self.id_table.get(t, f"name_{t}")] = self.playbyplay_df[t].apply(lambda x: decode_lineup(x))
+        
+        col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
+        col_list.extend(team_name_list)
+        col_list.extend(team_id_list)
+        if 'ERROR' in self.playbyplay_df:
+            col_list.append('ERROR')
+    
+        return self.playbyplay_df[col_list]
+ 
 def main():
     game_id = raw_input('Game Id? ')
     r = PostGameReport(str(game_id))
