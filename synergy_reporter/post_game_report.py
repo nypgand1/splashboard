@@ -18,6 +18,11 @@ class PostGameReport():
         qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
         qt_pts_df['Period'] = self.team_stats_periods_df['periodId']
         qt_pts_df['PTS'] = self.team_stats_periods_df['points']
+
+        totals_df = qt_pts_df.groupby('Team')['PTS'].sum().reset_index()
+        totals_df['Period'] = 'Total'
+        qt_pts_df = pd.concat([qt_pts_df, totals_df])
+
         qt_pts_df = qt_pts_df.pivot(index='Team', columns='Period', values='PTS').reset_index()
         qt_pts_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return qt_pts_df
@@ -49,7 +54,10 @@ class PostGameReport():
                                                                                     .str.replace('S', 'sec', regex=False)).dt.total_seconds()/5
         t_adv_df['Poss'] = self.team_stats_df.apply(lambda x: f"{x['poss']:0.1f}", axis=1)
         #TODO: assume a 48 mins game
-        t_adv_df['Pace'] = self.team_stats_df.apply(lambda x: f"{48*60*x['poss']/x['duration']:0.1f}" if pd.notnull(x['duration']) else '', axis=1)
+        t_adv_df['Pace'] = self.team_stats_df.apply(lambda x: 48*60*x['poss']/x['duration'] if pd.notnull(x['duration']) else None, axis=1)
+        t_adv_df['Pace'] = t_adv_df['Pace'].mean()
+        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{x:0.1f}")
+
         t_adv_df['PPP'] = self.team_stats_df.apply(lambda x: f"{(x['points']/x['poss']):0.2f}" if pd.notnull(x['poss']) else '', axis=1)
         t_adv_df['eFG%'] = self.team_stats_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
         t_adv_df['TOV%'] = self.team_stats_df.apply(lambda x: f"{(100*x['turnovers']/x['poss']):0.1f}%" if pd.notnull(x['poss']) else '', axis=1)
@@ -182,20 +190,20 @@ class PostGameReport():
     def save_all_reports_to_csv(self):
         if not os.path.exists('csv_output'):
             os.makedirs('csv_output')
-        self.get_period_team_pts_df().to_csv('csv_output/period_team_pts.csv', index=False)
-        self.get_period_team_fouls_df().to_csv('csv_output/period_team_fouls.csv', index=False)
-        self.get_period_team_timeout_df().to_csv('csv_output/period_team_timeout.csv', index=False)
-        self.get_team_advance_stats_df().to_csv('csv_output/team_advance_stats.csv', index=False)
-        self.get_team_stats_df().to_csv('csv_output/team_stats.csv', index=False)
-        self.get_team_key_stats_df().to_csv('csv_output/team_key_stats.csv', index=False)
+        self.get_period_team_pts_df().to_csv('csv_output/period_team_pts.csv', index=False, encoding='utf-8')
+        self.get_period_team_fouls_df().to_csv('csv_output/period_team_fouls.csv', index=False, encoding='utf-8')
+        self.get_period_team_timeout_df().to_csv('csv_output/period_team_timeout.csv', index=False, encoding='utf-8')
+        self.get_team_advance_stats_df().to_csv('csv_output/team_advance_stats.csv', index=False, encoding='utf-8')
+        self.get_team_stats_df().to_csv('csv_output/team_stats.csv', index=False, encoding='utf-8')
+        self.get_team_key_stats_df().to_csv('csv_output/team_key_stats.csv', index=False, encoding='utf-8')
 
         player_stats_dfs = self._get_player_stats_df_dict()
         for team_name, df in player_stats_dfs.items():
-            df.to_csv(f'csv_output/player_stats_{team_name}.csv', index=False)
+            df.sort_values(by=['+/-', 'PTS', 'AST', 'REB'], ascending=False).to_csv(f'csv_output/player_stats_{team_name}.csv', index=False, encoding='utf-8')
 
         lineup_stats_dfs = self._get_lineup_stats_df_dict()
         for team_name, df in lineup_stats_dfs.items():
-            df.to_csv(f'csv_output/lineup_stats_{team_name}.csv', index=False)
+            df.to_csv(f'csv_output/lineup_stats_{team_name}.csv', index=False, encoding='utf-8')
  
 def main():
     game_id = input('Game Id? ')

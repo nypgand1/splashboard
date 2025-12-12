@@ -5,6 +5,9 @@ import numpy as np
 from synergy_inbounder.settings import LOGGER
 
 def process_lineup_pbp(df, starter_dict):
+    if df.empty:
+        return
+
     for t in starter_dict.keys():
         df[t] = None
         df.at[0, t] = starter_dict[t]
