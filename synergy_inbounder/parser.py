@@ -25,10 +25,12 @@ class Parser:
     def parse_game_pbp_df(org_id, game_id):
         pbp_json_list = Communicator.get_game_play_by_play_synergy(org_id, game_id)['data']
         df = pd.DataFrame(pbp_json_list)
-        df['success'] = df.apply(lambda x: x['success'] if 'success' in x else np.nan, axis=1)
-        df['options'] = df.apply(lambda x: json.dumps(x['options']) if (('options' in x) and (not pd.isna(x['options']))) else np.nan, axis=1)
-        df['scores'] = df.apply(lambda x: json.dumps(x['scores']), axis=1)
-
+        for col in ['entityId', 'personId', 'eventType', 'subType', 'timestamp',
+                    'sequence', 'periodId', 'clock', 'success', 'options', 'scores']:
+            if col not in df.columns:
+                df[col] = np.nan
+        df['options'] = df['options'].apply(lambda x: json.dumps(x) if pd.notna(x) else np.nan)
+        df['scores'] = df['scores'].apply(lambda x: json.dumps(x) if pd.notna(x) else np.nan)
         return df
 
     @staticmethod
