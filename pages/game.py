@@ -27,6 +27,21 @@ def layout(game_id=None):
             id='tabs',
             active_tab='tab-bs',
         ),
+        html.Div([
+            html.Label("Lineups", style={'font-weight': 'bold', 'margin-bottom': '5px'}),
+            dcc.Dropdown(
+                id='lineup_size_dropdown',
+                options=[
+                    {'label': '5 Players', 'value': 5},
+                    {'label': '4 Players', 'value': 4},
+                    {'label': '3 Players', 'value': 3},
+                    {'label': '2 Players', 'value': 2},
+                ],
+                value=5,
+                clearable=False,
+                style={'width': '200px', 'margin-bottom': '10px'}
+            )
+        ], id='lineup_dropdown_container', style={'display': 'none'}),
         html.Div(id='tab_content'),
         html.Div(id='pbp_table', style= {'display': 'block'}),
         dcc.Interval(
@@ -69,13 +84,16 @@ def update_pbp_store(n, game_id):
 
 @callback(Output('lineup_store', 'data'), 
         [Input('interval-component', 'n_intervals'),
-        Input('game_id', 'children'),]
+        Input('game_id', 'children'),
+        Input('lineup_size_dropdown', 'value')]
 )
-def update_lineup_store(n, game_id):
+def update_lineup_store(n, game_id, lineup_size):
     report = PostGameReport(game_id)
-    return json.dumps(report.get_lineup_stats_json_dict())
+    return json.dumps(report.get_lineup_stats_json_dict(lineup_size=lineup_size))
 
-@callback(Output('tab_content', 'children'), 
+@callback(
+        [Output('tab_content', 'children'),
+         Output('lineup_dropdown_container', 'style')],
         [Input('tabs', 'active_tab'),
         Input('bs_store', 'data'),
         Input('pbp_store', 'data'),
@@ -83,6 +101,7 @@ def update_lineup_store(n, game_id):
 )
 def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
     content_list = [html.Span(f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}')]
+    dropdown_style = {'display': 'none'}
     
     if active_tab == 'tab-bs':
         bs_dict = json.loads(bs_store)
@@ -128,10 +147,11 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store):
         content_list.append(dbc.Table.from_dataframe(pbp_df[::-1], striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
     elif active_tab == 'tab-lineup':
+        dropdown_style = {'display': 'block', 'margin-bottom': '10px'}
         lineup_dict = json.loads(lineup_store)
         for team_name, l_json in sorted(lineup_dict.items()):
             content_list.append(html.H4(team_name))
             l_df = pd.read_json(io.StringIO(l_json), orient='split')
             content_list.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, class_name='text-nowrap'))
     
-    return content_list
+    return content_list, dropdown_style

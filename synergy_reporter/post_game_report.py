@@ -127,7 +127,7 @@ class PostGameReport():
             p_df_dict[team_name] = p_df_t
         return p_df_dict
 
-    def _get_lineup_stats_df_dict(self):
+    def _get_lineup_stats_df_dict(self, lineup_size=5):
         pbp_df = self.get_play_by_play_df()
         lineup_df_dict = process_lineup_stats(pbp_df)
     
@@ -138,6 +138,24 @@ class PostGameReport():
         for t in lineup_df_dict:
             team_name = self.id_table.get(t, t)
             team_lineup_df = lineup_df_dict[t]
+            
+            if lineup_size and lineup_size < 5:
+                import itertools
+                expanded_rows = []
+                for _, row in team_lineup_df.iterrows():
+                    for combo in itertools.combinations(row[t], lineup_size):
+                        new_row = row.copy()
+                        new_row[t] = list(combo)
+                        expanded_rows.append(new_row)
+                if expanded_rows:
+                    team_lineup_df = pd.DataFrame(expanded_rows)
+                    team_lineup_df['_combo_key'] = team_lineup_df[t].apply(lambda x: tuple(sorted(x)))
+                    grouped = team_lineup_df.groupby('_combo_key', as_index=False).sum(numeric_only=True, min_count=1)
+                    grouped[t] = grouped['_combo_key'].apply(list)
+                    team_lineup_df = grouped.drop(columns=['_combo_key'])
+            elif lineup_size and lineup_size > 5:
+                team_lineup_df = team_lineup_df[team_lineup_df[t].apply(lambda x: len(x) == lineup_size)]
+
             team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
     
             team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{x['duration']//60:02.0f}:{x['duration']%60:02.0f}", axis=1)
@@ -157,8 +175,8 @@ class PostGameReport():
         player_stats_df_dict = self._get_player_stats_df_dict()
         return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in player_stats_df_dict.items()}
 
-    def get_lineup_stats_json_dict(self):
-        lineup_stats_df_dict = self._get_lineup_stats_df_dict()
+    def get_lineup_stats_json_dict(self, lineup_size=5):
+        lineup_stats_df_dict = self._get_lineup_stats_df_dict(lineup_size=lineup_size)
         return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in lineup_stats_df_dict.items()}
    
     def get_play_by_play_df(self):
