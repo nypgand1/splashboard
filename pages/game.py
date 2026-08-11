@@ -4,6 +4,7 @@ import io
 
 from dash import dcc, html, Input, Output, State, ALL, callback, register_page, clientside_callback
 import dash_bootstrap_components as dbc
+import dash_ag_grid as dag
 import pandas as pd
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
@@ -67,7 +68,10 @@ def layout(game_id=None):
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
         dcc.Store(id='match_info_store'),
-        html.Div(id='pdf-download-dummy')
+        html.Div(id='pdf-download-dummy'),
+        
+        # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
+        html.Div(dag.AgGrid(id="dummy-grid", rowData=[], columnDefs=[]), style={'display': 'none'})
     ])
 
 @callback(
@@ -223,13 +227,23 @@ def update_tab_content(active_tab, bs_store, pbp_store, lineup_store, match_info
             content_list.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
         
     elif active_tab == 'tab-pbp':
-        if pbp_store:
+        if pbp_store and pbp_store != "{}" and pbp_store != '"{}"':
             pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
             team_name_list = pbp_df['Team'].dropna().unique()
             col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores'] 
             col_list.extend(team_name_list)
-            pbp_df = pbp_df[col_list]
-            content_list.append(dbc.Table.from_dataframe(pbp_df[::-1], striped=True, bordered=True, hover=True, className='text-nowrap'))
+            col_list = [c for c in col_list if c in pbp_df.columns]
+            pbp_df = pbp_df[col_list][::-1]
+            grid = dag.AgGrid(
+                rowData=pbp_df.to_dict('records'),
+                columnDefs=[{"field": c} for c in pbp_df.columns],
+                defaultColDef={"sortable": True, "filter": True, "resizable": True},
+                dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
+                columnSize="autoSize",
+                className="ag-theme-alpine",
+                style={'width': '100%'}
+            )
+            content_list.append(grid)
     
     elif active_tab == 'tab-lineup':
         dropdown_style = {'display': 'block', 'margin-bottom': '10px'}

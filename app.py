@@ -7,7 +7,8 @@ app = Dash(
     external_stylesheets=[dbc.themes.LITERA],
     title='Splashboard TFB',
     use_pages=True,
-    suppress_callback_exceptions=True
+    suppress_callback_exceptions=True,
+    backend="fastapi"
 )
 server = app.server
 

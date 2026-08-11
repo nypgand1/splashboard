@@ -1,2 +1,2 @@
 # TODO: Modify this Procfile to fit your needs
-web: gunicorn app:server
+web: uvicorn app:server --host 0.0.0.0 --port $PORT
