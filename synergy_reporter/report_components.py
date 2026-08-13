@@ -8,6 +8,30 @@ import dash_bootstrap_components as dbc
 # A4 Landscape content width: 297mm - 2*10mm padding = 277mm ≈ 1047px at 96dpi
 A4_CONTENT_WIDTH_PX = 1047
 
+def lineup_tables_for_size(lineup_store_data, lineup_size=5):
+    """Pick one lineup-size table map from store data.
+
+    New store shape: {"5": {team: json}, "4": ...}.
+    Old store shape: {team: json}.
+    """
+    if not lineup_store_data:
+        return {}
+    if isinstance(lineup_store_data, str):
+        try:
+            lineup_dict = json.loads(lineup_store_data)
+        except Exception:
+            return {}
+    else:
+        lineup_dict = lineup_store_data
+    if not isinstance(lineup_dict, dict) or not lineup_dict:
+        return {}
+    inner = lineup_dict.get(str(lineup_size))
+    if isinstance(inner, dict):
+        return inner
+    if all(not str(key).isdigit() for key in lineup_dict):
+        return lineup_dict
+    return {}
+
 def _pixel_width(s):
     """Calculate absolute pixel width for 11px font size."""
     if s is None or pd.isna(s):
@@ -188,7 +212,7 @@ def render_block(block, bs_dict, lineup_store_data):
                 
         # Handle multiple tables for lineup_dict
         elif table_key == 'lineup_dict' and lineup_store_data:
-            lineup_dict = json.loads(lineup_store_data) if isinstance(lineup_store_data, str) else lineup_store_data
+            lineup_dict = lineup_tables_for_size(lineup_store_data, lineup_size=5)
             for team_name, l_json in sorted(lineup_dict.items()):
                 sub_id = f"{b_id}-{team_name.replace(' ', '')}"
                 l_df = pd.read_json(io.StringIO(l_json), orient='split')

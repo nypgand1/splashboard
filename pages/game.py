@@ -2,17 +2,18 @@ import datetime
 import json
 import io
 
-from dash import dcc, html, Input, Output, State, ALL, callback, register_page, clientside_callback
+from dash import dcc, html, Input, Output, State, ALL, callback, register_page, clientside_callback, no_update
 import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 import pandas as pd
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
-from synergy_reporter.post_game_report import PostGameReport
+from synergy_inbounder.runtime_cache import get_cached_report, is_finished_status
 from synergy_reporter.report_components import (
     get_default_blocks,
-    render_block
+    render_block,
+    lineup_tables_for_size,
 )
 
 register_page(
@@ -50,12 +51,30 @@ def layout(game_id=None):
                 ],
                 value=5,
                 clearable=False,
+                searchable=False,
                 style={'width': '200px', 'margin-bottom': '10px'}
             )
         ], id='lineup_dropdown_container', style={'display': 'none'}),
 
-        # Main Tab Content Render Area
-        html.Div(id='tab_content'),
+        html.Div(
+            dcc.Loading(type='circle', children=html.Div(id='pane-bs')),
+            id='wrap-bs',
+        ),
+        html.Div(
+            dcc.Loading(type='circle', children=html.Div(id='pane-pbp')),
+            id='wrap-pbp',
+            style={'display': 'none'},
+        ),
+        html.Div(
+            dcc.Loading(type='circle', children=html.Div(id='pane-lineup')),
+            id='wrap-lineup',
+            style={'display': 'none'},
+        ),
+        html.Div(
+            dcc.Loading(type='circle', children=html.Div(id='pane-report')),
+            id='wrap-report',
+            style={'display': 'none'},
+        ),
         html.Div(id='pbp_table', style={'display': 'block'}),
         
         # Background Stores & Intervals
@@ -82,7 +101,7 @@ def layout(game_id=None):
 def update_bs_store(n, game_id):
     if not game_id:
         return json.dumps({})
-    report = PostGameReport(game_id)
+    report = get_cached_report(game_id)
     bs_dict = {
         'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
         'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
@@ -130,11 +149,20 @@ def update_match_info_store(game_id):
             'away_team': away_name,
             'home_score': str(row.get('teamScoreHome', '')),
             'away_score': str(row.get('teamScoreAway', '')),
+            'status': str(row.get('status', '')).strip(),
         }
         return json.dumps(info, ensure_ascii=False)
     except Exception as e:
         print(f"Error loading match info: {e}")
         return json.dumps({})
+
+@callback(
+    Output('interval-component', 'disabled'),
+    Input('match_info_store', 'data'),
+)
+def set_interval_disabled(match_info_store):
+    info = safe_loads(match_info_store)
+    return is_finished_status(info.get('status'))
 
 @callback(
     Output('pbp_store', 'data'),
@@ -144,20 +172,22 @@ def update_match_info_store(game_id):
 def update_pbp_store(n, game_id):
     if not game_id:
         return json.dumps({})
-    report = PostGameReport(game_id)
+    report = get_cached_report(game_id)
     return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
 
 @callback(
     Output('lineup_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('lineup_size_dropdown', 'value')]
+     Input('tabs', 'active_tab')]
 )
-def update_lineup_store(n, game_id, lineup_size):
+def update_lineup_store(n, game_id, active_tab):
     if not game_id:
         return json.dumps({})
-    report = PostGameReport(game_id)
-    return json.dumps(report.get_lineup_stats_json_dict(lineup_size=lineup_size))
+    if active_tab not in ('tab-lineup', 'tab-report'):
+        return no_update
+    report = get_cached_report(game_id)
+    return json.dumps(report.get_all_lineup_stats_json_dict())
 
 def safe_loads(val):
     if val is None:
@@ -171,125 +201,190 @@ def safe_loads(val):
             pass
     return val
 
-# ═══════════════════════════════════════════════════════════
-# Tab Content Renderer
-# ═══════════════════════════════════════════════════════════
-@callback(
-    [Output('tab_content', 'children'),
-     Output('lineup_dropdown_container', 'style')],
-    [Input('tabs', 'active_tab'),
-     Input('bs_store', 'data'),
-     Input('pbp_store', 'data'),
-     Input('lineup_store', 'data')],
-    [State('match_info_store', 'data'),
-     State('game_id', 'children')]
-)
-def update_tab_content(active_tab, bs_store, pbp_store, lineup_store, match_info_store, game_id):
-    content_list = [html.Span(
+def _last_update_span():
+    return html.Span(
         f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}',
         className="text-muted small mb-2 d-block no-print"
-    )]
-    dropdown_style = {'display': 'none'}
-    
+    )
+
+
+def _loading_placeholder():
+    return html.Div("數據載入中...", className="p-4 text-center text-muted")
+
+
+def render_bs_children(bs_store):
     if not bs_store:
-        return [html.Div("數據載入中...", className="p-4 text-center text-muted")], dropdown_style
+        return _loading_placeholder()
+    bs_dict = safe_loads(bs_store)
+    if not bs_dict or not bs_dict.get('qt_pts_df'):
+        return _loading_placeholder()
 
-    if active_tab == 'tab-bs':
-        bs_dict = safe_loads(bs_store)
-        qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
-        qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
-        qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
-        
-        t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
-        t_adv_df['Poss'] = t_adv_df['Poss'].apply(lambda x: f"{float(x):.1f}")
-        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
-        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
-        
-        t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
-        k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
-        
-        content_list.append(
-            html.Div(
-                dbc.Row([
-                    dbc.Col(dbc.Table.from_dataframe(qt_pts_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                    dbc.Col(dbc.Table.from_dataframe(qt_foul_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                    dbc.Col(dbc.Table.from_dataframe(qt_tout_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                ])
-            )
-        )
-        content_list.append(dbc.Table.from_dataframe(t_adv_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
-        content_list.append(dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
-        content_list.append(dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
-    
-        for team_name, p_json in sorted(bs_dict['p_df_dict'].items()):
-            content_list.append(html.H4(team_name))
-            p_df = pd.read_json(io.StringIO(p_json), orient='split')
-            content_list.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
-        
-    elif active_tab == 'tab-pbp':
-        if pbp_store and pbp_store != "{}" and pbp_store != '"{}"':
-            pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
-            team_name_list = pbp_df['Team'].dropna().unique()
-            col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores'] 
-            col_list.extend(team_name_list)
-            col_list = [c for c in col_list if c in pbp_df.columns]
-            pbp_df = pbp_df[col_list][::-1]
-            grid = dag.AgGrid(
-                rowData=pbp_df.to_dict('records'),
-                columnDefs=[{"field": c} for c in pbp_df.columns],
-                defaultColDef={"sortable": True, "filter": True, "resizable": True},
-                dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
-                columnSize="autoSize",
-                className="ag-theme-alpine",
-                style={'width': '100%'}
-            )
-            content_list.append(grid)
-    
-    elif active_tab == 'tab-lineup':
-        dropdown_style = {'display': 'block', 'margin-bottom': '10px'}
-        if lineup_store:
-            lineup_dict = safe_loads(lineup_store)
-            for team_name, l_json in sorted(lineup_dict.items()):
-                content_list.append(html.H4(team_name))
-                l_df = pd.read_json(io.StringIO(l_json), orient='split')
-                content_list.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+    qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
+    qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
+    qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
 
-    elif active_tab == 'tab-report':
-        bs_dict = safe_loads(bs_store) if bs_store else {}
-        match_info = safe_loads(match_info_store) if match_info_store else {}
-        blocks = get_default_blocks(match_info)
-        
-        # ── Report Action Bar ──
-        action_bar = html.Div([
+    t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
+    t_adv_df['Poss'] = t_adv_df['Poss'].apply(lambda x: f"{float(x):.1f}")
+    t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
+    t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
+
+    t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
+    k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
+
+    children = [
+        _last_update_span(),
+        html.Div(
             dbc.Row([
-                dbc.Col(
-                    html.H5("Report", className="fw-bold mb-0",
-                             style={'color': '#1e293b', 'letterSpacing': '0.5px'}),
-                    width="auto"
-                ),
-                dbc.Col(
-                    html.Div([
-                        dbc.Button(["📄 PDF"], id='btn-export-pdf', color="danger",
-                                   title="下載 A4 橫向 PDF 報告", className="report-toolbar-btn-export"),
-                    ], className="d-flex align-items-center gap-2 justify-content-end"),
-                ),
-            ], className="align-items-center")
-        ], className="p-2 px-3 mb-3 bg-light border rounded no-print")
+                dbc.Col(dbc.Table.from_dataframe(qt_pts_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
+                dbc.Col(dbc.Table.from_dataframe(qt_foul_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
+                dbc.Col(dbc.Table.from_dataframe(qt_tout_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
+            ])
+        ),
+        dbc.Table.from_dataframe(t_adv_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
+        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
+        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
+    ]
+    for team_name, p_json in sorted(bs_dict.get('p_df_dict', {}).items()):
+        children.append(html.H4(team_name))
+        p_df = pd.read_json(io.StringIO(p_json), orient='split')
+        children.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+    return children
 
-        # ── Render blocks ──
-        rendered_block_elements = [
-            html.Div(className="a4-width-indicator no-print")
-        ]
-        for b in blocks:
-            rendered_block_elements.extend(render_block(b, bs_dict, lineup_store))
 
-        report_canvas = html.Div([
-            html.Div(rendered_block_elements, id="report-canvas-list")
-        ], id="report-canvas")
+def render_pbp_children(pbp_store):
+    if not pbp_store or pbp_store == "{}" or pbp_store == '"{}"':
+        return [_last_update_span(), _loading_placeholder()]
+    pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
+    team_name_list = pbp_df['Team'].dropna().unique()
+    col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores']
+    col_list.extend(team_name_list)
+    col_list = [c for c in col_list if c in pbp_df.columns]
+    pbp_df = pbp_df[col_list][::-1]
+    grid = dag.AgGrid(
+        rowData=pbp_df.to_dict('records'),
+        columnDefs=[{"field": c} for c in pbp_df.columns],
+        defaultColDef={"sortable": True, "filter": True, "resizable": True},
+        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
+        columnSize="autoSize",
+        className="ag-theme-alpine",
+        style={'width': '100%'}
+    )
+    return [_last_update_span(), grid]
 
-        content_list.extend([action_bar, report_canvas])
-    
-    return content_list, dropdown_style
+
+def render_lineup_children(lineup_store, lineup_size):
+    lineup_dict = lineup_tables_for_size(lineup_store, lineup_size)
+    if not lineup_dict:
+        return [_last_update_span(), _loading_placeholder()]
+    children = [_last_update_span()]
+    for team_name, l_json in sorted(lineup_dict.items()):
+        children.append(html.H4(team_name))
+        l_df = pd.read_json(io.StringIO(l_json), orient='split')
+        children.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+    return children
+
+
+def render_report_children(bs_store, lineup_store, match_info_store):
+    if not bs_store:
+        return [_last_update_span(), _loading_placeholder()]
+    bs_dict = safe_loads(bs_store) if bs_store else {}
+    match_info = safe_loads(match_info_store) if match_info_store else {}
+    blocks = get_default_blocks(match_info)
+    action_bar = html.Div([
+        dbc.Row([
+            dbc.Col(
+                html.H5("Report", className="fw-bold mb-0",
+                         style={'color': '#1e293b', 'letterSpacing': '0.5px'}),
+                width="auto"
+            ),
+            dbc.Col(
+                html.Div([
+                    dbc.Button(["📄 PDF"], id='btn-export-pdf', color="danger",
+                               title="下載 A4 橫向 PDF 報告", className="report-toolbar-btn-export"),
+                ], className="d-flex align-items-center gap-2 justify-content-end"),
+            ),
+        ], className="align-items-center")
+    ], className="p-2 px-3 mb-3 bg-light border rounded no-print")
+    rendered_block_elements = [html.Div(className="a4-width-indicator no-print")]
+    for b in blocks:
+        rendered_block_elements.extend(render_block(b, bs_dict, lineup_store))
+    report_canvas = html.Div([
+        html.Div(rendered_block_elements, id="report-canvas-list")
+    ], id="report-canvas")
+    return [_last_update_span(), action_bar, report_canvas]
+
+
+@callback(
+    Output('pane-bs', 'children'),
+    Input('bs_store', 'data'),
+    Input('tabs', 'active_tab'),
+)
+def update_pane_bs(bs_store, active_tab):
+    if active_tab != 'tab-bs':
+        return no_update
+    return render_bs_children(bs_store)
+
+
+@callback(
+    Output('pane-pbp', 'children'),
+    Input('pbp_store', 'data'),
+    Input('tabs', 'active_tab'),
+)
+def update_pane_pbp(pbp_store, active_tab):
+    if active_tab != 'tab-pbp':
+        return no_update
+    return render_pbp_children(pbp_store)
+
+
+@callback(
+    Output('pane-lineup', 'children'),
+    Input('lineup_store', 'data'),
+    Input('lineup_size_dropdown', 'value'),
+    Input('tabs', 'active_tab'),
+)
+def update_pane_lineup(lineup_store, lineup_size, active_tab):
+    if active_tab != 'tab-lineup':
+        return no_update
+    return render_lineup_children(lineup_store, lineup_size)
+
+
+@callback(
+    Output('pane-report', 'children'),
+    Input('bs_store', 'data'),
+    Input('lineup_store', 'data'),
+    Input('match_info_store', 'data'),
+    Input('tabs', 'active_tab'),
+)
+def update_pane_report(bs_store, lineup_store, match_info_store, active_tab):
+    if active_tab != 'tab-report':
+        return no_update
+    return render_report_children(bs_store, lineup_store, match_info_store)
+
+
+clientside_callback(
+    """
+    function(active_tab) {
+        const hide = {display: 'none'};
+        const show = {display: 'block'};
+        const dropdown = (active_tab === 'tab-lineup')
+            ? {display: 'block', 'margin-bottom': '10px'}
+            : {display: 'none'};
+        return [
+            active_tab === 'tab-bs' ? show : hide,
+            active_tab === 'tab-pbp' ? show : hide,
+            active_tab === 'tab-lineup' ? show : hide,
+            active_tab === 'tab-report' ? show : hide,
+            dropdown
+        ];
+    }
+    """,
+    Output('wrap-bs', 'style'),
+    Output('wrap-pbp', 'style'),
+    Output('wrap-lineup', 'style'),
+    Output('wrap-report', 'style'),
+    Output('lineup_dropdown_container', 'style'),
+    Input('tabs', 'active_tab'),
+)
 
 # Clientside Callback for Native Browser Print to PDF
 clientside_callback(

@@ -8,10 +8,17 @@ from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_li
 
 class PostGameReport():
     def __init__(self, game_id):
-        
-        self.team_stats_df, self.team_stats_periods_df, self.player_stats_df, self.starter_dict = Parser.parse_game_stats_df(SYNERGY_ORGANIZATION_ID, game_id)
-        self.playbyplay_df = Parser.parse_game_pbp_df(SYNERGY_ORGANIZATION_ID, game_id)
-        self.id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+        (
+            self.team_stats_df,
+            self.team_stats_periods_df,
+            self.player_stats_df,
+            self.starter_dict,
+            self.playbyplay_df,
+            self.id_table,
+        ) = Parser.parse_game_bundle(SYNERGY_ORGANIZATION_ID, game_id)
+        self._play_by_play_view = None
+        self._raw_lineup_df_dict = None
+        self._lineup_json_by_size = None
 
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
@@ -127,23 +134,30 @@ class PostGameReport():
             p_df_dict[team_name] = p_df_t
         return p_df_dict
 
+    def _raw_lineup_stats(self):
+        if self._raw_lineup_df_dict is None:
+            self._raw_lineup_df_dict = process_lineup_stats(self.get_play_by_play_df())
+        return self._raw_lineup_df_dict
+
     def _get_lineup_stats_df_dict(self, lineup_size=5):
-        pbp_df = self.get_play_by_play_df()
-        lineup_df_dict = process_lineup_stats(pbp_df)
-    
+        lineup_df_dict = self._raw_lineup_stats()
+
         def decode_lineup(lineup):
             return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
-    
+
         u_df_dict = dict()
         for t in lineup_df_dict:
             team_name = self.id_table.get(t, t)
-            team_lineup_df = lineup_df_dict[t]
-            
+            team_lineup_df = lineup_df_dict[t].copy()
+
             if lineup_size and lineup_size < 5:
                 import itertools
                 expanded_rows = []
                 for _, row in team_lineup_df.iterrows():
-                    for combo in itertools.combinations(row[t], lineup_size):
+                    players = row[t]
+                    if not isinstance(players, (list, tuple)):
+                        continue
+                    for combo in itertools.combinations(players, lineup_size):
                         new_row = row.copy()
                         new_row[t] = list(combo)
                         expanded_rows.append(new_row)
@@ -157,20 +171,20 @@ class PostGameReport():
                 team_lineup_df = team_lineup_df[team_lineup_df[t].apply(lambda x: len(x) == lineup_size)]
 
             team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
-    
+
             team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{x['duration']//60:02.0f}:{x['duration']%60:02.0f}", axis=1)
             team_lineup_df['+/-'] = team_lineup_df['PTS']-team_lineup_df['Opp_PTS']
             team_lineup_df['2PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['2M']}-{x['2A']} ({x['2M']/x['2A']:.1%})" if x['2A'] else None, axis=1)
             team_lineup_df['3PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['3M']}-{x['3A']} ({x['3M']/x['3A']:.1%})" if x['3A'] else None, axis=1)
             team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
             team_lineup_df['PM'] = team_lineup_df.apply(lambda x: f"{x['PTS']}-{x['Opp_PTS']}", axis=1)
-            
+
             team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'PM']].copy()
             team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
             u_df_dict[team_name] = team_lineup_df
 
         return u_df_dict
-    
+
     def get_player_stats_json_dict(self):
         player_stats_df_dict = self._get_player_stats_df_dict()
         return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in player_stats_df_dict.items()}
@@ -178,32 +192,47 @@ class PostGameReport():
     def get_lineup_stats_json_dict(self, lineup_size=5):
         lineup_stats_df_dict = self._get_lineup_stats_df_dict(lineup_size=lineup_size)
         return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in lineup_stats_df_dict.items()}
+
+    def get_all_lineup_stats_json_dict(self, sizes=(5, 4, 3, 2)):
+        if self._lineup_json_by_size is None:
+            self._lineup_json_by_size = {}
+        missing = [size for size in sizes if str(size) not in self._lineup_json_by_size]
+        for size in missing:
+            self._lineup_json_by_size[str(size)] = self.get_lineup_stats_json_dict(lineup_size=size)
+        return {str(size): self._lineup_json_by_size[str(size)] for size in sizes}
    
     def get_play_by_play_df(self):
-        process_lineup_pbp(self.playbyplay_df, self.starter_dict)
-        team_id_list = self.playbyplay_df['entityId'].dropna().unique()
+        if self._play_by_play_view is not None:
+            return self._play_by_play_view
+
+        df = self.playbyplay_df.copy()
+        process_lineup_pbp(df, self.starter_dict)
+        team_id_list = df['entityId'].dropna().unique()
         
-        self.playbyplay_df['Team'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        self.playbyplay_df['Player'] = self.playbyplay_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
-        team_name_list = self.playbyplay_df['Team'].dropna().unique()
+        df['Team'] = df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        df['Player'] = df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+        team_name_list = df['Team'].dropna().unique()
         
         def decode_scores(scores):
+            if not isinstance(scores, str):
+                return scores
             d = json.loads(scores)
             return str({self.id_table.get(t ,t):  d[t] for t in d})[1:-1].replace('\'', '')
-        self.playbyplay_df['scores'] = self.playbyplay_df['scores'].apply(lambda x: decode_scores(x))
+        df['scores'] = df['scores'].apply(lambda x: decode_scores(x))
     
         def decode_lineup(lineup):
             return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
         for t in team_id_list:
-            self.playbyplay_df[self.id_table.get(t, f"name_{t}")] = self.playbyplay_df[t].apply(lambda x: decode_lineup(x))
+            df[self.id_table.get(t, f"name_{t}")] = df[t].apply(lambda x: decode_lineup(x))
         
         col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
         col_list.extend(team_name_list)
         col_list.extend(team_id_list)
-        if 'ERROR' in self.playbyplay_df:
+        if 'ERROR' in df:
             col_list.append('ERROR')
     
-        return self.playbyplay_df[col_list]
+        self._play_by_play_view = df[col_list]
+        return self._play_by_play_view
  
     def save_all_reports_to_csv(self):
         if not os.path.exists('csv_output'):

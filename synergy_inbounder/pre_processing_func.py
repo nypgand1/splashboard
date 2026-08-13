@@ -29,49 +29,61 @@ def process_lineup_pbp(df, starter_dict):
                 df.at[i, t] = list(df.at[i-1, t])
 
 def process_lineup_stats(df):
-    #lineup_df = df.dropna(subset=['.atk'])
     lineup_df = df.copy()
     lineup_df['clock'] = pd.to_datetime(lineup_df['clock'], format='PT%MM%SS')
     lineup_df['periodId_next'] = lineup_df['periodId'].shift(-1)
     lineup_df['clock_next'] = lineup_df['clock'].shift(-1)
-    lineup_df['duration'] = lineup_df.apply(lambda x: 0 if x['periodId']!= x['periodId_next'] else (x['clock']-x['clock_next']).total_seconds(), axis=1)
-   
-    lineup_df_dict = dict()
-    for t in lineup_df['entityId'].dropna().unique():
-        lineup_df['POSS'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='possession')  else 0, axis=1)
-        lineup_df['2M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='2pt' and x['success']==1) else 0, axis=1)
-        lineup_df['2A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='2pt') else 0, axis=1)
-        lineup_df['3M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='3pt' and x['success']==1) else 0, axis=1)
-        lineup_df['3A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='3pt') else 0, axis=1)
-        lineup_df['1M'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='freeThrow' and x['success']==1) else 0, axis=1)
-        lineup_df['1A'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='freeThrow') else 0, axis=1)
+    same_period = lineup_df['periodId'] == lineup_df['periodId_next']
+    duration = pd.Series(0.0, index=lineup_df.index)
+    duration.loc[same_period] = (
+        lineup_df.loc[same_period, 'clock'] - lineup_df.loc[same_period, 'clock_next']
+    ).dt.total_seconds()
+    lineup_df['duration'] = duration
 
-        lineup_df['OR'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='rebound' and x['subType']=='offensive') else np.nan, axis=1)
-        lineup_df['DR'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='rebound' and x['subType']=='defensive') else np.nan, axis=1)
-        lineup_df['REB'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='rebound') else np.nan, axis=1)
-        lineup_df['AST'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='assist') else np.nan, axis=1)
-        lineup_df['TOV'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='turnover') else np.nan, axis=1)
-        lineup_df['STL'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='steal') else np.nan, axis=1)
-        lineup_df['BLK'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='block') else np.nan, axis=1)
-        lineup_df['PF'] = lineup_df.apply(lambda x: 1 if (x['entityId']==t and x['eventType']=='foul' and x['subType']!='drawn') else np.nan, axis=1)
-        lineup_df['PTS'] = 2*lineup_df.loc[:, '2M'] + 3*lineup_df.loc[:, '3M'] + lineup_df.loc[:, '1M']
- 
-        lineup_df['Opp_POSS'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='possession')  else 0, axis=1)
-        lineup_df['Opp_2M'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='2pt' and x['success']==1) else 0, axis=1)
-        lineup_df['Opp_2A'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='2pt') else 0, axis=1)
-        lineup_df['Opp_3M'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='3pt' and x['success']==1) else 0, axis=1)
-        lineup_df['Opp_3A'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='3pt') else 0, axis=1)
-        lineup_df['Opp_1M'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='freeThrow' and x['success']==1) else 0, axis=1)
-        lineup_df['Opp_1A'] = lineup_df.apply(lambda x: 1 if (x['entityId']!=t and x['eventType']=='freeThrow') else 0, axis=1)
-        lineup_df['Opp_PTS'] = 2*lineup_df.loc[:, 'Opp_2M'] + 3*lineup_df.loc[:, 'Opp_3M'] + lineup_df.loc[:, 'Opp_1M']
-       
-        lineup_df[t] = lineup_df.apply(lambda x: json.dumps(sorted(list(x[t]))), axis=1)
-        col_list = [t]
-        col_list.extend(['duration', 'POSS', 'Opp_POSS', '2M', '2A', '3M', '3A', '1M', '1A', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Opp_PTS'])
+    event = lineup_df['eventType']
+    entity = lineup_df['entityId']
+    subtype = lineup_df['subType']
+    made = lineup_df['success'] == 1
+
+    lineup_df_dict = dict()
+    for t in entity.dropna().unique():
+        is_team = entity == t
+        is_opp = entity.notna() & (entity != t)
+
+        lineup_df['POSS'] = (is_team & (event == 'possession')).astype(int)
+        lineup_df['2M'] = (is_team & (event == '2pt') & made).astype(int)
+        lineup_df['2A'] = (is_team & (event == '2pt')).astype(int)
+        lineup_df['3M'] = (is_team & (event == '3pt') & made).astype(int)
+        lineup_df['3A'] = (is_team & (event == '3pt')).astype(int)
+        lineup_df['1M'] = (is_team & (event == 'freeThrow') & made).astype(int)
+        lineup_df['1A'] = (is_team & (event == 'freeThrow')).astype(int)
+
+        lineup_df['OR'] = np.where(is_team & (event == 'rebound') & (subtype == 'offensive'), 1, np.nan)
+        lineup_df['DR'] = np.where(is_team & (event == 'rebound') & (subtype == 'defensive'), 1, np.nan)
+        lineup_df['REB'] = np.where(is_team & (event == 'rebound'), 1, np.nan)
+        lineup_df['AST'] = np.where(is_team & (event == 'assist'), 1, np.nan)
+        lineup_df['TOV'] = np.where(is_team & (event == 'turnover'), 1, np.nan)
+        lineup_df['STL'] = np.where(is_team & (event == 'steal'), 1, np.nan)
+        lineup_df['BLK'] = np.where(is_team & (event == 'block'), 1, np.nan)
+        lineup_df['PF'] = np.where(is_team & (event == 'foul') & (subtype != 'drawn'), 1, np.nan)
+        lineup_df['PTS'] = 2 * lineup_df['2M'] + 3 * lineup_df['3M'] + lineup_df['1M']
+
+        lineup_df['Opp_POSS'] = (is_opp & (event == 'possession')).astype(int)
+        lineup_df['Opp_2M'] = (is_opp & (event == '2pt') & made).astype(int)
+        lineup_df['Opp_2A'] = (is_opp & (event == '2pt')).astype(int)
+        lineup_df['Opp_3M'] = (is_opp & (event == '3pt') & made).astype(int)
+        lineup_df['Opp_3A'] = (is_opp & (event == '3pt')).astype(int)
+        lineup_df['Opp_1M'] = (is_opp & (event == 'freeThrow') & made).astype(int)
+        lineup_df['Opp_1A'] = (is_opp & (event == 'freeThrow')).astype(int)
+        lineup_df['Opp_PTS'] = 2 * lineup_df['Opp_2M'] + 3 * lineup_df['Opp_3M'] + lineup_df['Opp_1M']
+
+        lineup_df[t] = lineup_df[t].apply(lambda x: json.dumps(sorted(list(x))))
+        col_list = [t, 'duration', 'POSS', 'Opp_POSS', '2M', '2A', '3M', '3A', '1M', '1A',
+                    'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Opp_PTS']
         lineup_df_t = lineup_df[col_list]
 
         team_lineup_df = lineup_df_t.groupby(t, as_index=False).sum(min_count=1)
-        team_lineup_df[t] = team_lineup_df.apply(lambda x: json.loads(x[t]), axis=1)
+        team_lineup_df[t] = team_lineup_df[t].apply(json.loads)
         lineup_df_dict[t] = team_lineup_df[team_lineup_df['duration'] > 0]
 
     return lineup_df_dict
