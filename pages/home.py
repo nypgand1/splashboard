@@ -1,8 +1,10 @@
-from dash import html, dash_table, register_page
+from dash import html, dcc, callback, Input, Output, register_page
 import dash_bootstrap_components as dbc
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
+
+LINKABLE_STATUSES = frozenset({'PENDING', 'IN_PROGRESS', 'FINISHED', 'CONFIRMED'})
 
 register_page(
     __name__,
@@ -12,11 +14,23 @@ register_page(
 )
 
 def layout():
-    df = df_data()
-    layout = html.Div([
-        dbc.Table.from_dataframe(df, striped=True, bordered=True, hover=True)
+    return html.Div([
+        dcc.Loading(
+            type='circle',
+            children=html.Div(
+                id='home-game-list',
+                children=html.Div('Loading...', className='p-4 text-center text-muted'),
+            ),
+        ),
     ])
-    return layout
+
+@callback(
+    Output('home-game-list', 'children'),
+    Input('home-game-list', 'id'),
+)
+def load_home_game_list(_id):
+    df = df_data()
+    return dbc.Table.from_dataframe(df, striped=True, bordered=True, hover=True)
 
 def df_data():
     game_list_df = Parser.parse_season_game_list_df(SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID)
@@ -30,7 +44,7 @@ def df_data():
     df['Away Team'] = df.apply(lambda x: id_table.get(x['teamIdAway'], x['teamIdAway']), axis=1)
     df['Score'] = df.apply(lambda x: html.A(html.P('{h} : {a}'.format(h=x['teamScoreHome'], a=x['teamScoreAway'])), 
         href='/game/{url}'.format(url=x['fixtureId']))
-            if x['status'] in ['PENDING', 'IN_PROGRESS', 'FINISHED ', 'CONFIRMED'] else x['status'], axis=1)
+            if str(x['status']).strip() in LINKABLE_STATUSES else x['status'], axis=1)
     
     return df[['Time', 'Game Type','Venue', 'Home Team', 'Score', 'Away Team']]
 

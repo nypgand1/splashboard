@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import threading
+
 import requests
 import requests_cache
 
@@ -9,7 +11,7 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_PLAYER_STATS_URL, SYNERGY_TEAM_STATS_URL, SYNERGY_TEAM_STATS_PERIODS_URL, \
         SYNERGY_ORG_PERSONS_URL, SYNERGY_ORG_ENTITIES_URL, \
         SYNERGY_ORG_VENUES_URL, \
-        SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, SYNERGY_BEARER, \
+        SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, \
         SYNERGY_ORGANIZATION_ID
 
 urls_expire_after = {
@@ -19,8 +21,17 @@ urls_expire_after = {
         '*/playbyplay/live': 3*60
 }
 
-requests_cache.install_cache('synergy_communicator_cache',
-        expire_after=30, urls_expire_after=urls_expire_after)
+requests_cache.install_cache(
+        'synergy_communicator_cache',
+        expire_after=30,
+        urls_expire_after=urls_expire_after,
+        check_same_thread=False,
+        timeout=30.0,
+)
+
+_token_lock = threading.Lock()
+_bearer = None
+_token_generation = 0
 
 class BearerAuth(requests.auth.AuthBase):
     def __init__(self, token):
@@ -51,13 +62,44 @@ class Communicator:
         return r
 
     @staticmethod
+    def _current_token():
+        with _token_lock:
+            return _bearer, _token_generation
+
+    @staticmethod
+    def _refresh_token(seen_generation=None):
+        global _bearer, _token_generation
+        with _token_lock:
+            if seen_generation is None and _bearer:
+                return _bearer, _token_generation
+            if seen_generation is not None and _token_generation != seen_generation:
+                return _bearer, _token_generation
+            r = Communicator.post_synergy_for_token()
+            token = (r.json() or {}).get('data', {}).get('token')
+            if not token:
+                raise RuntimeError('Synergy token refresh returned no token')
+            _bearer = token
+            _token_generation += 1
+            LOGGER.info('Refreshed Synergy bearer token (generation {g})'.format(g=_token_generation))
+            return _bearer, _token_generation
+
+    @staticmethod
+    def reset_token_state():
+        global _bearer, _token_generation
+        with _token_lock:
+            _bearer = None
+            _token_generation = 0
+
+    @staticmethod
     def get_synergy(url, params=dict(), headers=dict(), **kwargs):
-        global SYNERGY_BEARER
-        r = Communicator.get(url, params=params, headers=headers, auth=BearerAuth(SYNERGY_BEARER), **kwargs)
+        token, generation = Communicator._current_token()
+        if not token:
+            token, generation = Communicator._refresh_token()
+        r = Communicator.get(url, params=params, headers=headers, auth=BearerAuth(token), **kwargs)
 
         if r.status_code == requests.codes.forbidden:
-            SYNERGY_BEARER = Communicator.post_synergy_for_token().json().get('data', {}).get('token')
-            r = Communicator.get(url, params=params, headers=headers, auth=BearerAuth(SYNERGY_BEARER), **kwargs)
+            token, generation = Communicator._refresh_token(seen_generation=generation)
+            r = Communicator.get(url, params=params, headers=headers, auth=BearerAuth(token), **kwargs)
         return r
 
     @staticmethod

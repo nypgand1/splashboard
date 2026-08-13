@@ -7,14 +7,16 @@ app = Dash(
     external_stylesheets=[dbc.themes.LITERA],
     title='Splashboard TFB',
     use_pages=True,
+    suppress_callback_exceptions=True,
+    backend="fastapi"
 )
 server = app.server
 
 NAVBAR = create_navbar()
 app.layout = html.Div([
-        NAVBAR,
-        page_container
-    ])
+    html.Div(NAVBAR, className="no-print"),
+    page_container
+])
 
 if __name__ == '__main__':
     app.run(debug=True)

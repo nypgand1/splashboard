@@ -1,0 +1,274 @@
+/* ============================================================
+   A4 Landscape Post-Game Report – Dashboard & Print Styling
+   A4 Landscape = 297mm × 210mm
+   Content area = 277mm × 190mm (10mm padding each side)
+   ============================================================ */
+
+/* ---- A4 Page Guide Container ---- */
+#report-canvas {
+    position: relative;
+    width: 297mm;
+    min-height: 210mm;
+    margin: 0 auto;
+    padding: 10mm;
+    background-color: #ffffff;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    box-shadow: 0 0 0 1px #cbd5e1, 0 4px 16px rgba(0,0,0,0.08);
+}
+
+#report-canvas-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-content: flex-start;
+    align-items: flex-start;
+}
+
+/* ---- A4 Page Width Indicator ---- */
+.a4-width-indicator {
+    position: relative;
+    width: 100%;
+    height: 14px;
+    border-left: 2px solid #3b82f6;
+    border-right: 2px solid #3b82f6;
+    border-top: 1px solid #3b82f6;
+    margin-bottom: 10px;
+    opacity: 0.45;
+}
+.a4-width-indicator::after {
+    content: "← A4 Landscape 297mm →";
+    position: absolute;
+    left: 50%;
+    top: -1px;
+    transform: translateX(-50%);
+    font-size: 9px;
+    color: #3b82f6;
+    background: #fff;
+    padding: 0 8px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ---- Page-break Ruler ---- */
+.a4-page-break-ruler {
+    position: relative;
+    width: 100%;
+    height: 0;
+    border: none;
+    border-top: 2px dashed #ef4444;
+    margin: 12px 0;
+    opacity: 0.6;
+}
+.a4-page-break-ruler::after {
+    content: attr(data-label);
+    position: absolute;
+    right: 0;
+    top: -18px;
+    font-size: 10px;
+    color: #ef4444;
+    background: #fff;
+    padding: 0 6px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+/* ---- Report Section Title ---- */
+.report-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
+}
+
+.report-team-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #475569;
+    margin-bottom: 4px;
+    margin-top: 4px;
+}
+
+/* ---- Card Block Container ---- */
+.report-block-card {
+    position: relative;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 12px;
+    background-color: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    resize: both;
+    overflow: auto;
+    width: 100%;
+    max-width: 100%;
+    min-width: 200px;
+    min-height: 60px;
+    box-sizing: border-box;
+}
+
+/* ---- Sortable Ghost ---- */
+.sortable-ghost {
+    opacity: 0.4;
+    background-color: #e2e8f0 !important;
+    border: 2px dashed #94a3b8 !important;
+}
+
+/* ---- Control Bar ---- */
+.block-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    margin: -12px -12px 8px -12px;
+    padding: 4px 8px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+.drag-handle {
+    cursor: grab;
+    user-select: none;
+    font-size: 16px;
+    color: #94a3b8;
+    padding: 2px 6px;
+    margin-right: auto;
+}
+.drag-handle:active {
+    cursor: grabbing;
+    color: #475569;
+}
+
+/* ---- AG Grid Material Theme: force NO scroll, full render ---- */
+.ag-theme-material {
+    --ag-font-size: 11px;
+    --ag-grid-size: 4px;
+    --ag-row-height: 28px;
+    --ag-header-height: 32px;
+    --ag-cell-horizontal-padding: 4px;
+    --ag-header-cell-horizontal-padding: 4px;
+}
+
+.center-aligned-header .ag-header-cell-label {
+    justify-content: center;
+    white-space: nowrap;
+}
+
+.report-block-card .ag-root-wrapper {
+    overflow-y: hidden !important;
+    overflow-x: hidden !important;
+}
+.report-block-card .ag-body-viewport {
+    overflow-y: hidden !important;
+    overflow-x: hidden !important;
+}
+.report-block-card .ag-center-cols-viewport {
+    overflow-y: hidden !important;
+    overflow-x: hidden !important;
+    min-height: unset !important;
+}
+.report-block-card .ag-center-cols-container {
+    width: 100% !important;
+}
+
+/* ---- Icon-only Toolbar Buttons ---- */
+.report-toolbar-btn {
+    font-size: 18px;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+}
+.report-toolbar-btn-export {
+    font-size: 14px;
+    width: auto;
+    height: 36px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-weight: 600;
+    gap: 4px;
+}
+
+/* ============================================================
+   Native Browser Print / Save-as-PDF Styling (@media print)
+   100% AG Grid & Fly.io Compatible (0 Server RAM, Vector PDF)
+   ============================================================ */
+@media print {
+    @page {
+        size: A4 landscape;
+        margin: 8mm;
+    }
+
+    body, html {
+        background: #ffffff !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    /* Hide top nav, navbar, tabs, toolbars, block controls */
+    nav,
+    .navbar,
+    .navbar-expand,
+    .navbar-collapse,
+    .no-print,
+    .nav-tabs,
+    .tab-content > div:not(#tab_content),
+    .block-controls,
+    .a4-width-indicator,
+    .a4-page-break-ruler,
+    .dcc-upload-area,
+    header,
+    footer,
+    #lineup_dropdown_container {
+        display: none !important;
+    }
+
+    #report-canvas {
+        box-shadow: none !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    .report-block-card {
+        resize: none !important;
+        overflow: visible !important;
+        border: none !important;
+        box-shadow: none !important;
+        margin-bottom: 12px !important;
+        padding: 0 !important;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    textarea, input {
+        border: none !important;
+        background: transparent !important;
+        resize: none !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+    }
+
+    .ag-root-wrapper,
+    .ag-body-viewport,
+    .ag-center-cols-viewport {
+        overflow: visible !important;
+        min-height: unset !important;
+    }
+
+    .ag-theme-material {
+        width: 100% !important;
+        border: 1px solid #cbd5e1 !important;
+    }
+}
