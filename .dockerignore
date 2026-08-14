@@ -1,1 +1,14 @@
 fly.toml
+.git
+.gitignore
+.env
+.env.*
+*.sqlite
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+basketball_rest.json
+token_openapi.yml
+csv_output/

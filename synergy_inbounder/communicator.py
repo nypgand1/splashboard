@@ -16,8 +16,8 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_FIXTURE_ROSTER_URL, \
         SYNERGY_ORG_PERSONS_URL, SYNERGY_ORG_ENTITIES_URL, \
         SYNERGY_ORG_VENUES_URL, \
-        SYNERGY_CREDENTIAL_ID, SYNERGY_CREDENTIAL_SECRET, \
-        SYNERGY_ORGANIZATION_ID
+        SYNERGY_ORGANIZATION_ID, \
+        get_synergy_credentials
 
 TOKEN_EXPIRY_SKEW_SECONDS = 60
 
@@ -76,9 +76,10 @@ class Communicator:
     @staticmethod
     def post_synergy_for_token():
         url = SYNERGY_TOKEN_URL
+        credential_id, credential_secret = get_synergy_credentials()
         r = requests.post(url, json={
-                'credentialId': SYNERGY_CREDENTIAL_ID,
-                'credentialSecret': SYNERGY_CREDENTIAL_SECRET,
+                'credentialId': credential_id,
+                'credentialSecret': credential_secret,
                 'sport': 'basketball',
                 'organization': {'id': [SYNERGY_ORGANIZATION_ID]},
                 'scopes': ['read:organization', 'read:organization_live']

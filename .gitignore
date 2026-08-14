@@ -1,4 +1,4 @@
-settings.py
+.env
 *.sqlite
 
 # Byte-compiled / optimized / DLL files

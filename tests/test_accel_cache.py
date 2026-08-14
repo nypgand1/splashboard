@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from synergy_inbounder.communicator import Communicator, SynergyApiError, payload_from_response
+from synergy_inbounder.settings import MissingSynergyCredentials, get_synergy_credentials
 from synergy_inbounder.runtime_cache import (
     clear_runtime_caches,
     get_cached_report,
@@ -122,6 +123,24 @@ class TokenTests(unittest.TestCase):
             Communicator.get_synergy('https://example.test/stats')
 
         self.assertEqual(len(posts), 2)
+
+    def test_missing_credentials_fail_before_http(self):
+        posts = []
+
+        def post(*args, **kwargs):
+            posts.append(1)
+            return FakeResponse(200, {'data': {'token': 'abc'}})
+
+        with patch.dict('os.environ', {
+            'SYNERGY_CREDENTIAL_ID': '',
+            'SYNERGY_CREDENTIAL_SECRET': '',
+        }):
+            with patch('synergy_inbounder.communicator.requests.post', side_effect=post):
+                with self.assertRaises(MissingSynergyCredentials):
+                    Communicator.post_synergy_for_token()
+                with self.assertRaises(MissingSynergyCredentials):
+                    get_synergy_credentials()
+        self.assertEqual(posts, [])
 
     def test_401_refreshes_token(self):
         posts = []
