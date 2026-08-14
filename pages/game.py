@@ -2,19 +2,24 @@ import datetime
 import json
 import io
 
-from dash import dcc, html, Input, Output, State, ALL, callback, register_page, clientside_callback, no_update
+from dash import dcc, html, Input, Output, callback, register_page, clientside_callback, no_update
 import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 import pandas as pd
 
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
-from synergy_inbounder.runtime_cache import get_cached_report, is_finished_status
+from synergy_inbounder.runtime_cache import (
+    LIVE_CADENCE_SECONDS,
+    get_cached_report,
+    is_finished_status,
+)
 from synergy_reporter.report_components import (
     get_default_blocks,
     render_block,
     lineup_tables_for_size,
 )
+from synergy_reporter.rotation import build_rotation_figure
 
 register_page(
     __name__,
@@ -30,6 +35,7 @@ def layout(game_id=None):
         # Upper Tabs
         dbc.Tabs([
             dbc.Tab(label='Box Score', tab_id='tab-bs'),
+            dbc.Tab(label='Rotation', tab_id='tab-rotation'),
             dbc.Tab(label='Play-By-Play', tab_id='tab-pbp'),
             dbc.Tab(label='Lineup Stats', tab_id='tab-lineup'),
             dbc.Tab(label='Report', tab_id='tab-report'),
@@ -61,6 +67,11 @@ def layout(game_id=None):
             id='wrap-bs',
         ),
         html.Div(
+            dcc.Loading(type='circle', children=html.Div(id='pane-rotation')),
+            id='wrap-rotation',
+            style={'display': 'none'},
+        ),
+        html.Div(
             dcc.Loading(type='circle', children=html.Div(id='pane-pbp')),
             id='wrap-pbp',
             style={'display': 'none'},
@@ -80,12 +91,13 @@ def layout(game_id=None):
         # Background Stores & Intervals
         dcc.Interval(
             id='interval-component',
-            interval=30*1000, # 30s
+            interval=LIVE_CADENCE_SECONDS * 1000,
             n_intervals=0
         ),
         dcc.Store(id='bs_store'),
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
+        dcc.Store(id='rotation_store'),
         dcc.Store(id='match_info_store'),
         html.Div(id='pdf-download-dummy'),
         
@@ -101,7 +113,11 @@ def layout(game_id=None):
 def update_bs_store(n, game_id):
     if not game_id:
         return json.dumps({})
-    report = get_cached_report(game_id)
+    try:
+        report = get_cached_report(game_id)
+    except Exception as exc:
+        print(f"Error loading box score: {exc}")
+        return json.dumps({})
     bs_dict = {
         'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
         'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
@@ -147,6 +163,8 @@ def update_match_info_store(game_id):
             'venue': venue_name,
             'home_team': home_name,
             'away_team': away_name,
+            'home_team_id': None if pd.isna(row['teamIdHome']) else str(row['teamIdHome']),
+            'away_team_id': None if pd.isna(row['teamIdAway']) else str(row['teamIdAway']),
             'home_score': str(row.get('teamScoreHome', '')),
             'away_score': str(row.get('teamScoreAway', '')),
             'status': str(row.get('status', '')).strip(),
@@ -172,7 +190,11 @@ def set_interval_disabled(match_info_store):
 def update_pbp_store(n, game_id):
     if not game_id:
         return json.dumps({})
-    report = get_cached_report(game_id)
+    try:
+        report = get_cached_report(game_id)
+    except Exception as exc:
+        print(f"Error loading play-by-play: {exc}")
+        return json.dumps({})
     return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
 
 @callback(
@@ -186,8 +208,35 @@ def update_lineup_store(n, game_id, active_tab):
         return json.dumps({})
     if active_tab not in ('tab-lineup', 'tab-report'):
         return no_update
-    report = get_cached_report(game_id)
+    try:
+        report = get_cached_report(game_id)
+    except Exception as exc:
+        print(f"Error loading lineup: {exc}")
+        return json.dumps({})
     return json.dumps(report.get_all_lineup_stats_json_dict())
+
+@callback(
+    Output('rotation_store', 'data'),
+    [Input('interval-component', 'n_intervals'),
+     Input('game_id', 'children'),
+     Input('tabs', 'active_tab'),
+     Input('match_info_store', 'data')],
+)
+def update_rotation_store(n, game_id, active_tab, match_info_store):
+    if not game_id:
+        return json.dumps({})
+    if active_tab != 'tab-rotation':
+        return no_update
+    try:
+        report = get_cached_report(game_id)
+    except Exception as exc:
+        print(f"Error loading rotation: {exc}")
+        return json.dumps({})
+    info = safe_loads(match_info_store)
+    return json.dumps(report.get_rotation_payload(
+        home_team_id=info.get('home_team_id'),
+        away_team_id=info.get('away_team_id'),
+    ))
 
 def safe_loads(val):
     if val is None:
@@ -209,7 +258,7 @@ def _last_update_span():
 
 
 def _loading_placeholder():
-    return html.Div("數據載入中...", className="p-4 text-center text-muted")
+    return html.Div("Loading...", className="p-4 text-center text-muted")
 
 
 def render_bs_children(bs_store):
@@ -249,6 +298,25 @@ def render_bs_children(bs_store):
         p_df = pd.read_json(io.StringIO(p_json), orient='split')
         children.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
     return children
+
+
+def render_rotation_children(rotation_store):
+    payload = safe_loads(rotation_store)
+    if not payload or not payload.get('teams'):
+        return [_last_update_span(), _loading_placeholder()]
+    fig = build_rotation_figure(payload)
+    return [
+        _last_update_span(),
+        dcc.Graph(
+            id='rotation-graph',
+            figure=fig,
+            config={'displayModeBar': False, 'responsive': False},
+            style={
+                'height': f"{fig.layout.height or 640}px",
+                'width': f"{fig.layout.width or 1220}px",
+            },
+        ),
+    ]
 
 
 def render_pbp_children(pbp_store):
@@ -300,7 +368,7 @@ def render_report_children(bs_store, lineup_store, match_info_store):
             dbc.Col(
                 html.Div([
                     dbc.Button(["📄 PDF"], id='btn-export-pdf', color="danger",
-                               title="下載 A4 橫向 PDF 報告", className="report-toolbar-btn-export"),
+                               title="Download A4 landscape PDF report", className="report-toolbar-btn-export"),
                 ], className="d-flex align-items-center gap-2 justify-content-end"),
             ),
         ], className="align-items-center")
@@ -323,6 +391,17 @@ def update_pane_bs(bs_store, active_tab):
     if active_tab != 'tab-bs':
         return no_update
     return render_bs_children(bs_store)
+
+
+@callback(
+    Output('pane-rotation', 'children'),
+    Input('rotation_store', 'data'),
+    Input('tabs', 'active_tab'),
+)
+def update_pane_rotation(rotation_store, active_tab):
+    if active_tab != 'tab-rotation':
+        return no_update
+    return render_rotation_children(rotation_store)
 
 
 @callback(
@@ -371,6 +450,7 @@ clientside_callback(
             : {display: 'none'};
         return [
             active_tab === 'tab-bs' ? show : hide,
+            active_tab === 'tab-rotation' ? show : hide,
             active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
             active_tab === 'tab-report' ? show : hide,
@@ -379,6 +459,7 @@ clientside_callback(
     }
     """,
     Output('wrap-bs', 'style'),
+    Output('wrap-rotation', 'style'),
     Output('wrap-pbp', 'style'),
     Output('wrap-lineup', 'style'),
     Output('wrap-report', 'style'),
