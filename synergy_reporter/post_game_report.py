@@ -5,6 +5,7 @@ import os
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
+from synergy_reporter.rotation import build_rotation_payload, period_label
 
 class PostGameReport():
     def __init__(self, game_id):
@@ -15,15 +16,17 @@ class PostGameReport():
             self.starter_dict,
             self.playbyplay_df,
             self.id_table,
+            self.roster,
         ) = Parser.parse_game_bundle(SYNERGY_ORGANIZATION_ID, game_id)
         self._play_by_play_view = None
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None
+        self._rotation_payload = None
 
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
         qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        qt_pts_df['Period'] = self.team_stats_periods_df['periodId']
+        qt_pts_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
         qt_pts_df['PTS'] = self.team_stats_periods_df['points']
 
         totals_df = qt_pts_df.groupby('Team')['PTS'].sum().reset_index()
@@ -37,7 +40,7 @@ class PostGameReport():
     def get_period_team_fouls_df(self):
         qt_foul_df = pd.DataFrame()
         qt_foul_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        qt_foul_df['Period'] = self.team_stats_periods_df['periodId']
+        qt_foul_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
         qt_foul_df['Foul'] = self.team_stats_periods_df.get('foulsTotal', '')
         qt_foul_df = qt_foul_df.pivot(index='Team', columns='Period', values='Foul').reset_index()
         qt_foul_df.sort_values(by=['Team'], ascending=True, inplace=True)
@@ -46,7 +49,7 @@ class PostGameReport():
     def get_period_team_timeout_df(self):
         qt_tout_df = pd.DataFrame()
         qt_tout_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        qt_tout_df['Period'] = self.team_stats_periods_df['periodId']
+        qt_tout_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
         qt_tout_df['TOut'] = self.team_stats_periods_df.get('timeoutsUsed', '')
         qt_tout_df = qt_tout_df.pivot(index='Team', columns='Period', values='TOut').reset_index()
         qt_tout_df.sort_values(by=['Team'], ascending=True, inplace=True)
@@ -201,6 +204,24 @@ class PostGameReport():
             self._lineup_json_by_size[str(size)] = self.get_lineup_stats_json_dict(lineup_size=size)
         return {str(size): self._lineup_json_by_size[str(size)] for size in sizes}
    
+    def get_rotation_payload(self, home_team_id=None, away_team_id=None):
+        cache_key = (str(home_team_id), str(away_team_id))
+        if self._rotation_payload is not None and getattr(self, '_rotation_key', None) == cache_key:
+            return self._rotation_payload
+
+        df = self.playbyplay_df.copy()
+        process_lineup_pbp(df, self.starter_dict)
+        self._rotation_payload = build_rotation_payload(
+            df,
+            starter_dict=self.starter_dict,
+            id_table=self.id_table,
+            home_team_id=home_team_id,
+            away_team_id=away_team_id,
+            roster=self.roster,
+        )
+        self._rotation_key = cache_key
+        return self._rotation_payload
+
     def get_play_by_play_df(self):
         if self._play_by_play_view is not None:
             return self._play_by_play_view

@@ -29,7 +29,16 @@ def layout():
     Input('home-game-list', 'id'),
 )
 def load_home_game_list(_id):
-    df = df_data()
+    try:
+        df = df_data()
+    except Exception as exc:
+        print(f"Error loading home game list: {exc}")
+        return html.Div(
+            'Failed to load games. Please try again later.',
+            className='p-4 text-center text-danger',
+        )
+    if df is None or df.empty:
+        return html.Div('No games available.', className='p-4 text-center text-muted')
     return dbc.Table.from_dataframe(df, striped=True, bordered=True, hover=True)
 
 def df_data():

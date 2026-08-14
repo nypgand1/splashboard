@@ -236,7 +236,7 @@ def render_block(block, bs_dict, lineup_store_data):
 def render_builtin_table_content(table_key, bs_dict, b_id):
     """Render built-in synergy tables using AG Grid (autoHeight, no scroll)."""
     if not bs_dict:
-        return html.Div("載入中...", className="text-muted")
+        return html.Div("Loading...", className="text-muted")
 
     try:
         if table_key == 'score_group':

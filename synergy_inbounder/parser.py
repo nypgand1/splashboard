@@ -6,7 +6,11 @@ import numpy as np
 import json
 
 from synergy_inbounder.communicator import Communicator
-from synergy_inbounder.runtime_cache import get_cached_id_table, get_cached_season_df
+from synergy_inbounder.runtime_cache import (
+    get_cached_id_table,
+    get_cached_season_df,
+    should_use_live_endpoints,
+)
 
 class Parser:
     @staticmethod
@@ -30,14 +34,16 @@ class Parser:
 
     @staticmethod
     def parse_game_pbp_df(org_id, game_id):
-        return Parser._pbp_df_from_json(Communicator.get_game_play_by_play_synergy(org_id, game_id))
+        live = should_use_live_endpoints(game_id=game_id)
+        return Parser._pbp_df_from_json(Communicator.get_game_play_by_play_synergy(org_id, game_id, live=live))
 
     @staticmethod
     def parse_game_stats_df(org_id, game_id):
+        live = should_use_live_endpoints(game_id=game_id)
         return Parser._stats_from_json(
-            Communicator.get_game_team_stats_synergy(org_id, game_id),
-            Communicator.get_game_team_stats_periods_synergy(org_id, game_id),
-            Communicator.get_game_player_stats_synergy(org_id, game_id),
+            Communicator.get_game_team_stats_synergy(org_id, game_id, live=live),
+            Communicator.get_game_team_stats_periods_synergy(org_id, game_id, live=live),
+            Communicator.get_game_player_stats_synergy(org_id, game_id, live=live),
         )
 
     @staticmethod
@@ -79,23 +85,111 @@ class Parser:
         return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict
 
     @staticmethod
+    def _shirt_number(person):
+        nested = person.get('person') if isinstance(person.get('person'), dict) else {}
+        stats = person.get('statistics') or {}
+        for key in ('bib', 'shirtNumber', 'jerseyNumber', 'number'):
+            for source in (person, nested, stats):
+                value = source.get(key) if isinstance(source, dict) else None
+                if value not in (None, ''):
+                    return str(value)
+        return None
+
+    @staticmethod
+    def _roster_from_json(player_json):
+        roster = []
+        for person in player_json.get('data') or []:
+            if not person.get('personId'):
+                continue
+            roster.append({
+                'personId': person.get('personId'),
+                'entityId': person.get('entityId'),
+                'starter': bool(person.get('starter')),
+                'participated': bool(person.get('participated')),
+                'shirtNumber': Parser._shirt_number(person),
+            })
+        return roster
+
+    @staticmethod
+    def _roster_from_fixture_json(roster_json):
+        roster = []
+        for person in roster_json.get('data') or []:
+            person_id = person.get('personId')
+            if not person_id and isinstance(person.get('person'), dict):
+                person_id = person['person'].get('personId')
+            if not person_id:
+                continue
+            entity_id = person.get('entityId')
+            if not entity_id and isinstance(person.get('entity'), dict):
+                entity_id = person['entity'].get('entityId')
+            roster.append({
+                'personId': person_id,
+                'entityId': entity_id,
+                'starter': bool(person.get('starter')),
+                'participated': True,
+                'shirtNumber': Parser._shirt_number(person),
+            })
+        return roster
+
+    @staticmethod
+    def _merge_roster(fixture_roster, stats_roster):
+        if not fixture_roster:
+            return stats_roster
+        by_id = {row['personId']: row for row in stats_roster}
+        merged = []
+        seen = set()
+        for row in fixture_roster:
+            person_id = row['personId']
+            seen.add(person_id)
+            extra = by_id.get(person_id, {})
+            merged.append({
+                'personId': person_id,
+                'entityId': row.get('entityId') or extra.get('entityId'),
+                'starter': bool(row.get('starter') or extra.get('starter')),
+                'participated': extra.get('participated', True),
+                'shirtNumber': row.get('shirtNumber') or extra.get('shirtNumber'),
+            })
+        for person_id, extra in by_id.items():
+            if person_id not in seen:
+                merged.append(extra)
+        return merged
+
+    @staticmethod
     def parse_game_bundle(org_id, game_id):
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            f_team = pool.submit(Communicator.get_game_team_stats_synergy, org_id, game_id)
-            f_periods = pool.submit(Communicator.get_game_team_stats_periods_synergy, org_id, game_id)
-            f_player = pool.submit(Communicator.get_game_player_stats_synergy, org_id, game_id)
-            f_pbp = pool.submit(Communicator.get_game_play_by_play_synergy, org_id, game_id)
+        live = should_use_live_endpoints(game_id=game_id)
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            f_team = pool.submit(Communicator.get_game_team_stats_synergy, org_id, game_id, live)
+            f_periods = pool.submit(Communicator.get_game_team_stats_periods_synergy, org_id, game_id, live)
+            f_player = pool.submit(Communicator.get_game_player_stats_synergy, org_id, game_id, live)
+            f_pbp = pool.submit(Communicator.get_game_play_by_play_synergy, org_id, game_id, None, live)
+            f_roster = pool.submit(Communicator.get_fixture_roster_synergy, org_id, game_id)
             f_ids = pool.submit(Parser.parse_id_tables, org_id)
             team_json = f_team.result()
             periods_json = f_periods.result()
             player_json = f_player.result()
             pbp_json = f_pbp.result()
+            try:
+                roster_json = f_roster.result()
+            except Exception:
+                roster_json = {'data': []}
             id_table = f_ids.result()
 
         team_stats_df, team_stats_periods_df, player_stats_df, starter_dict = Parser._stats_from_json(
             team_json, periods_json, player_json)
         playbyplay_df = Parser._pbp_df_from_json(pbp_json)
-        return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict, playbyplay_df, id_table
+        roster = Parser._merge_roster(
+            Parser._roster_from_fixture_json(roster_json),
+            Parser._roster_from_json(player_json),
+        )
+        if roster:
+            team_ids = team_stats_df['entityId'].to_list() if not team_stats_df.empty else []
+            roster_starters = {
+                team_id: [row['personId'] for row in roster if row.get('starter') and row.get('entityId') == team_id]
+                for team_id in team_ids
+            }
+            if any(roster_starters.values()):
+                starter_dict = roster_starters
+        return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict, playbyplay_df, id_table, roster
 
     @staticmethod
     def parse_id_tables(org_id):
