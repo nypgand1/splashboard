@@ -245,10 +245,12 @@ def safe_loads(val):
         return val
     if isinstance(val, str):
         try:
-            return json.loads(val)
+            parsed = json.loads(val)
         except Exception:
-            pass
-    return val
+            return {}
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    return {}
 
 def _last_update_span():
     return html.Span(
