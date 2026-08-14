@@ -5,7 +5,10 @@ import time
 from concurrent.futures import Future
 
 FINISHED_STATUSES = frozenset({'FINISHED', 'CONFIRMED'})
-LIVE_REPORT_TTL_SECONDS = 15
+# One live cadence for PBP-derived views (Play-By-Play + Rotation).
+LIVE_CADENCE_SECONDS = 30
+LIVE_PBP_HTTP_TTL_SECONDS = 25
+LIVE_REPORT_TTL_SECONDS = 25
 SEASON_LIST_TTL_SECONDS = 60
 ID_TABLE_TTL_SECONDS = 8 * 60 * 60
 
@@ -18,6 +21,12 @@ def normalize_status(status):
 
 def is_finished_status(status):
     return normalize_status(status) in FINISHED_STATUSES
+
+
+def should_use_live_endpoints(status=None, game_id=None):
+    if status is None and game_id:
+        status = lookup_game_status(game_id)
+    return not is_finished_status(status)
 
 
 _report_lock = threading.Lock()
