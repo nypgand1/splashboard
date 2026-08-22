@@ -5,7 +5,22 @@ import os
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
-from synergy_reporter.rotation import build_rotation_payload, period_label
+from synergy_reporter.rotation import build_rotation_payload, clock_to_seconds, period_label
+
+
+def minutes_to_mmss(value):
+    """Convert Synergy PT duration (or seconds) to MM:SS."""
+    seconds = clock_to_seconds(value)
+    if seconds is None:
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ''
+        text = str(value).strip()
+        return text
+    total = int(round(float(seconds)))
+    if total < 0:
+        total = 0
+    return '{:02d}:{:02d}'.format(total // 60, total % 60)
+
 
 class PostGameReport():
     def __init__(self, game_id):
@@ -79,7 +94,7 @@ class PostGameReport():
     def get_team_stats_df(self):
         t_df = pd.DataFrame()
         t_df['Team'] = self.team_stats_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        t_df['Min'] = self.team_stats_df['minutes']
+        t_df['Min'] = self.team_stats_df['minutes'].map(minutes_to_mmss)
         t_df['2PM-A (%)'] = self.team_stats_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:0.1f}%)" if x['pointsTwoAttempted'] else '', axis=1)
         t_df['3PM-A (%)'] = self.team_stats_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:0.1f}%)" if x['pointsThreeAttempted'] else '', axis=1)
         t_df['FTM-A (%)'] = self.team_stats_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:0.1f}%)"if x['freeThrowsAttempted'] else '', axis=1)
@@ -115,7 +130,7 @@ class PostGameReport():
             p_df = self.player_stats_df[self.player_stats_df['entityId']==t]
             p_df_t = pd.DataFrame()
             p_df_t['Player'] = p_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
-            p_df_t['Min'] = p_df['minutes']
+            p_df_t['Min'] = p_df['minutes'].map(minutes_to_mmss)
             p_df_t['+/-'] = p_df['plusMinus']
             p_df_t['2PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:0.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
             p_df_t['3PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:0.1f}%)" if x['pointsThreeAttempted'] !=0 else '', axis=1)

@@ -1,8 +1,8 @@
 import datetime
-import json
 import io
+import json
 
-from dash import dcc, html, Input, Output, callback, register_page, clientside_callback, no_update
+from dash import dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
 import dash_bootstrap_components as dbc
 import dash_ag_grid as dag
 import pandas as pd
@@ -15,9 +15,12 @@ from synergy_inbounder.runtime_cache import (
     is_finished_status,
 )
 from synergy_reporter.report_components import (
-    get_default_blocks,
-    render_block,
     lineup_tables_for_size,
+    render_report_workspace,
+)
+from synergy_reporter.report_layout import (
+    default_layout,
+    report_tab_is_visible,
 )
 from synergy_reporter.rotation import build_rotation_figure
 
@@ -38,7 +41,12 @@ def layout(game_id=None):
             dbc.Tab(label='Rotation', tab_id='tab-rotation'),
             dbc.Tab(label='Play-By-Play', tab_id='tab-pbp'),
             dbc.Tab(label='Lineup Stats', tab_id='tab-lineup'),
-            dbc.Tab(label='Report', tab_id='tab-report'),
+            dbc.Tab(
+                label='Report',
+                tab_id='tab-report',
+                id='report-tab',
+                tab_style={'display': 'none'},
+            ),
         ],
         id='tabs',
         active_tab='tab-bs',
@@ -99,7 +107,6 @@ def layout(game_id=None):
         dcc.Store(id='lineup_store'),
         dcc.Store(id='rotation_store'),
         dcc.Store(id='match_info_store'),
-        html.Div(id='pdf-download-dummy'),
         
         # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
         html.Div(dag.AgGrid(id="dummy-grid", rowData=[], columnDefs=[]), style={'display': 'none'})
@@ -181,6 +188,21 @@ def update_match_info_store(game_id):
 def set_interval_disabled(match_info_store):
     info = safe_loads(match_info_store)
     return is_finished_status(info.get('status'))
+
+
+@callback(
+    Output('report-tab', 'tab_style'),
+    Output('tabs', 'active_tab'),
+    Input('match_info_store', 'data'),
+    State('tabs', 'active_tab'),
+)
+def toggle_report_tab(match_info_store, active_tab):
+    info = safe_loads(match_info_store)
+    visible = report_tab_is_visible(info.get('status'))
+    style = {} if visible else {'display': 'none'}
+    if (not visible) and active_tab == 'tab-report':
+        return style, 'tab-bs'
+    return style, no_update
 
 @callback(
     Output('pbp_store', 'data'),
@@ -354,34 +376,16 @@ def render_lineup_children(lineup_store, lineup_size):
     return children
 
 
-def render_report_children(bs_store, lineup_store, match_info_store):
-    if not bs_store:
-        return [_last_update_span(), _loading_placeholder()]
+def render_report_children(bs_store, lineup_store, match_info_store, game_id=None):
     bs_dict = safe_loads(bs_store) if bs_store else {}
     match_info = safe_loads(match_info_store) if match_info_store else {}
-    blocks = get_default_blocks(match_info)
-    action_bar = html.Div([
-        dbc.Row([
-            dbc.Col(
-                html.H5("Report", className="fw-bold mb-0",
-                         style={'color': '#1e293b', 'letterSpacing': '0.5px'}),
-                width="auto"
-            ),
-            dbc.Col(
-                html.Div([
-                    dbc.Button(["📄 PDF"], id='btn-export-pdf', color="danger",
-                               title="Download A4 landscape PDF report", className="report-toolbar-btn-export"),
-                ], className="d-flex align-items-center gap-2 justify-content-end"),
-            ),
-        ], className="align-items-center")
-    ], className="p-2 px-3 mb-3 bg-light border rounded no-print")
-    rendered_block_elements = [html.Div(className="a4-width-indicator no-print")]
-    for b in blocks:
-        rendered_block_elements.extend(render_block(b, bs_dict, lineup_store))
-    report_canvas = html.Div([
-        html.Div(rendered_block_elements, id="report-canvas-list")
-    ], id="report-canvas")
-    return [_last_update_span(), action_bar, report_canvas]
+    layout = default_layout(match_info)
+    if not bs_dict or not bs_dict.get('qt_pts_df'):
+        return [_last_update_span(), _loading_placeholder()]
+    return [
+        _last_update_span(),
+        render_report_workspace(layout, bs_dict, lineup_store, match_info, game_id),
+    ]
 
 
 @callback(
@@ -431,15 +435,27 @@ def update_pane_lineup(lineup_store, lineup_size, active_tab):
 
 @callback(
     Output('pane-report', 'children'),
-    Input('bs_store', 'data'),
-    Input('lineup_store', 'data'),
-    Input('match_info_store', 'data'),
     Input('tabs', 'active_tab'),
+    Input('lineup_store', 'data'),
+    State('bs_store', 'data'),
+    State('match_info_store', 'data'),
+    State('game_id', 'children'),
 )
-def update_pane_report(bs_store, lineup_store, match_info_store, active_tab):
+def update_pane_report(active_tab, lineup_store, bs_store, match_info_store, game_id):
     if active_tab != 'tab-report':
         return no_update
-    return render_report_children(bs_store, lineup_store, match_info_store)
+    try:
+        return render_report_children(
+            bs_store,
+            lineup_store,
+            match_info_store,
+            game_id=game_id,
+        )
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        print(f"Error rendering report: {exc}")
+        return [_last_update_span(), html.Div(str(exc), className="p-4 text-danger")]
 
 
 clientside_callback(
@@ -467,18 +483,4 @@ clientside_callback(
     Output('wrap-report', 'style'),
     Output('lineup_dropdown_container', 'style'),
     Input('tabs', 'active_tab'),
-)
-
-# Clientside Callback for Native Browser Print to PDF
-clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        window.print();
-        return '';
-    }
-    """,
-    Output('pdf-download-dummy', 'children'),
-    Input('btn-export-pdf', 'n_clicks'),
-    prevent_initial_call=True
 )

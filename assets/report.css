@@ -1,274 +1,478 @@
-/* ============================================================
-   A4 Landscape Post-Game Report – Dashboard & Print Styling
-   A4 Landscape = 297mm × 210mm
-   Content area = 277mm × 190mm (10mm padding each side)
-   ============================================================ */
+/* Report v2: liquid-glass chrome + opaque A4 landscape paper */
 
-/* ---- A4 Page Guide Container ---- */
-#report-canvas {
-    position: relative;
-    width: 297mm;
-    min-height: 210mm;
-    margin: 0 auto;
-    padding: 10mm;
-    background-color: #ffffff;
-    box-sizing: border-box;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    box-shadow: 0 0 0 1px #cbd5e1, 0 4px 16px rgba(0,0,0,0.08);
+.report-workspace {
+    --glass-bg: rgba(255, 255, 255, 0.42);
+    --glass-border: rgba(255, 255, 255, 0.55);
+    --glass-shadow: 0 10px 40px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+    background:
+        radial-gradient(1200px 600px at 20% 0%, rgba(148, 187, 233, 0.35), transparent 60%),
+        radial-gradient(900px 500px at 100% 20%, rgba(196, 181, 253, 0.28), transparent 55%),
+        #6b7280;
+    padding: 20px 16px 40px;
+    min-height: 70vh;
 }
 
-#report-canvas-list {
+.report-glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+}
+
+.report-toolbar {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    align-content: flex-start;
-    align-items: flex-start;
-}
-
-/* ---- A4 Page Width Indicator ---- */
-.a4-width-indicator {
-    position: relative;
-    width: 100%;
-    height: 14px;
-    border-left: 2px solid #3b82f6;
-    border-right: 2px solid #3b82f6;
-    border-top: 1px solid #3b82f6;
-    margin-bottom: 10px;
-    opacity: 0.45;
-}
-.a4-width-indicator::after {
-    content: "← A4 Landscape 297mm →";
-    position: absolute;
-    left: 50%;
-    top: -1px;
-    transform: translateX(-50%);
-    font-size: 9px;
-    color: #3b82f6;
-    background: #fff;
-    padding: 0 8px;
-    font-weight: 600;
-    white-space: nowrap;
-}
-
-/* ---- Page-break Ruler ---- */
-.a4-page-break-ruler {
-    position: relative;
-    width: 100%;
-    height: 0;
-    border: none;
-    border-top: 2px dashed #ef4444;
-    margin: 12px 0;
-    opacity: 0.6;
-}
-.a4-page-break-ruler::after {
-    content: attr(data-label);
-    position: absolute;
-    right: 0;
-    top: -18px;
-    font-size: 10px;
-    color: #ef4444;
-    background: #fff;
-    padding: 0 6px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-}
-
-/* ---- Report Section Title ---- */
-.report-section-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: #1e293b;
-    margin-bottom: 6px;
-    letter-spacing: 0.3px;
-}
-
-.report-team-label {
-    font-size: 12px;
-    font-weight: 700;
-    color: #475569;
-    margin-bottom: 4px;
-    margin-top: 4px;
-}
-
-/* ---- Card Block Container ---- */
-.report-block-card {
-    position: relative;
-    border: 1px solid #cbd5e1;
-    border-radius: 8px;
-    padding: 12px;
-    background-color: #ffffff;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    resize: both;
-    overflow: auto;
-    width: 100%;
-    max-width: 100%;
-    min-width: 200px;
-    min-height: 60px;
-    box-sizing: border-box;
-}
-
-/* ---- Sortable Ghost ---- */
-.sortable-ghost {
-    opacity: 0.4;
-    background-color: #e2e8f0 !important;
-    border: 2px dashed #94a3b8 !important;
-}
-
-/* ---- Control Bar ---- */
-.block-controls {
-    display: flex;
     align-items: center;
-    justify-content: flex-end;
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
-    margin: -12px -12px 8px -12px;
-    padding: 4px 8px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
+    gap: 8px;
+    padding: 10px 14px;
+    margin: 0 0 16px;
+    width: 100%;
+    box-sizing: border-box;
+    border-radius: 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    position: sticky;
+    top: 16px;
+    z-index: 40;
+    overflow: visible;
 }
 
-.drag-handle {
-    cursor: grab;
-    user-select: none;
-    font-size: 16px;
-    color: #94a3b8;
-    padding: 2px 6px;
-    margin-right: auto;
-}
-.drag-handle:active {
-    cursor: grabbing;
-    color: #475569;
+.report-chrome-btn {
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.35);
+    color: #0f172a;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
 }
 
-/* ---- AG Grid Material Theme: force NO scroll, full render ---- */
-.ag-theme-material {
-    --ag-font-size: 11px;
-    --ag-grid-size: 4px;
-    --ag-row-height: 28px;
-    --ag-header-height: 32px;
-    --ag-cell-horizontal-padding: 4px;
-    --ag-header-cell-horizontal-padding: 4px;
-}
-
-.center-aligned-header .ag-header-cell-label {
-    justify-content: center;
-    white-space: nowrap;
-}
-
-.report-block-card .ag-root-wrapper {
-    overflow-y: hidden !important;
-    overflow-x: hidden !important;
-}
-.report-block-card .ag-body-viewport {
-    overflow-y: hidden !important;
-    overflow-x: hidden !important;
-}
-.report-block-card .ag-center-cols-viewport {
-    overflow-y: hidden !important;
-    overflow-x: hidden !important;
-    min-height: unset !important;
-}
-.report-block-card .ag-center-cols-container {
-    width: 100% !important;
-}
-
-/* ---- Icon-only Toolbar Buttons ---- */
-.report-toolbar-btn {
-    font-size: 18px;
+.report-chrome-btn-icon {
     width: 36px;
     height: 36px;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
+    font-size: 16px;
+    position: relative;
 }
-.report-toolbar-btn-export {
-    font-size: 14px;
-    width: auto;
+
+.report-chrome-btn:hover,
+.report-image-upload:hover {
+    background: rgba(255, 255, 255, 0.55);
+}
+
+.report-toolbar-end {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.report-chrome-btn-pdf {
+    font-weight: 700;
+}
+
+.report-table-picker {
+    position: relative;
+}
+
+.report-table-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 50;
+    min-width: 220px;
+    padding: 6px;
+    border-radius: 12px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    flex-direction: column;
+    gap: 2px;
+}
+
+.report-table-picker.is-open .report-table-menu {
+    display: flex;
+}
+
+.report-table-menu-item {
+    border: none;
+    background: transparent;
+    color: #0f172a;
+    text-align: left;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.report-table-menu-item:hover {
+    background: rgba(255, 255, 255, 0.55);
+}
+
+#report-image-upload {
+    width: 36px;
     height: 36px;
-    padding: 0 12px;
+    flex: 0 0 36px;
+    overflow: hidden;
+}
+
+.report-image-upload {
+    width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border-width: 1px !important;
+    line-height: 36px !important;
+    overflow: hidden;
+    position: relative;
+}
+
+.report-image-upload input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+    font-size: 0;
+}
+
+.report-workspace-row {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.report-main {
+    width: 297mm;
+    flex: 0 0 297mm;
+    display: flex;
+    flex-direction: column;
+}
+
+.report-papers {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.report-paper {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 297mm;
+    height: 210mm;
+    background: #ffffff;
+    color: #0f172a;
+    padding: 6mm;
+    box-sizing: border-box;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+}
+
+.report-header {
+    text-align: center;
+    flex: 0 0 auto;
+    min-height: 0;
+    margin: 0 0 2px;
+    padding: 0;
+}
+
+.report-header-title {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 8px;
+}
+
+.report-header-meta {
+    font-size: 10px;
+    color: #334155;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.report-page-delete {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 6;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
-    font-weight: 600;
-    gap: 4px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.42);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    color: #0f172a;
+    cursor: pointer;
+    font-size: 12px;
 }
 
-/* ============================================================
-   Native Browser Print / Save-as-PDF Styling (@media print)
-   100% AG Grid & Fly.io Compatible (0 Server RAM, Vector PDF)
-   ============================================================ */
+.report-page-delete:hover {
+    background: rgba(255, 255, 255, 0.7);
+}
+
+.report-page-delete.is-disabled,
+.report-paper:only-child .report-page-delete {
+    display: none;
+}
+
+.report-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+}
+
+#report-papers .grid-stack-item-content {
+    overflow: hidden !important;
+}
+
+.report-block-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    overflow: hidden;
+}
+
+.grid-stack-item-handle {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    z-index: 2;
+    cursor: move;
+    font-size: 12px;
+    color: #94a3b8;
+    padding: 2px 4px;
+    user-select: none;
+    line-height: 1;
+}
+
+.report-block-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 22px 0 4px;
+    min-height: 22px;
+    flex-shrink: 0;
+}
+
+.report-block-title-row .grid-stack-item-handle {
+    position: static;
+    flex: 0 0 auto;
+    top: auto;
+    left: auto;
+}
+
+.report-block-card-table .report-block-body {
+    height: auto;
+}
+
+.report-block-remove {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    z-index: 2;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.grid-stack-item-content.report-block-card {
+    inset: 0;
+}
+
+.report-block-body {
+    padding: 2px 4px 4px;
+    height: 100%;
+    overflow: hidden;
+}
+
+.report-block-title,
+.report-table-caption {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1e3a8a;
+    margin-bottom: 4px;
+}
+
+.report-text-block {
+    min-height: 100%;
+    font-size: 13px;
+    line-height: 1.45;
+    outline: none;
+    white-space: pre-wrap;
+}
+
+.report-text-block:empty::before {
+    content: attr(data-placeholder);
+    color: #94a3b8;
+    pointer-events: none;
+}
+
+.report-spacer {
+    width: 100%;
+    height: 100%;
+    background: #fff;
+}
+
+.report-image-block {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.report-image-placeholder {
+    color: #94a3b8;
+    font-size: 12px;
+    text-align: center;
+    padding: 16px;
+}
+
+.report-page-list {
+    position: sticky;
+    top: 16px;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 8px;
+    border-radius: 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+}
+
+.report-page-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.35);
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.report-page-btn:hover,
+.report-page-btn.is-active {
+    background: rgba(255, 255, 255, 0.7);
+}
+
+.report-dbc-table {
+    font-size: 11px;
+    margin-bottom: 0;
+    color: #0f172a;
+    background-color: #ffffff;
+    border-color: #dee2e6;
+}
+
+.report-dbc-table th,
+.report-dbc-table td {
+    padding: 2px 6px;
+    white-space: nowrap;
+    color: #0f172a;
+    border-color: #dee2e6;
+    background-color: inherit;
+}
+
+.report-dbc-table tbody tr:nth-of-type(odd) {
+    background-color: #f4f6f8;
+}
+
+.report-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.report-dialog[hidden] {
+    display: none !important;
+}
+
+.report-dialog-card {
+    min-width: 280px;
+    max-width: 420px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(22px) saturate(180%);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    color: #0f172a;
+}
+
+.report-dialog-message {
+    margin: 0 0 14px;
+    font-size: 14px;
+}
+
+.report-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.report-dialog-ok {
+    font-weight: 700;
+}
+
+.report-item-template {
+    display: none !important;
+}
+
 @media print {
-    @page {
-        size: A4 landscape;
-        margin: 8mm;
-    }
-
-    body, html {
-        background: #ffffff !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-    }
-
-    /* Hide top nav, navbar, tabs, toolbars, block controls */
-    nav,
-    .navbar,
-    .navbar-expand,
-    .navbar-collapse,
     .no-print,
-    .nav-tabs,
-    .tab-content > div:not(#tab_content),
-    .block-controls,
-    .a4-width-indicator,
-    .a4-page-break-ruler,
-    .dcc-upload-area,
-    header,
-    footer,
-    #lineup_dropdown_container {
+    #report-toolbar,
+    #report-page-list,
+    .grid-stack-item-handle,
+    .report-block-remove,
+    .report-page-delete,
+    .report-dialog {
         display: none !important;
     }
-
-    #report-canvas {
-        box-shadow: none !important;
-        border: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        width: 100% !important;
-        max-width: 100% !important;
+    .report-workspace {
+        background: #fff;
+        padding: 0;
+        min-height: 0;
     }
-
-    .report-block-card {
-        resize: none !important;
-        overflow: visible !important;
-        border: none !important;
-        box-shadow: none !important;
-        margin-bottom: 12px !important;
-        padding: 0 !important;
-        page-break-inside: avoid;
-        break-inside: avoid;
+    .report-workspace-row {
+        display: block;
     }
-
-    textarea, input {
-        border: none !important;
-        background: transparent !important;
-        resize: none !important;
-        padding: 0 !important;
-        box-shadow: none !important;
+    .report-paper {
+        box-shadow: none;
+        page-break-after: always;
+        margin: 0;
     }
-
-    .ag-root-wrapper,
-    .ag-body-viewport,
-    .ag-center-cols-viewport {
-        overflow: visible !important;
-        min-height: unset !important;
-    }
-
-    .ag-theme-material {
-        width: 100% !important;
-        border: 1px solid #cbd5e1 !important;
+    @page {
+        size: A4 landscape;
+        margin: 0;
     }
 }
