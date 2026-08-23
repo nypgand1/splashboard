@@ -5,32 +5,54 @@ This file is the source of truth for product behavior. Tests and later feature w
 ## Scope
 
 - Web dashboard for Taipei Fubon Braves schedule and single-game views.
-- UI strings are English, including loading, empty, and error copy.
-- Rotation is Plotly only, with no separate dark mode.
-- Report is a multi-page A4 landscape canvas. PDF export is in scope (browser-side).
-- DBC theme is **LITERA**. Notes use a JS-side Tiptap editor (not a Dash/React component) so GridStack `cloneNode` works.
+- UI theme is **Scheme A: Braves Japanese Clean & Modern (日式簡約・青空水無月 Light Mode)**, inspired by the official **Taipei Fubon Braves** visual identity:
+  - `--bg`: `#f8fafc` (pure cool light white background)
+  - `--navbar-bg`: `rgba(255, 255, 255, 0.9)` with `backdrop-filter: blur(16px)`
+  - `--navbar-border`: `#00b4d8` (2px solid cyan bottom border)
+  - `--brand`: `#0077b6` (Royal Blue) & `--brand-2`: `#00b4d8` (Braves Cyan)
+  - `--thead-bg`: `#f1f5f9` (solid light gray-blue header with 2px `#00b4d8` bottom line)
+  - `--thead-text`: `#0f172a` (deep slate header text)
+  - `--row-alt`: `#fbfdff` (clean subtle zebra striping)
+  - `--row-hover`: `#e0f2fe` (gentle cyan hover highlight)
+  - `--card-bg`: `#ffffff` (white card containers with 10px radius & `#e2e8f0` border)
+- Tabs: Top radius 10px, active tab filled with `linear-gradient(135deg, #0077b6, #00b4d8)` and pure white text.
+- Tables & Alignment:
+  - Text columns (Team, Player) left-aligned; all numeric / stat columns right-aligned.
+  - Team summary tables have a 3.5px left indicator bar (Home: `#0077b6`, Away: `#94a3b8`).
+  - Player detail tables prefixed with 8px dot (Home: `#00b4d8`, Away: `#94a3b8`).
 
 ## Pages
 
 ### Home `/`
 
 - Show `Loading...`, then load the current-season schedule asynchronously.
-- Columns: Time, Game Type, Venue, Home Team, Score, Away Team.
-- For `PENDING` / `IN_PROGRESS` / `FINISHED` / `CONFIRMED`, the score is a link to `/game/<fixtureId>`.
+- Rendered via `dag.AgGrid` (`ag-theme-alpine braves-clean-ag-grid`) with `domLayout="autoHeight"` (no pagination), sortable and filterable columns.
+- Columns: Time, Status, Game Type, Venue, Home Team, Score, Away Team.
+- **Status 欄位**：
+  - `FINISHED` / `CONFIRMED`: 沉穩淡灰徽章 (`#f1f5f9` + `#475569`)。
+  - `IN_PROGRESS`: 高亮珊瑚紅徽章 (`#fee2e2` + `#dc2626`)。
+  - `PENDING`: 醒目青藍光環徽章 (`#e0f2fe` + `#0284c7`)。
+- **Score 欄位**：
+  - 完賽/進行中：顯示實時比分 `[88 : 79](/game/<fixtureId>)`。
+  - 未開賽 (`PENDING`)：顯示 `[- : -](/game/<fixtureId>)`。
+- **互動導航**：點擊賽程列任一處或比分連結，均可直達該場賽事頁面 `/game/<fixtureId>`。
 - On Synergy failure: `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception).
 - When the season list is empty: `No games available.`
 
 ### Game `/game/<game_id>`
 
-Top tabs, left to right:
+Top tabs, left to right (rendered via DMC `dmc.Tabs` with `variant="pills"` and Dark Liquid Glass container):
 
-1. Box Score
-2. Rotation
-3. Play-By-Play
-4. Lineup Stats
-5. Report — **finished games only**. Live games (`IN_PROGRESS`, `PENDING`, unknown, empty) do not show the Report tab. If the status is live while Report is active, switch to Box Score.
+1. Box Score (tab_id: `tab-bs`)
+2. Rotation (tab_id: `tab-rotation`)
+3. Play-By-Play (tab_id: `tab-pbp`)
+4. Lineup Stats (tab_id: `tab-lineup`)
+5. Report (tab_id: `tab-report`) — **finished games only**. Live games (`IN_PROGRESS`, `PENDING`, unknown, empty) do not show the Report tab (`display: none`). If the status is live while Report is active, switch to Box Score.
 
-Box Score is the default. Tab panes stay mounted. Hidden-tab render callbacks return `no_update` and do not rebuild children.
+Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab render callbacks gate on `Input('tabs', 'value')`, return `no_update`, and do not rebuild children.
+- Quarter tables (points, fouls, timeouts) and team summary tables (four factors, advanced stats, key stats) are rendered via DMC `dmc.Table` (with `dmc.SimpleGrid` for responsive quarter stats layout).
+- Player Stats and Lineup Stats tables use `dag.AgGrid` with `domLayout="autoHeight"` and sortable/filterable columns for interactive exploration.
+- Report canvas tables strictly use `dmc.Table` (per ADR 0001) for stable A4 rendering and PDF export. No `dbc.Table`, `dbc.Row`, or `dbc.Col` is used anywhere in the codebase.
 
 A `dcc.Store` that is `None` or invalid JSON is treated as an empty object. Callbacks must not crash.
 

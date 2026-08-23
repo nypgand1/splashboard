@@ -1,21 +1,86 @@
-/* Report v2: liquid-glass chrome + opaque A4 landscape paper */
+/* ==========================================================================
+   Scheme A: Braves Japanese Clean & Modern (Light Mode)
+   Design Tokens & Global Styles
+   ========================================================================== */
 
+:root {
+    --bg: #f8fafc;
+    --navbar-bg: rgba(255, 255, 255, 0.9);
+    --navbar-border: #00b4d8;
+    --brand: #0077b6;
+    --brand-2: #00b4d8;
+    --tab-inactive: #64748b;
+    --tab-inactive-bg: #eef2f6;
+    --thead-bg: #f1f5f9;
+    --thead-text: #0f172a;
+    --row-alt: #fbfdff;
+    --row-hover: #e0f2fe;
+    --text-main: #1e293b;
+    --text-sub: #64748b;
+    --border: #e2e8f0;
+    --card-bg: #ffffff;
+}
+
+body {
+    background-color: #dbe1e8 !important;
+    color: var(--text-main) !important;
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif !important;
+    margin: 0;
+    padding: 0;
+}
+
+/* Outer Canvas Container */
+.app-canvas-container {
+    background-color: #dbe1e8;
+    min-height: 100vh;
+    padding: 24px;
+    box-sizing: border-box;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+/* App Main Device Frame Card */
+.app-device-frame {
+    width: 100%;
+    max-width: 1440px;
+    background-color: #ffffff;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15);
+    overflow: hidden;
+}
+
+.app-navbar {
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+}
+
+/* Content Area inside Frame */
+.app-main-content {
+    background-color: var(--bg);
+    padding: 18px;
+    min-height: calc(100vh - 104px);
+    box-sizing: border-box;
+}
+
+/* Report v2: liquid-glass chrome + opaque A4 landscape paper */
 .report-workspace {
-    --glass-bg: rgba(255, 255, 255, 0.42);
-    --glass-border: rgba(255, 255, 255, 0.55);
-    --glass-shadow: 0 10px 40px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+    --glass-bg: rgba(255, 255, 255, 0.75);
+    --glass-border: #e2e8f0;
+    --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
     background:
-        radial-gradient(1200px 600px at 20% 0%, rgba(148, 187, 233, 0.35), transparent 60%),
-        radial-gradient(900px 500px at 100% 20%, rgba(196, 181, 253, 0.28), transparent 55%),
-        #6b7280;
+        radial-gradient(1200px 600px at 15% 0%, rgba(0, 180, 216, 0.08), transparent 55%),
+        radial-gradient(900px 500px at 85% 20%, rgba(0, 119, 182, 0.06), transparent 50%),
+        #f8fafc;
     padding: 20px 16px 40px;
     min-height: 70vh;
 }
 
 .report-glass {
     background: var(--glass-bg);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow);
 }
@@ -31,24 +96,44 @@
     box-sizing: border-box;
     border-radius: 16px;
     background: var(--glass-bg);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--glass-border);
     box-shadow: var(--glass-shadow);
     position: sticky;
-    top: 16px;
+    top: 118px;
     z-index: 40;
     overflow: visible;
 }
 
 .report-chrome-btn {
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    background: rgba(255, 255, 255, 0.35);
-    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #1e293b;
     border-radius: 999px;
     padding: 6px 12px;
     font-size: 13px;
     cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.report-chrome-btn:hover {
+    background: #f1f5f9;
+    border-color: #00b4d8;
+    color: #0077b6;
+}
+
+.visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
 }
 
 .report-chrome-btn-icon {
@@ -133,9 +218,19 @@
     padding: 0 !important;
     margin: 0 !important;
     border-width: 1px !important;
-    line-height: 36px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     overflow: hidden;
     position: relative;
+    box-sizing: border-box;
+}
+
+.report-image-upload i.bi-image {
+    font-size: 16px;
+    line-height: 1;
+    display: inline-block;
+    pointer-events: none;
 }
 
 .report-image-upload input[type="file"] {
@@ -523,7 +618,7 @@
 
 .report-page-list {
     position: sticky;
-    top: 16px;
+    top: 118px;
     z-index: 30;
     display: flex;
     flex-direction: column;
@@ -541,15 +636,20 @@
     width: 36px;
     height: 36px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    background: rgba(255, 255, 255, 0.35);
+    border: 1px solid rgba(0, 180, 216, 0.25);
+    background: rgba(0, 180, 216, 0.08);
+    color: #f1f5f9;
     cursor: pointer;
     font-weight: 600;
+    transition: all 0.15s ease;
 }
 
 .report-page-btn:hover,
 .report-page-btn.is-active {
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(0, 180, 216, 0.3);
+    border-color: rgba(0, 180, 216, 0.6);
+    color: #ffffff;
+    box-shadow: 0 0 12px rgba(0, 180, 216, 0.35);
 }
 
 .report-dbc-table {
@@ -617,6 +717,195 @@
 
 .report-item-template {
     display: none !important;
+}
+
+/* ==========================================================================
+   Scheme A: Tabs Styling
+   ========================================================================== */
+
+.braves-clean-tabs .mantine-Tabs-list {
+    border-bottom: 1px solid var(--border);
+    gap: 4px;
+}
+
+.braves-clean-tabs .mantine-Tabs-tab {
+    border-top-left-radius: 10px !important;
+    border-top-right-radius: 10px !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border: 1px solid var(--border) !important;
+    border-bottom: none !important;
+    background-color: var(--tab-inactive-bg) !important;
+    color: var(--tab-inactive) !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    padding: 8px 18px !important;
+    transition: all 0.15s ease !important;
+}
+
+.braves-clean-tabs .mantine-Tabs-tab:hover {
+    background-color: #e2e8f0 !important;
+    color: var(--text-main) !important;
+}
+
+.braves-clean-tabs .mantine-Tabs-tab[data-active="true"] {
+    background: linear-gradient(135deg, var(--brand), var(--brand-2)) !important;
+    color: #ffffff !important;
+    border-color: var(--brand) !important;
+    box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25) !important;
+}
+
+/* ==========================================================================
+   Scheme A: Summary Tables & Cards
+   ========================================================================== */
+
+.braves-card-wrapper {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+}
+
+.braves-clean-table {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+.braves-clean-table th {
+    background-color: var(--thead-bg);
+    color: var(--thead-text);
+    font-weight: 700;
+    font-size: 11px;
+    border-bottom: 2px solid var(--navbar-border);
+    padding: 6px 8px;
+}
+
+.braves-clean-table td {
+    padding: 5px 8px;
+    font-size: 12px;
+    color: var(--text-main);
+    border-bottom: 1px solid var(--border);
+}
+
+.braves-clean-row:hover {
+    background-color: var(--row-hover) !important;
+}
+
+/* ==========================================================================
+   Scheme A: AG-Grid Light Theme Customizations
+   ========================================================================== */
+
+.ag-theme-alpine.braves-clean-ag-grid {
+    --ag-background-color: #ffffff !important;
+    --ag-header-background-color: #f8fafc !important;
+    --ag-odd-row-background-color: #ffffff !important;
+    --ag-border-color: #e2e8f0 !important;
+    --ag-row-border-color: #f1f5f9 !important;
+    --ag-header-column-separator-color: #cbd5e1 !important;
+    --ag-row-hover-color: #e0f2fe !important;
+    --ag-selected-row-background-color: #bae6fd !important;
+    --ag-foreground-color: #1e293b !important;
+    --ag-header-foreground-color: #0f172a !important;
+    --ag-font-size: 13px !important;
+    --ag-font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-header {
+    border-bottom: 1px solid #e2e8f0 !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-header-cell {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    padding-top: 9px !important;
+    padding-bottom: 9px !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-cell {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    padding-top: 7px !important;
+    padding-bottom: 7px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-row {
+    cursor: pointer !important;
+    transition: background-color 0.12s ease !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-row:hover {
+    background-color: #e0f2fe !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-header-cell-label {
+    justify-content: flex-start;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-right-aligned-header .ag-header-cell-label {
+    justify-content: flex-end;
+}
+
+.schedule-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+
+.schedule-badge-pending {
+    background: #e0f2fe !important;
+    border: 1px solid #00b4d8 !important;
+    color: #0284c7 !important;
+    box-shadow: 0 1px 4px rgba(0, 180, 216, 0.15) !important;
+}
+
+.schedule-badge-live {
+    background: #fee2e2 !important;
+    border: 1px solid #ef4444 !important;
+    color: #dc2626 !important;
+    box-shadow: 0 1px 4px rgba(239, 68, 68, 0.2) !important;
+    animation: pulse 1.5s infinite;
+}
+
+.schedule-badge-finished {
+    background: #f1f5f9 !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #475569 !important;
+}
+
+.schedule-score-link {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 13px;
+    color: #0077b6 !important;
+    background: #e0f2fe;
+    border: 1px solid #bae6fd;
+    text-decoration: none;
+    transition: all 0.15s ease;
+}
+
+.schedule-score-link:hover {
+    background: #0077b6;
+    color: #ffffff !important;
+    border-color: #0077b6;
+    box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25);
 }
 
 @media print {

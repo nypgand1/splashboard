@@ -1776,3 +1776,41 @@
         initGrids();
     }
 })();
+
+// AG-Grid custom cell renderers for Dash AG-Grid
+var dagFuncs = window.dashAgGridFunctions = window.dashAgGridFunctions || {};
+var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
+
+dagComponentFuncs.ScheduleStatusBadge = function (props) {
+    var status = (props.value || '').trim();
+    var cls = 'schedule-badge schedule-badge-finished';
+    var text = status || 'UNKNOWN';
+    if (status === 'PENDING') {
+        cls = 'schedule-badge schedule-badge-pending';
+        text = 'PENDING';
+    } else if (status === 'IN_PROGRESS') {
+        cls = 'schedule-badge schedule-badge-live';
+        text = 'LIVE 🔴';
+    } else if (status === 'FINISHED' || status === 'CONFIRMED') {
+        cls = 'schedule-badge schedule-badge-finished';
+        text = status;
+    }
+    return React.createElement('span', { className: cls }, text);
+};
+
+dagComponentFuncs.ScheduleScoreLink = function (props) {
+    var row = props.data || {};
+    var status = (row.rawStatus || '').trim();
+    var fixtureId = row.fixtureId || '';
+    var text = props.value || '- : -';
+    if (status === 'PENDING') {
+        text = '- : -';
+    }
+    return React.createElement('a', {
+        href: '/game/' + fixtureId,
+        className: 'schedule-score-link',
+        onClick: function(e) {
+            e.stopPropagation();
+        }
+    }, text);
+};

@@ -53,3 +53,29 @@ class HiddenTabTests(unittest.TestCase):
         )
         self.assertEqual(done_style, {})
         self.assertIs(done_tab, no_update)
+
+
+class TabsDmcContractTests(unittest.TestCase):
+    def test_game_page_uses_dmc_tabs(self):
+        import os
+        page_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'game.py')
+        with open(page_path, 'r') as f:
+            code = f.read()
+        self.assertIn('dmc.Tabs', code)
+        self.assertIn('dmc.TabsList', code)
+        self.assertIn('dmc.TabsTab', code)
+        self.assertNotIn('dbc.Tabs', code)
+        self.assertNotIn('dbc.Tab(', code)
+
+
+class GridDmcContractTests(unittest.TestCase):
+    def test_game_page_uses_dmc_simple_grid_without_dbc_row_col(self):
+        import os
+        page_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'game.py')
+        with open(page_path, 'r') as f:
+            code = f.read()
+        self.assertIn('dmc.SimpleGrid', code)
+        self.assertNotIn('dbc.Row', code)
+        self.assertNotIn('dbc.Col', code)
+
+

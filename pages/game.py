@@ -3,7 +3,7 @@ import io
 import json
 
 from dash import dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
-import dash_bootstrap_components as dbc
+import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
@@ -35,21 +35,34 @@ def layout(game_id=None):
     return html.Div([
         html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
         
-        # Upper Tabs
-        dbc.Tabs([
-            dbc.Tab(label='Box Score', tab_id='tab-bs'),
-            dbc.Tab(label='Rotation', tab_id='tab-rotation'),
-            dbc.Tab(label='Play-By-Play', tab_id='tab-pbp'),
-            dbc.Tab(label='Lineup Stats', tab_id='tab-lineup'),
-            dbc.Tab(
-                label='Report',
-                tab_id='tab-report',
-                id='report-tab',
-                tab_style={'display': 'none'},
-            ),
-        ],
-        id='tabs',
-        active_tab='tab-bs',
+        # Upper Tabs (DMC Tabs with Dark Liquid Glass container, sticky below 56px Navbar)
+        dmc.Tabs(
+            [
+                dmc.TabsList(
+                    [
+                        dmc.TabsTab("Box Score", value="tab-bs", leftSection=html.I(className="bi bi-table")),
+                        dmc.TabsTab("Rotation", value="tab-rotation", leftSection=html.I(className="bi bi-bar-chart-steps")),
+                        dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=html.I(className="bi bi-list-ol")),
+                        dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=html.I(className="bi bi-people")),
+                        dmc.TabsTab(
+                            "Report",
+                            value="tab-report",
+                            id="report-tab",
+                            leftSection=html.I(className="bi bi-file-earmark-richtext"),
+                            style={"display": "none"},
+                        ),
+                    ],
+                )
+            ],
+            id="tabs",
+            value="tab-bs",
+            variant="default",
+            className="braves-clean-tabs",
+            style={
+                "margin": "0 0 16px 0",
+                "padding": "0",
+                "borderBottom": "none",
+            }
         ),
         
         # Lineup Dropdown Container
@@ -191,10 +204,10 @@ def set_interval_disabled(match_info_store):
 
 
 @callback(
-    Output('report-tab', 'tab_style'),
-    Output('tabs', 'active_tab'),
+    Output('report-tab', 'style'),
+    Output('tabs', 'value'),
     Input('match_info_store', 'data'),
-    State('tabs', 'active_tab'),
+    State('tabs', 'value'),
 )
 def toggle_report_tab(match_info_store, active_tab):
     info = safe_loads(match_info_store)
@@ -240,7 +253,7 @@ def update_lineup_store(n, game_id):
     Output('rotation_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('tabs', 'active_tab'),
+     Input('tabs', 'value'),
      Input('match_info_store', 'data')],
 )
 def update_rotation_store(n, game_id, active_tab, match_info_store):
@@ -284,12 +297,242 @@ def _loading_placeholder():
     return html.Div("Loading...", className="p-4 text-center text-muted")
 
 
+def _parse_numeric_stat(val):
+    if val is None or pd.isna(val):
+        return None
+    s = str(val).strip()
+    if not s or s in ('nan', 'None', '—', '-'):
+        return None
+    # If percentage in parentheses e.g. "16-47 (34.0%)" or "34.0%"
+    if '%' in s:
+        try:
+            # Extract number before %
+            import re
+            m = re.search(r'([\d\.]+)%', s)
+            if m:
+                return float(m.group(1))
+        except Exception:
+            pass
+    # If time MM:SS
+    if ':' in s and len(s.split(':')) == 2:
+        try:
+            parts = s.split(':')
+            return float(parts[0]) * 60 + float(parts[1])
+        except Exception:
+            pass
+    # Standard float
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _dmc_table_from_df(df, is_team_summary=True, title=None):
+    if df is None or df.empty:
+        return html.Div("—", className="text-muted fst-italic text-center p-2")
+    
+    # Alignment: Team/Player left, numeric/stats right
+    def _align(col):
+        return "left" if col in ('Team', 'Player', 'Venue', 'Game Type', 'Time', 'Status') else "right"
+
+    # Precalculate winning values for each column across rows (team summary tables have 2 rows: Home vs Away)
+    col_winners = {}
+    if is_team_summary and len(df) == 2:
+        for col in df.columns:
+            if col in ('Team', 'Min'):
+                continue
+            val0 = _parse_numeric_stat(df.iloc[0][col])
+            val1 = _parse_numeric_stat(df.iloc[1][col])
+            if val0 is not None and val1 is not None and val0 != val1:
+                # Lower is better for TOV and PF
+                if col in ('TOV', 'PF'):
+                    col_winners[col] = 0 if val0 < val1 else 1
+                else:
+                    col_winners[col] = 0 if val0 > val1 else 1
+
+    header = [html.Tr([
+        html.Th(
+            col,
+            style={
+                "textAlign": _align(col),
+                "padding": "7px 10px",
+                "fontSize": "13px",
+                "fontWeight": 700,
+                "color": "#0f172a",
+                "borderBottom": "1px solid #e2e8f0",
+                "backgroundColor": "#f8fafc",
+                "whiteSpace": "nowrap",
+            }
+        ) for col in df.columns
+    ])]
+
+    rows = []
+    for row_idx in range(len(df)):
+        team_stripe_style = {}
+        if is_team_summary and 'Team' in df.columns:
+            stripe_color = "#0077b6" if row_idx == 0 else "#94a3b8"
+            team_stripe_style = {"borderLeft": f"3.5px solid {stripe_color}"}
+
+        cells = []
+        for c_idx, col in enumerate(df.columns):
+            val = df.iloc[row_idx][col]
+            if pd.isna(val) or val is None or str(val).strip() in ('nan', 'None'):
+                val_str = ""
+            else:
+                val_str = str(val)
+
+            # Determine bolding: Only winning row in column is bold (team name itself is regular or semi-bold)
+            is_winner = col_winners.get(col) == row_idx
+            font_weight = 700 if is_winner else 400
+
+            cell_style = {
+                "textAlign": _align(col),
+                "padding": "7px 10px",
+                "fontSize": "13px",
+                "fontWeight": font_weight,
+                "color": "#1e293b",
+                "whiteSpace": "nowrap",
+            }
+            if c_idx == 0 and team_stripe_style:
+                cell_style.update(team_stripe_style)
+
+            cells.append(html.Td(val_str, style=cell_style))
+
+        rows.append(html.Tr(
+            cells,
+            className="braves-clean-row",
+            style={"backgroundColor": "#ffffff"}
+        ))
+
+    table = dmc.Table(
+        [html.Thead(header), html.Tbody(rows)],
+        withTableBorder=False,
+        withColumnBorders=False,
+        className="braves-clean-table",
+        style={"width": "100%"}
+    )
+
+    if title:
+        return html.Div(
+            [
+                html.Div(
+                    title.upper(),
+                    style={
+                        "fontSize": "11px",
+                        "fontWeight": 700,
+                        "letterSpacing": "0.05em",
+                        "color": "#64748b",
+                        "padding": "0 0 6px 0",
+                    }
+                ),
+                table
+            ],
+            className="braves-card-wrapper",
+            style={
+                "backgroundColor": "#ffffff",
+                "borderRadius": "10px",
+                "border": "1px solid #e2e8f0",
+                "boxShadow": "0 1px 3px rgba(0,0,0,0.03)",
+                "padding": "12px 14px",
+                "overflow": "hidden",
+            }
+        )
+    return html.Div(
+        table,
+        className="braves-card-wrapper",
+        style={
+            "backgroundColor": "#ffffff",
+            "borderRadius": "10px",
+            "border": "1px solid #e2e8f0",
+            "boxShadow": "0 1px 3px rgba(0,0,0,0.03)",
+            "padding": "12px 14px",
+            "overflow": "hidden",
+        }
+    )
+
+
+def _ag_grid_from_df(df, page_size=None, filterable_cols=None):
+    if df is None or df.empty:
+        return html.Div("—", className="text-muted fst-italic text-center p-2")
+    
+    column_defs = []
+    for c in df.columns:
+        align = "left" if c in ('Player', 'Team', 'Lineup', 'Lineups') or 'lineup' in c.lower() else "right"
+        cell_style = {"textAlign": align}
+        
+        # Bolding rules: Player name or Lineup combinations bold
+        if c in ('Player', 'Lineup', 'Lineups') or 'lineup' in c.lower():
+            cell_style["fontWeight"] = "700"
+
+        # Filter rules:
+        has_filter = bool(filterable_cols and (c in filterable_cols or any(fc.lower() in c.lower() for fc in filterable_cols)))
+
+        # Column width settings: Lineup needs generous minWidth to prevent truncating player names
+        col_width_props = {}
+        if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
+            col_width_props["minWidth"] = 320
+            col_width_props["flex"] = 4
+        elif c in ('Player', 'Team'):
+            col_width_props["minWidth"] = 110
+            col_width_props["flex"] = 1.8
+        elif c in ('2PM-A (%)', '3PM-A (%)', 'FTM-A (%)'):
+            col_width_props["minWidth"] = 100
+            col_width_props["flex"] = 1.2
+        elif c == 'Min':
+            col_width_props["minWidth"] = 65
+            col_width_props["flex"] = 0.9
+        elif c in ('PM', '+/-'):
+            col_width_props["minWidth"] = 55
+            col_width_props["flex"] = 0.8
+        else:
+            col_width_props["minWidth"] = 45
+            col_width_props["flex"] = 0.75
+
+        col_def = {
+            "field": c,
+            "headerName": c,
+            "sortable": True,
+            "filter": has_filter,
+            "type": "rightAligned" if align == "right" else None,
+            "cellStyle": cell_style,
+            "headerClass": f"ag-header-align-{align}",
+            **col_width_props
+        }
+        column_defs.append(col_def)
+
+    dash_options = {
+        "domLayout": "autoHeight",
+        "suppressHorizontalScroll": False,
+    }
+    if page_size:
+        dash_options["pagination"] = True
+        dash_options["paginationPageSize"] = page_size
+
+    return html.Div(
+        dag.AgGrid(
+            rowData=df.to_dict('records'),
+            columnDefs=column_defs,
+            defaultColDef={"sortable": True, "filter": False, "resizable": True},
+            dashGridOptions=dash_options,
+            className="ag-theme-alpine braves-clean-ag-grid",
+            style={'width': '100%'}
+        ),
+        className="braves-grid-wrap",
+        style={
+            "borderRadius": "10px",
+            "border": "1px solid #e2e8f0",
+            "overflow": "hidden",
+            "backgroundColor": "#ffffff",
+            "marginBottom": "20px",
+            "boxShadow": "0 1px 3px rgba(0,0,0,0.03)"
+        }
+    )
+
+
 def render_bs_children(bs_store):
-    if not bs_store:
-        return _loading_placeholder()
     bs_dict = safe_loads(bs_store)
     if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return _loading_placeholder()
+        return [_last_update_span(), _loading_placeholder()]
 
     qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
     qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
@@ -303,23 +546,68 @@ def render_bs_children(bs_store):
     t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
     k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
 
+    # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
+    row1 = dmc.SimpleGrid(
+        cols={"base": 1, "sm": 3},
+        spacing="12px",
+        children=[
+            _dmc_table_from_df(qt_pts_df, is_team_summary=True, title="Score"),
+            _dmc_table_from_df(qt_foul_df, is_team_summary=True, title="Fouls"),
+            _dmc_table_from_df(qt_tout_df, is_team_summary=True, title="Timeouts"),
+        ],
+        style={"marginBottom": "12px"}
+    )
+
+    # Row 2: 2-column with titles 'POSS & 4 FACTORS' and 'PAINT / 2nd CHANCE / FASTBREAK / OFF TOV / BENCH' (gap 12px)
+    row2 = dmc.SimpleGrid(
+        cols={"base": 1, "sm": 2},
+        spacing="12px",
+        children=[
+            _dmc_table_from_df(t_adv_df, is_team_summary=True, title="Poss & 4 Factors"),
+            _dmc_table_from_df(k_df, is_team_summary=True, title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench"),
+        ],
+        style={"marginBottom": "12px"}
+    )
+
+    # Row 3: Full Team Box Score
+    row3 = html.Div(_dmc_table_from_df(t_df, is_team_summary=True), style={"marginBottom": "12px"})
+
     children = [
         _last_update_span(),
-        html.Div(
-            dbc.Row([
-                dbc.Col(dbc.Table.from_dataframe(qt_pts_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                dbc.Col(dbc.Table.from_dataframe(qt_foul_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                dbc.Col(dbc.Table.from_dataframe(qt_tout_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-            ])
-        ),
-        dbc.Table.from_dataframe(t_adv_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
-        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
-        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
+        row1,
+        row2,
+        row3,
     ]
-    for team_name, p_json in sorted(bs_dict.get('p_df_dict', {}).items()):
-        children.append(html.H4(team_name))
+
+    p_dict = bs_dict.get('p_df_dict', {})
+    for idx, (team_name, p_json) in enumerate(sorted(p_dict.items())):
+        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+        title_section = html.Div(
+            [
+                html.Span(
+                    style={
+                        "display": "inline-block",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "50%",
+                        "backgroundColor": dot_color,
+                        "marginRight": "8px",
+                    }
+                ),
+                html.Span(
+                    team_name,
+                    style={
+                        "fontSize": "16px",
+                        "fontWeight": 800,
+                        "color": "#0f172a",
+                    }
+                ),
+            ],
+            style={"display": "flex", "alignItems": "center", "margin": "20px 0 10px 2px"}
+        )
+        children.append(title_section)
         p_df = pd.read_json(io.StringIO(p_json), orient='split')
-        children.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+        children.append(_ag_grid_from_df(p_df, page_size=None))
     return children
 
 
@@ -357,7 +645,7 @@ def render_pbp_children(pbp_store):
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
         dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
         columnSize="autoSize",
-        className="ag-theme-alpine",
+        className="ag-theme-alpine braves-clean-ag-grid",
         style={'width': '100%'}
     )
     return [_last_update_span(), grid]
@@ -368,10 +656,34 @@ def render_lineup_children(lineup_store, lineup_size):
     if not lineup_dict:
         return [_last_update_span(), _loading_placeholder()]
     children = [_last_update_span()]
-    for team_name, l_json in sorted(lineup_dict.items()):
-        children.append(html.H4(team_name))
+    for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
+        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+        title_section = html.Div(
+            [
+                html.Span(
+                    style={
+                        "display": "inline-block",
+                        "width": "8px",
+                        "height": "8px",
+                        "borderRadius": "50%",
+                        "backgroundColor": dot_color,
+                        "marginRight": "8px",
+                    }
+                ),
+                html.Span(
+                    team_name,
+                    style={
+                        "fontSize": "16px",
+                        "fontWeight": 800,
+                        "color": "#0f172a",
+                    }
+                ),
+            ],
+            style={"display": "flex", "alignItems": "center", "margin": "20px 0 10px 2px"}
+        )
+        children.append(title_section)
         l_df = pd.read_json(io.StringIO(l_json), orient='split')
-        children.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+        children.append(_ag_grid_from_df(l_df, page_size=None, filterable_cols=['Lineup', 'Lineups']))
     return children
 
 
@@ -390,7 +702,7 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
 @callback(
     Output('pane-bs', 'children'),
     Input('bs_store', 'data'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
 def update_pane_bs(bs_store, active_tab):
     if active_tab != 'tab-bs':
@@ -401,7 +713,7 @@ def update_pane_bs(bs_store, active_tab):
 @callback(
     Output('pane-rotation', 'children'),
     Input('rotation_store', 'data'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
 def update_pane_rotation(rotation_store, active_tab):
     if active_tab != 'tab-rotation':
@@ -412,7 +724,7 @@ def update_pane_rotation(rotation_store, active_tab):
 @callback(
     Output('pane-pbp', 'children'),
     Input('pbp_store', 'data'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
 def update_pane_pbp(pbp_store, active_tab):
     if active_tab != 'tab-pbp':
@@ -423,7 +735,7 @@ def update_pane_pbp(pbp_store, active_tab):
 @callback(
     Output('pane-lineup', 'children'),
     Input('lineup_size_dropdown', 'value'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
     State('lineup_store', 'data'),
     State('game_id', 'children'),
 )
@@ -438,9 +750,9 @@ def update_pane_lineup(lineup_size=5, active_tab='tab-lineup', lineup_store=None
             if custom_dict:
                 children = [_last_update_span()]
                 for team_name, l_json in sorted(custom_dict.items()):
-                    children.append(html.H4(team_name))
+                    children.append(dmc.Title(team_name, order=4, style={"margin": "16px 0 8px"}))
                     l_df = pd.read_json(io.StringIO(l_json), orient='split')
-                    children.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+                    children.append(_ag_grid_from_df(l_df, page_size=20))
                 return children
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
@@ -449,7 +761,7 @@ def update_pane_lineup(lineup_size=5, active_tab='tab-lineup', lineup_store=None
 
 @callback(
     Output('pane-report', 'children'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
     State('lineup_store', 'data'),
     State('bs_store', 'data'),
     State('match_info_store', 'data'),
@@ -496,5 +808,5 @@ clientside_callback(
     Output('wrap-lineup', 'style'),
     Output('wrap-report', 'style'),
     Output('lineup_dropdown_container', 'style'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )

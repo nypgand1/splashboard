@@ -33,15 +33,18 @@ from synergy_reporter import report_layout, report_components
 
 
 def create_verification_app():
+    import dash
     from dash import Dash, html
-    import dash_bootstrap_components as dbc
+    import dash_mantine_components as dmc
+    from navbar import create_navbar
+
+    dash._dash_renderer._set_react_version('18.2.0')
 
     app = Dash(
         __name__,
         assets_folder=os.path.join(REPO_ROOT, 'assets'),
         external_stylesheets=[
-            dbc.themes.LITERA,
-            dbc.icons.BOOTSTRAP,
+            'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css',
             'https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css',
             '/assets/report.css',
         ],
@@ -99,10 +102,26 @@ def create_verification_app():
         game_id='cdp-verify-game-001',
     )
 
-    app.layout = html.Div([
-        html.H1("Report CDP Verification Canvas", className="px-4 pt-3"),
-        html.Div(workspace, id="pane-report"),
-    ])
+    navbar = create_navbar()
+    app.layout = dmc.MantineProvider(
+        theme={
+            "primaryColor": "blue",
+            "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+            "defaultRadius": "sm",
+        },
+        forceColorScheme="dark",
+        children=dmc.AppShell(
+            header={"height": 56},
+            children=[
+                navbar,
+                dmc.AppShellMain(
+                    html.Div([
+                        html.Div(workspace, id="pane-report"),
+                    ])
+                ),
+            ]
+        )
+    )
 
     return app
 
@@ -224,24 +243,31 @@ async def run_cdp_verification():
             await call('Runtime.enable')
             await call('Page.enable')
 
-            await asyncio.sleep(3.0)
+            await call('Page.navigate', {'url': server_url})
+            await asyncio.sleep(4.0)
 
-            # 1. Inject Edge Cases into Note
-            inject_res = await call('Runtime.evaluate', {
-                'returnByValue': True,
-                'expression': f"""
-                (() => {{
-                    const note = document.querySelector('#report-papers [data-text-block]');
-                    if (!note) return {{ error: 'No note block found' }};
-                    note.innerHTML = `{EDGE_CASES_NOTE_HTML}`;
-                    return {{
-                        success: true,
-                        htmlLength: note.innerHTML.length
-                    }};
-                }})()
-                """
-            })
-            val = inject_res.get('result', {}).get('value', {})
+            # 1. Inject Edge Cases into Note (with retry for first paint)
+            val = {}
+            for _ in range(20):
+                inject_res = await call('Runtime.evaluate', {
+                    'returnByValue': True,
+                    'expression': f"""
+                    (() => {{
+                        const note = document.querySelector('#report-papers [data-text-block]');
+                        if (!note) return {{ error: 'No note block found' }};
+                        note.innerHTML = `{EDGE_CASES_NOTE_HTML}`;
+                        return {{
+                            success: true,
+                            htmlLength: note.innerHTML.length
+                        }};
+                    }})()
+                    """
+                })
+                val = inject_res.get('result', {}).get('value', {})
+                if val.get('success'):
+                    break
+                await asyncio.sleep(0.5)
+
             assert val.get('success'), f"Note injection failed: {val}"
             print("[✓] C1-C6: Note edge cases injected successfully.")
 

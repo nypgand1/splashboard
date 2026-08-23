@@ -3,7 +3,7 @@ import json
 
 import pandas as pd
 from dash import dcc, html
-import dash_bootstrap_components as dbc
+import dash_mantine_components as dmc
 
 from synergy_reporter.report_layout import (
     ALLOWED_TABLE_KEYS,
@@ -42,12 +42,18 @@ def lineup_tables_for_size(lineup_store_data, lineup_size=5):
 def create_report_table(df):
     if df is None or df.empty:
         return html.Div("—", className="text-muted fst-italic text-center p-2")
-    return dbc.Table.from_dataframe(
-        df,
+    
+    header = [html.Tr([html.Th(col) for col in df.columns])]
+    body = [
+        html.Tr([html.Td(str(df.iloc[row_idx][col])) for col in df.columns])
+        for row_idx in range(len(df))
+    ]
+    return dmc.Table(
+        [html.Thead(header), html.Tbody(body)],
         striped=True,
-        bordered=True,
-        hover=True,
-        size="sm",
+        highlightOnHover=True,
+        withTableBorder=True,
+        withColumnBorders=True,
         className="text-nowrap report-dbc-table",
     )
 
@@ -304,9 +310,8 @@ def render_toolbar():
         custom_input = html.Label([
             html.I(className="bi bi-eyedropper", **{'aria-hidden': 'true'}),
             html.Span("Custom", className="report-rte-custom-label"),
-            dbc.Input(
+            dmc.ColorInput(
                 id=f"report-custom-{mode}",
-                type="color",
                 className="report-rte-custom-input",
                 value="#3498db" if mode == "color" else "#f1c40f",
             )

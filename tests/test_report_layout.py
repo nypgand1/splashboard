@@ -243,7 +243,7 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
 
 
 class ReportTableComponentTests(unittest.TestCase):
-    def test_report_helper_is_dbc_not_ag_grid(self):
+    def test_report_helper_is_dmc_not_ag_grid(self):
         from synergy_reporter import report_components
         self.assertFalse(hasattr(report_components, 'create_ag_grid'))
         self.assertTrue(hasattr(report_components, 'create_report_table'))
@@ -346,15 +346,16 @@ class ReportTableComponentTests(unittest.TestCase):
 
 
 class TableEngineAndChromeContractTests(unittest.TestCase):
-    def test_report_uses_dbc_table_pbp_keeps_ag_grid(self):
+    def test_report_uses_dmc_table_pbp_keeps_ag_grid(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         engine = report_layout.report_table_engine()
-        self.assertEqual(engine['report'], 'dbc.Table')
+        self.assertEqual(engine['report'], 'dmc.Table')
         self.assertEqual(engine['play_by_play'], 'ag_grid')
-        self.assertEqual(engine['box_score'], 'dbc.Table')
-        self.assertEqual(engine['lineup'], 'dbc.Table')
-        self.assertEqual(engine['home'], 'dbc.Table')
+        self.assertEqual(engine['box_score_summary'], 'dmc.Table')
+        self.assertEqual(engine['player_stats'], 'ag_grid')
+        self.assertEqual(engine['lineup'], 'ag_grid')
+        self.assertEqual(engine['home'], 'ag_grid')
 
     def test_block_overflow_is_hidden(self):
         if report_layout is None:
@@ -515,3 +516,103 @@ class ReportTabAndPlayerSortTests(unittest.TestCase):
         )
         self.assertTrue(os.path.isfile(font_path))
         self.assertGreater(os.path.getsize(font_path), 100000)
+
+
+class DmcInfrastructureContractTests(unittest.TestCase):
+    def test_requirements_declares_dmc(self):
+        import os
+        req_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'requirements.txt')
+        with open(req_path, 'r') as f:
+            content = f.read()
+        self.assertIn('dash-mantine-components==2.8.0', content)
+
+    def test_app_uses_react_18_and_mantine_provider_without_dbc_theme(self):
+        import os
+        app_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'app.py')
+        with open(app_path, 'r') as f:
+            code = f.read()
+        self.assertIn("_set_react_version('18.2.0')", code)
+        self.assertIn('MantineProvider', code)
+        self.assertIn('forceColorScheme="light"', code)
+        self.assertNotIn('dbc.themes.LITERA', code)
+        self.assertNotIn('dbc.themes.FLATLY', code)
+        self.assertIn('bootstrap-icons', code)
+
+
+class NavbarDmcContractTests(unittest.TestCase):
+    def test_navbar_does_not_import_dbc(self):
+        import os
+        nav_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'navbar.py')
+        with open(nav_path, 'r') as f:
+            code = f.read()
+        self.assertNotIn('import dash_bootstrap_components', code)
+        self.assertNotIn('import dbc', code)
+        self.assertNotIn('dbc.Navbar', code)
+
+    def test_create_navbar_renders_dmc_with_brand_and_menu(self):
+        from navbar import create_navbar
+        nav = create_navbar()
+        markup = str(nav)
+        self.assertIn('Splashboard', markup)
+        self.assertIn('TFB', markup)
+        self.assertIn('Home', markup)
+
+
+class TableDmcAndAgGridContractTests(unittest.TestCase):
+    def test_no_dbc_table_across_pages_and_components(self):
+        import os
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        targets = [
+            os.path.join(base_dir, 'pages', 'home.py'),
+            os.path.join(base_dir, 'pages', 'game.py'),
+            os.path.join(base_dir, 'synergy_reporter', 'report_components.py'),
+        ]
+        for path in targets:
+            with open(path, 'r') as f:
+                code = f.read()
+            self.assertNotIn('dbc.Table', code, f"{path} should not contain dbc.Table")
+
+    def test_game_page_uses_ag_grid_for_player_and_lineup(self):
+        import os
+        game_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'game.py')
+        with open(game_path, 'r') as f:
+            code = f.read()
+        self.assertIn('dag.AgGrid', code)
+        self.assertIn('domLayout', code)
+
+    def test_home_page_uses_ag_grid(self):
+        import os
+        home_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'home.py')
+        with open(home_path, 'r') as f:
+            code = f.read()
+        self.assertIn('dag.AgGrid', code)
+        self.assertIn('domLayout', code)
+
+
+class DbcEliminationContractTests(unittest.TestCase):
+    def test_requirements_does_not_declare_dbc(self):
+        import os
+        req_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'requirements.txt')
+        with open(req_path, 'r') as f:
+            content = f.read()
+        self.assertNotIn('dash-bootstrap-components', content)
+
+    def test_no_python_file_imports_dbc(self):
+        import os
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        py_files = []
+        for root, _, files in os.walk(base_dir):
+            if any(part.startswith('.') or part in ('venv', '__pycache__', 'scratch') for part in root.split(os.sep)):
+                continue
+            for file in files:
+                if file.endswith('.py') and not file.startswith('test_'):
+                    py_files.append(os.path.join(root, file))
+        for path in py_files:
+            with open(path, 'r') as f:
+                code = f.read()
+            self.assertNotIn('import dash_bootstrap_components', code, f"{path} should not import dash_bootstrap_components")
+            self.assertNotIn('import dbc', code, f"{path} should not import dbc")
+
+
+
+

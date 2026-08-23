@@ -113,6 +113,55 @@ Do not call live Synergy. Do not drive a browser in this file.
 | C7 | Full 5-page default layout tables and headers visual completeness |
 | C8 | Headless browser PDF export completion without runtime JS exceptions |
 
+## DMC infrastructure contract (`dmc-migration-plan.md` Phase 1)
+
+| ID | Case |
+|---|---|
+| D1 | React 18 is explicitly configured via `dash._dash_renderer._set_react_version('18.2.0')` before Dash app initialization |
+| D2 | `external_stylesheets` does not include `dbc.themes.LITERA` or other Bootstrap themes |
+| D3 | Bootstrap Icons is loaded via standalone CDN URL, not `dbc.icons` |
+| D4 | `app.layout` is wrapped in `dmc.MantineProvider` with `forceColorScheme="dark"` and valid Mantine theme dict; global design system uses Liquid Glass aesthetics while Report paper remains opaque white (`#ffffff`) |
+| D5 | `requirements.txt` declares `dash-mantine-components==2.8.0` |
+
+## Navbar DMC contract (`dmc-migration-plan.md` Phase 2)
+
+| ID | Case |
+|---|---|
+| N1 | `navbar.py` does not import `dash_bootstrap_components` or `dbc` |
+| N2 | `create_navbar()` returns a DMC-based header with brand link `/` and glass menu |
+| N3 | Navbar brand text is `Splashboard TFB` linking to `/` and menu contains a link to `Home` (`/`) |
+
+## Tabs DMC contract (`dmc-migration-plan.md` Phase 3)
+
+| ID | Case |
+|---|---|
+| T1 | `pages/game.py` uses `dmc.Tabs` with `variant="pills"` instead of `dbc.Tabs` |
+| T2 | Tab switching callbacks gate on `Input('tabs', 'value')` instead of `active_tab` |
+| T3 | Report tab visibility is controlled dynamically via `style` on `dmc.TabsTab` (`display: none` when live) |
+
+## Grid DMC contract (`dmc-migration-plan.md` Phase 4)
+
+| ID | Case |
+|---|---|
+| G1 | `pages/game.py` does not import or use `dbc.Row` or `dbc.Col` |
+| G2 | Box score quarter stats are structured in `dmc.SimpleGrid` with responsive column configuration |
+
+## Table DMC & AG Grid contract (`dmc-migration-plan.md` Phase 5 & 6)
+
+| ID | Case |
+|---|---|
+| B1 | Box Score summary tables and Report canvas tables use `dmc.Table` helper function |
+| B2 | Home schedule, Player Stats, and Lineup Stats use `dag.AgGrid` with `domLayout="autoHeight"` and sortable columns |
+| B3 | Report canvas tables strictly avoid AG Grid (retains `dmc.Table` for pure HTML table clone & PDF export) |
+| B4 | Zero occurrences of `dbc.Table` across the entire codebase (`pages/*.py`, `synergy_reporter/*.py`) |
+
+## DBC Elimination contract (`dmc-migration-plan.md` Phase 7)
+
+| ID | Case |
+|---|---|
+| E1 | `requirements.txt` does not declare `dash-bootstrap-components` |
+| E2 | No Python file imports `dash_bootstrap_components` or `dbc` |
+
 ## Out of scope (must not appear)
 
 | ID | Case |

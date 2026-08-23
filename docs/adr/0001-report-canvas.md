@@ -12,9 +12,9 @@ Paper is A4 landscape (297mm × 210mm) so a table and notes can sit side by side
 
 The old Report only reordered a 1-D flex list. The PDF needs 2-D placement (table left, notes right, spacer below). GridStack owns position and size. It does not style tables.
 
-## `dbc.Table` in Report, AG Grid only in Play-By-Play
+## `dmc.Table` in Report, AG Grid in Home/Player/Lineup/Play-By-Play
 
-AG Grid inside GridStack showed inner scrollbars, clipped headers, and could not be cloned without a full pane rebuild. Report therefore uses `dbc.Table`, like Box Score. Play-By-Play keeps AG Grid for 1000+ rows. Home, Box Score, and Lineup stay on `dbc.Table`. Rotation stays Plotly. Do not introduce Tabulator.
+AG Grid inside GridStack showed inner scrollbars, clipped headers, and could not be cloned without a full pane rebuild. Report therefore uses `dmc.Table` (migrated from `dbc.Table`). Home schedule, Play-By-Play, Player Stats, and Lineup Stats use AG Grid for interactive sorting and filtering. Box Score quarter and team summary tables use `dmc.Table`. Rotation stays Plotly. Do not introduce Tabulator.
 
 Bootstrap Icons is an extra stylesheet for Report editor chrome only (toolbar buttons and the page-delete control). It is not a second UI framework and is not used on other tabs.
 

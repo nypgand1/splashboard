@@ -101,11 +101,12 @@ def pdf_export_spec():
 
 def report_table_engine():
     return {
-        'report': 'dbc.Table',
+        'report': 'dmc.Table',
         'play_by_play': 'ag_grid',
-        'box_score': 'dbc.Table',
-        'lineup': 'dbc.Table',
-        'home': 'dbc.Table',
+        'box_score_summary': 'dmc.Table',
+        'player_stats': 'ag_grid',
+        'lineup': 'ag_grid',
+        'home': 'ag_grid',
     }
 
 
