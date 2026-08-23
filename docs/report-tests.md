@@ -100,6 +100,19 @@ Do not call live Synergy. Do not drive a browser in this file.
 | P11 | Notes PDF walker supports rich text formatting: color, highlight rects, bold, italic, underline, strikethrough |
 | P12 | Notes PDF walker renders multi-level nested lists with hierarchical indentation (approx. 5mm) and markers (disc/circle/square, 1./a./i.) |
 
+## CDP verification cases (`scripts/cdp_verify_report.py`)
+
+| ID | Case |
+|---|---|
+| C1 | 8 Flat Design preset colors and custom hex color rendering |
+| C2 | Background highlight rect rendering in PDF DOM walker |
+| C3 | Multi-level nested Bullet List (`disc` -> `circle` -> `square`) with indentation |
+| C4 | Multi-level nested Ordered List (`1.` -> `a.` -> `i.`) with indentation |
+| C5 | Preservation of blank lines between lists, after lists, and between paragraphs |
+| C6 | Mixed styles (bold + italic + underline + strikethrough + color + highlight) |
+| C7 | Full 5-page default layout tables and headers visual completeness |
+| C8 | Headless browser PDF export completion without runtime JS exceptions |
+
 ## Out of scope (must not appear)
 
 | ID | Case |
