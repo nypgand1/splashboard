@@ -53,7 +53,11 @@ def create_report_table(df):
 
 
 def _df_from_split(payload):
-    if not payload:
+    if payload is None:
+        return None
+    if isinstance(payload, pd.DataFrame):
+        return payload if not payload.empty else None
+    if not isinstance(payload, str) or not payload.strip():
         return None
     try:
         df = pd.read_json(io.StringIO(payload), orient='split')
@@ -147,8 +151,11 @@ def _block_body(block, bs_dict, lineup_store_data, match_info):
     b_type = block.get('type')
     b_id = block.get('id')
     if b_type == 'text':
+        initial_html = block.get('content') or ''
+        if initial_html and not initial_html.startswith('<'):
+            initial_html = f"<p>{initial_html}</p>"
         return html.Div(
-            block.get('content') or '',
+            dcc.Markdown(initial_html, dangerously_allow_html=True) if initial_html else '',
             className="report-text-block",
             **{
                 'data-text-block': b_id,
@@ -272,6 +279,43 @@ def render_toolbar():
             type="button",
             **{'data-add-table': key, 'role': 'menuitem'},
         ))
+    
+    flat_colors = [
+        ('#e74c3c', 'Red'),
+        ('#e67e22', 'Orange'),
+        ('#f1c40f', 'Yellow'),
+        ('#2ecc71', 'Green'),
+        ('#3498db', 'Blue'),
+        ('#9b59b6', 'Purple'),
+        ('#ffffff', 'White'),
+        ('#000000', 'Black (Reset)'),
+    ]
+    
+    def _render_color_menu(mode):
+        dots = []
+        for hex_color, name in flat_colors:
+            dots.append(html.Button(
+                className="report-rte-color-dot",
+                style={'backgroundColor': hex_color},
+                title=f"{name}",
+                type="button",
+                **{f'data-rte-{mode}': hex_color, 'aria-label': f"{name}"}
+            ))
+        custom_input = html.Label([
+            html.I(className="bi bi-eyedropper", **{'aria-hidden': 'true'}),
+            html.Span("Custom", className="report-rte-custom-label"),
+            dbc.Input(
+                id=f"report-custom-{mode}",
+                type="color",
+                className="report-rte-custom-input",
+                value="#3498db" if mode == "color" else "#f1c40f",
+            )
+        ], className="report-rte-custom-btn", title="Custom color")
+        return html.Div([
+            html.Div(dots, className="report-rte-palette-grid"),
+            custom_input,
+        ], id=f"report-rte-{mode}-menu", className="report-table-menu report-rte-color-menu", hidden=True)
+
     return html.Div([
         html.Button(
             html.I(className="bi bi-journal-text", **{'aria-hidden': 'true'}),
@@ -307,6 +351,86 @@ def render_toolbar():
                 **{'role': 'menu', 'aria-label': 'Add table'},
             ),
         ], className="report-table-picker"),
+        
+        # Note formatting toolbar (visible when a note is focused)
+        html.Div([
+            html.Div(className="report-toolbar-divider"),
+            html.Button(
+                html.I(className="bi bi-type-bold", **{'aria-hidden': 'true'}),
+                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+                title="Bold",
+                type="button",
+                **{'data-rte-cmd': 'bold', 'aria-label': 'Bold'}
+            ),
+            html.Button(
+                html.I(className="bi bi-type-italic", **{'aria-hidden': 'true'}),
+                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+                title="Italic",
+                type="button",
+                **{'data-rte-cmd': 'italic', 'aria-label': 'Italic'}
+            ),
+            html.Button(
+                html.I(className="bi bi-type-underline", **{'aria-hidden': 'true'}),
+                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+                title="Underline",
+                type="button",
+                **{'data-rte-cmd': 'underline', 'aria-label': 'Underline'}
+            ),
+            html.Button(
+                html.I(className="bi bi-type-strikethrough", **{'aria-hidden': 'true'}),
+                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+                title="Strikethrough",
+                type="button",
+                **{'data-rte-cmd': 'strikethrough', 'aria-label': 'Strikethrough'}
+            ),
+            html.Button(
+                html.I(className="bi bi-list-ul", **{'aria-hidden': 'true'}),
+                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+                title="Bullet List",
+                type="button",
+                **{'data-rte-cmd': 'bulletList', 'aria-label': 'Bullet List'}
+            ),
+            html.Button(
+                html.I(className="bi bi-list-ol", **{'aria-hidden': 'true'}),
+                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+                title="Ordered List",
+                type="button",
+                **{'data-rte-cmd': 'orderedList', 'aria-label': 'Ordered List'}
+            ),
+            
+            # Text Color Dropdown Button
+            html.Div([
+                html.Button(
+                    [
+                        html.I(className="bi bi-fonts", **{'aria-hidden': 'true'}),
+                        html.Span(className="report-rte-color-indicator", id="report-rte-color-indicator"),
+                    ],
+                    id="report-btn-color-picker",
+                    className="report-chrome-btn report-chrome-btn-icon report-rte-btn report-rte-picker-btn",
+                    title="Text Color",
+                    type="button",
+                    **{'data-rte-toggle-menu': 'color', 'aria-label': 'Text Color', 'aria-expanded': 'false'}
+                ),
+                _render_color_menu('color'),
+            ], className="report-rte-dropdown-wrap"),
+            
+            # Highlight Dropdown Button
+            html.Div([
+                html.Button(
+                    [
+                        html.I(className="bi bi-highlighter", **{'aria-hidden': 'true'}),
+                        html.Span(className="report-rte-color-indicator", id="report-rte-highlight-indicator"),
+                    ],
+                    id="report-btn-highlight-picker",
+                    className="report-chrome-btn report-chrome-btn-icon report-rte-btn report-rte-picker-btn",
+                    title="Highlight",
+                    type="button",
+                    **{'data-rte-toggle-menu': 'highlight', 'aria-label': 'Highlight', 'aria-expanded': 'false'}
+                ),
+                _render_color_menu('highlight'),
+            ], className="report-rte-dropdown-wrap"),
+        ], id="report-note-toolbar", className="report-note-toolbar", style={'display': 'none'}),
+
         html.Div([
             html.Button(
                 html.I(className="bi bi-arrow-counterclockwise", **{'aria-hidden': 'true'}),
@@ -368,7 +492,7 @@ def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game
     for index, page in enumerate(pages):
         papers.append(render_paper(page, index, bs_dict, lineup_store_data, match_info, page_count))
     default_json = json.dumps(layout, ensure_ascii=False)
-    return html.Div([
+    workspace = html.Div([
         html.Div(default_json, id="report-layout-json", hidden=True),
         html.Div(default_json, id="report-default-layout-json", hidden=True),
         html.Div(game_id or '', id="report-game-id", hidden=True),
@@ -383,3 +507,4 @@ def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game
         ], className="report-workspace-row"),
         render_dialog(),
     ], className="report-workspace", id="report-workspace")
+    return workspace

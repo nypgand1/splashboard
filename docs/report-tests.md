@@ -46,7 +46,7 @@ Do not call live Synergy. Do not drive a browser in this file.
 | R5 | Toolbar has no title string |
 | R6 | Icon set is `bootstrap-icons`, scoped to Report editor chrome |
 | R7 | Add note / Add image / Add table / Reset layout accessible names stay those English strings |
-| R8 | Python paint triggers are tab open and `lineup_store`, not `report_layout_store` |
+| R8 | Python paint trigger is tab open only; `lineup_store` is a `State` (not an `Input`), so its update does not rebuild `pane-report` |
 | R9 | Layout mutations after first paint are clientside; add table clones a template |
 | R10 | Image validation for the editor is clientside; Python `validate_image_upload` remains the unit contract |
 | R11 | Add table is `bi-table` plus a glass menu (`icon_menu`), not a native `<select>` |
@@ -60,10 +60,24 @@ Do not call live Synergy. Do not drive a browser in this file.
 | R19 | Builtin table grid height fits title row (drag handle) plus table; paper still clips |
 | R20 | Add table menu lists Player Stats keys before Lineup Stats keys |
 | R21 | Compact only on first paint of the default layout and on Reset |
-| R22 | Notes editor is `contenteditable` (not dmc); placeholder is `Notes` |
+| R22 | Notes editor is `tiptap_js` (JS-side Tiptap, not a React component); placeholder is `Notes` |
 | R23 | Report tab is visible only for finished statuses (`FINISHED`, `CONFIRMED`) |
 | R24 | Report Player Stats sort by `+/-` descending |
 | R25 | Team Stats and Player Stats `Min` is `MM:SS`, not Synergy `PT` |
+| R26 | Note text-formatting toolbar lives in the Report toolbar area, not inside each Note block |
+| R27 | Note toolbar controls: Bold, Italic, Underline, Strikethrough, Bullet List, Ordered List, Text Color, Highlight |
+| R28 | Note toolbar is hidden when no Note is focused; visible when a Note is focused |
+| R29 | Note `content` is stored as HTML (Tiptap output), not plain text |
+| R30 | Old plain-text `content` is forward-compatible (Tiptap wraps in `<p>`) |
+| R31 | Note color palette has 8 flat-design presets: red `#e74c3c`, orange `#e67e22`, yellow `#f1c40f`, green `#2ecc71`, blue `#3498db`, purple `#9b59b6`, white `#ffffff`, reset black `#000000`, plus custom picker |
+| R32 | No `MantineProvider` is needed (Tiptap is mounted in JS, not via Dash/React) |
+| R33 | All Notes including JS-dynamically-added ones get a Tiptap editor mounted in JS |
+| R34 | Bullet List and Ordered List support multi-level nesting via Tab (indent) and Shift+Tab (outdent) with distinct hierarchical markers |
+| R35 | Note color and highlight dropdown menus render 8 preset colors in a single row with tight spacing |
+| R36 | `lineup_store` (size 5 only) is precomputed at page load via `game_id` trigger, not deferred to Report tab switch |
+| R37 | `update_pane_report` fires exactly once per tab switch (no double render); `lineup_store` is `State` |
+| R38 | Hidden table templates provide reliable client-side cloning for add table |
+| R39 | `fitAllTableBlocks` batches all `scrollHeight` reads before any `grid.update` writes (no interleaved reflows) |
 | H1 | Header is two lines: away score `@` home score, then date + time + venue on one line |
 
 ## PDF contract (unit, not a rendered file)
@@ -80,6 +94,8 @@ Do not call live Synergy. Do not drive a browser in this file.
 | P8 | Fallback is browser `print` |
 | P9 | Font is same-origin `/assets/NotoSansTC-Regular.ttf` |
 | P10 | PDF button is `aria-busy` while export runs |
+| P11 | Notes PDF walker supports rich text formatting: color, highlight rects, bold, italic, underline, strikethrough |
+| P12 | Notes PDF walker renders multi-level nested lists with hierarchical indentation (approx. 5mm) and markers (disc/circle/square, 1./a./i.) |
 
 ## Out of scope (must not appear)
 

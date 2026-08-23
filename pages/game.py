@@ -222,20 +222,17 @@ def update_pbp_store(n, game_id):
 @callback(
     Output('lineup_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children'),
-     Input('tabs', 'active_tab')]
+     Input('game_id', 'children')]
 )
-def update_lineup_store(n, game_id, active_tab):
+def update_lineup_store(n, game_id):
     if not game_id:
         return json.dumps({})
-    if active_tab not in ('tab-lineup', 'tab-report'):
-        return no_update
     try:
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
         return json.dumps({})
-    return json.dumps(report.get_all_lineup_stats_json_dict())
+    return json.dumps(report.get_all_lineup_stats_json_dict(sizes=(5,)))
 
 @callback(
     Output('rotation_store', 'data'),
@@ -423,20 +420,35 @@ def update_pane_pbp(pbp_store, active_tab):
 
 @callback(
     Output('pane-lineup', 'children'),
-    Input('lineup_store', 'data'),
     Input('lineup_size_dropdown', 'value'),
     Input('tabs', 'active_tab'),
+    State('lineup_store', 'data'),
+    State('game_id', 'children'),
 )
-def update_pane_lineup(lineup_store, lineup_size, active_tab):
+def update_pane_lineup(lineup_size=5, active_tab='tab-lineup', lineup_store=None, game_id=None):
     if active_tab != 'tab-lineup':
         return no_update
+    lineup_dict = lineup_tables_for_size(lineup_store, lineup_size)
+    if not lineup_dict and game_id:
+        try:
+            report = get_cached_report(game_id)
+            custom_dict = report.get_lineup_stats_json_dict(lineup_size=lineup_size)
+            if custom_dict:
+                children = [_last_update_span()]
+                for team_name, l_json in sorted(custom_dict.items()):
+                    children.append(html.H4(team_name))
+                    l_df = pd.read_json(io.StringIO(l_json), orient='split')
+                    children.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+                return children
+        except Exception as exc:
+            print(f"Error computing lineup size {lineup_size}: {exc}")
     return render_lineup_children(lineup_store, lineup_size)
 
 
 @callback(
     Output('pane-report', 'children'),
     Input('tabs', 'active_tab'),
-    Input('lineup_store', 'data'),
+    State('lineup_store', 'data'),
     State('bs_store', 'data'),
     State('match_info_store', 'data'),
     State('game_id', 'children'),

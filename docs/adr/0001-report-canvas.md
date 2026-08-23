@@ -20,7 +20,9 @@ Bootstrap Icons is an extra stylesheet for Report editor chrome only (toolbar bu
 
 ## JS owns layout after the first paint
 
-Python renders papers, header, and hidden table templates when the Report tab opens (and once more when lineup data arrives). Add/remove/upload/clone then run in GridStack JS and `localStorage`. Writing `report_layout_store` must not rebuild `pane-report`. Image MIME/size checks run in the browser; the Python validator is the unit-test contract.
+Python renders papers, header, and hidden table templates when the Report tab opens. `lineup_store` (size 5 only) is precomputed at page load (triggered by `game_id`), so it is available as a `State` when the Report tab renders—no second render is needed. The Report callback fires **once** on tab switch. Add/remove/upload/clone then run in GridStack JS and `localStorage`. Writing `report_layout_store` must not rebuild `pane-report`. Image MIME/size checks run in the browser; the Python validator is the unit-test contract.
+
+`fitAllTableBlocks` batches DOM measurements: all `scrollHeight` reads run in a first pass, then all `grid.update` writes run in a second pass. This avoids interleaved forced layout reflows.
 
 Add note / Add image / Add table insert onto the **current** page, which is the paper with the highest intersection in the scroll viewport. New blocks auto-place into a slot that fits; if none, JS adds a page and places there. Page delete is an × on that paper's top-right after a confirm dialog, not a minus on the page list. The last remaining page cannot be deleted.
 
@@ -30,9 +32,19 @@ Table drag handles sit to the left of the block title so they do not steal a row
 
 Default layout is compacted on first paint and after Reset. Later user moves are left alone. Old `localStorage` is not auto-replaced.
 
-## Notes stay `contentEditable`
+## Notes use JS-side Tiptap (not `dmc.RichTextEditor`)
 
-Notes need 2-row empty cards that grow and shrink with typed lines. `dash-mantine-components` would add a third design system on top of LITERA + Bootstrap Icons, extra CSS/JS, and Dash callback wiring for a rich text editor the Report does not need. Splashboard does not add Mantine. Placeholder copy is `Notes`.
+Notes need rich text formatting (bold, italic, underline, strikethrough, lists, text color, highlight) for game-report annotations.
+
+`dmc.RichTextEditor` (a Dash/React component backed by Tiptap) was tried first but rejected: GridStack's `cloneNode(true)` copies DOM only — React state and the Tiptap editor instance are lost. JS-dynamically-added notes (via `widgetFromBlock`) would have no working editor. `document.execCommand` does not interact with Tiptap's ProseMirror model. Wrapping in `MantineProvider` added an extra DOM layer that conflicted with layout CSS.
+
+Instead, Tiptap and its extensions load via CDN `<script>` tags. Python renders plain `contenteditable` divs with `data-text-block` attributes. After GridStack init, JS calls `new Editor({ element })` to mount Tiptap on each note. Toolbar formatting uses the Tiptap chain API (`editor.chain().focus().toggleBold().run()`). `readLayoutFromDom` calls `editor.getHTML()`. This approach works with `cloneNode` because JS re-mounts Tiptap on cloned nodes via `bindTextBlocks`.
+
+The text-formatting toolbar lives in the **Report toolbar area** (sticky, above the paper), not inside each Note block, so it does not consume grid rows on the A4 sheet. It appears when a Note is focused and hides otherwise.
+
+Note `content` is stored as HTML (Tiptap native output). Old plain-text `content` values are forward-compatible: Tiptap wraps plain text in `<p>` tags automatically.
+
+Available formatting colors are 8 flat-design presets (red `#e74c3c`, orange `#e67e22`, yellow `#f1c40f`, green `#2ecc71`, blue `#3498db`, purple `#9b59b6`, white `#ffffff`, reset black `#000000`) plus a custom color picker.
 
 ## Client layout, client images, client PDF
 

@@ -8,6 +8,7 @@ This file is the source of truth for product behavior. Tests and later feature w
 - UI strings are English, including loading, empty, and error copy.
 - Rotation is Plotly only, with no separate dark mode.
 - Report is a multi-page A4 landscape canvas. PDF export is in scope (browser-side).
+- DBC theme is **LITERA**. Notes use a JS-side Tiptap editor (not a Dash/React component) so GridStack `cloneNode` works.
 
 ## Pages
 
@@ -79,7 +80,11 @@ Throw away the previous Report canvas (Sortable, `window.print()` as the primary
 - The current page is the paper with the highest intersection in the scroll viewport (scroll-spy). Add note, Add image, and Add table insert onto that current page: auto-place into empty grid cells that fit the block's `w`×`h` **inside the full paper grid** (the grid is stretched to the leftover paper height, not shrunk to existing widgets). If that paper has no such slot, add a **blank** page and place there.
 - New pages from the page-list `+` are also blank (no default notes block).
 - Layout engine: GridStack (12 columns). Blocks drag and resize. Table drag handles sit to the left of the block title (in the same row, sized to max height). Note/image handles stay overlaid at the top-left and do not consume a grid row. Default layout is compacted on first paint and after Reset; later user moves are left alone. Stored layouts are kept as saved (no auto-replace).
-- Block bodies do not scroll. `overflow` is `hidden`. Builtin table blocks size their grid `h` to the title row (title and drag handle on the same row) plus the table. Note blocks are `contentEditable` (not dash-mantine-components): empty placeholder `Notes`, default 2 grid rows, grow or shrink with typed lines (Enter grows, deleting lines shrinks, minimum 2). Rows that still do not fit the A4 sheet are clipped by the paper. The sheet stays 210mm.
+- Block bodies do not scroll. `overflow` is `hidden`. Builtin table blocks size their grid `h` to the title row (title and drag handle on the same row) plus the table. Note blocks use a JS-side Tiptap editor (`contenteditable` div with Tiptap mounted in JS): empty placeholder `Notes`, default 2 grid rows, grow or shrink with content (Enter grows, deleting lines shrinks, minimum 2). Rows that still do not fit the A4 sheet are clipped by the paper. The sheet stays 210mm.
+- Note text-formatting toolbar lives in the **Report toolbar area** (not inside each Note block). It appears when a Note is focused and controls Bold, Italic, Underline, Strikethrough, Bullet List, Ordered List, Text Color, and Highlight. Text Color and Highlight are button menus: clicking opens a dropdown popup containing a single row of 8 Flat Design preset colors with tight spacing (Red `#e74c3c`, Orange `#e67e22`, Yellow `#f1c40f`, Green `#2ecc71`, Blue `#3498db`, Purple `#9b59b6`, White `#ffffff`, Reset Black `#000000`) plus a custom color picker input. The toolbar is hidden when no Note is focused.
+- Bullet List and Ordered List support multi-level nested lists. Pressing `Tab` indents the current item into a sub-list; pressing `Shift + Tab` outdents back to the parent list. Bullet List markers cascade as `disc` (Level 1) → `circle` (Level 2) → `square` (Level 3+). Ordered List numbers cascade as `decimal` (1, 2, 3) → `lower-alpha` (a, b, c) → `lower-roman` (i, ii, iii).
+- Note `content` is stored as **HTML** (Tiptap native output). Old plain-text content from previous versions is forward-compatible: Tiptap renders plain text as a `<p>` paragraph.
+- Tiptap and its extensions load via CDN `<script>` tags. Python renders `contenteditable` divs; JS mounts Tiptap editors on them after GridStack init. This avoids React component lifecycle conflicts with GridStack `cloneNode`. All Notes—including those added dynamically via JS—get a Tiptap editor mounted in JS.
 - There is no `spacer` on any default page.
 
 ### Block types
@@ -115,15 +120,21 @@ Note slots start as **empty** `text` blocks.
 
 ### Paint ownership
 
-- Python paints the Report pane when the tab opens and when `lineup_store` first arrives. It does **not** rebuild `pane-report` when `report_layout_store` changes.
-- After that paint, add note, add page, remove page, remove block, add table, and add image mutate GridStack in JS and write `localStorage` only.
+- `lineup_store` (size 5 only) is precomputed at page load (triggered by `game_id`, not by tab switch). Report only uses 5-player lineups; the Lineup tab computes other sizes (4/3/2) on demand via its own callback.
+- Python paints the Report pane **once** when the tab opens. `lineup_store` is a `State` (not an `Input`), so updating it does **not** rebuild `pane-report`. It does **not** rebuild `pane-report` when `report_layout_store` changes either.
+- After that single paint, add note, add page, remove page, remove block, add table, and add image mutate GridStack in JS and write `localStorage` only.
 - Add note, Add image, and Add table insert onto the current page (scroll-spy), auto-placed; a full page adds a new page first.
 - Add table clones a hidden `dbc.Table` template for that `table_key`. Do not mount a new AG Grid.
+- `fitAllTableBlocks` batches DOM measurements: all `scrollHeight` reads run first, then all `grid.update` writes run, to avoid interleaved layout reflows.
 - Reset layout is clientside (default JSON kept in the pane; no Python rebuild).
 
 ### PDF
 
-- Primary: jsPDF walks each paper's DOM (header, `dbc.Table` cells, notes, images) and writes **selectable text**, one PDF page per canvas page, landscape A4. Layout is close to the screen, not pixel-identical.
+- Primary: jsPDF walks each paper's DOM (header, `dbc.Table` cells, notes, images) and writes **selectable text**, one PDF page per canvas page, landscape A4. Layout is close to the screen, not pixel-identical. Notes are parsed via a Rich Text DOM Walker:
+  - Paragraphs and multi-level lists (`<ul>`, `<ol>`) maintain hierarchical indentation (approx. 5mm per level).
+  - List markers are drawn according to hierarchy: Bullet lists render `disc`, `circle`, `square`; Ordered lists render formatted numbers (`1.`, `a.`, `i.`).
+  - Formatting spans parse `color` (`<font color="...">` or CSS `color`), highlight background (`style="background-color: ..."` filled via `pdf.rect`), bold/italic font styles, and draw underlines or strikethrough lines.
+  - Text segments are automatically word-wrapped and respect block boundaries (`maxY` clipping at paper bottom).
 - CJK uses Noto Sans TC bundled at `/assets/NotoSansTC-Regular.ttf` (same-origin, no CDN). ASCII can share that font or Helvetica. Uploaded images are embedded as PNG.
 - Filename is `{YYYYMMDD}.pdf` from the game date. If the date is missing, `splashboard-report.pdf`.
 - Tables keep the on-screen look (striped, bordered, 11px, `text-nowrap`). Do not restyle tables for a separate print theme.

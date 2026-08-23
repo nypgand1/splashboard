@@ -220,6 +220,8 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertTrue(spec['font_url'].endswith('.ttf'))
         self.assertNotIn('jsdelivr', spec['font_url'])
         self.assertEqual(spec['table_style'], 'as_on_screen')
+        self.assertTrue(spec['rich_text_notes'])
+        self.assertTrue(spec['nested_lists_support'])
         self.assertEqual(spec['image_format'], 'png')
         self.assertEqual(spec['fallback'], 'print')
         self.assertEqual(spec['export_busy'], 'disable_button')
@@ -335,17 +337,12 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertEqual(row.children[0].className, 'grid-stack-item-handle no-print')
         self.assertEqual(row.children[1].className, 'report-block-title')
 
-    def test_note_block_is_contenteditable_with_placeholder(self):
-        from synergy_reporter.report_components import render_grid_item
-        item = render_grid_item(
-            {'id': 'n1', 'type': 'text', 'content': '', 'x': 0, 'y': 0, 'w': 5, 'h': 2},
-            {}, {}, {},
-        )
-        markup = str(item)
-        self.assertIn('contentEditable', markup)
-        self.assertIn('Notes', markup)
-        self.assertIn('data-placeholder', markup)
-        self.assertNotIn('dmc', markup.lower())
+    def test_note_block_uses_tiptap_js_with_placeholder(self):
+        if report_layout is None:
+            raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
+        chrome = report_layout.chrome_spec()
+        self.assertEqual(chrome['notes_editor'], 'tiptap_js')
+        self.assertEqual(chrome['notes_placeholder'], 'Notes')
 
 
 class TableEngineAndChromeContractTests(unittest.TestCase):
@@ -400,9 +397,34 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertFalse(chrome['page_number'])
         self.assertEqual(chrome['notes_default_h'], 2)
         self.assertEqual(chrome['notes_resize'], 'content')
-        self.assertEqual(chrome['notes_editor'], 'contenteditable')
+        self.assertEqual(chrome['notes_editor'], 'tiptap_js')
         self.assertEqual(chrome['notes_placeholder'], 'Notes')
-        self.assertNotEqual(chrome['notes_editor'], 'dmc')
+        self.assertEqual(chrome['notes_content_format'], 'html')
+        self.assertEqual(chrome['notes_toolbar_location'], 'report_toolbar')
+        self.assertEqual(chrome['notes_toolbar_visibility'], 'on_focus')
+        self.assertIn('Bold', chrome['notes_toolbar_controls'])
+        self.assertIn('Italic', chrome['notes_toolbar_controls'])
+        self.assertIn('Underline', chrome['notes_toolbar_controls'])
+        self.assertIn('Strikethrough', chrome['notes_toolbar_controls'])
+        self.assertIn('BulletList', chrome['notes_toolbar_controls'])
+        self.assertIn('OrderedList', chrome['notes_toolbar_controls'])
+        self.assertIn('ColorPicker', chrome['notes_toolbar_controls'])
+        self.assertIn('Highlight', chrome['notes_toolbar_controls'])
+        self.assertEqual(len(chrome['notes_toolbar_controls']), 8)
+        self.assertEqual(
+            chrome['notes_color_palette'],
+            (
+                '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71',
+                '#3498db', '#9b59b6', '#ffffff', '#000000',
+            )
+        )
+        self.assertEqual(len(chrome['notes_color_palette']), 8)
+        self.assertEqual(chrome['notes_palette_rows'], 1)
+        self.assertTrue(chrome['notes_custom_color_picker'])
+        self.assertTrue(chrome['notes_nested_lists'])
+        self.assertEqual(chrome['notes_old_plain_text'], 'forward_compatible')
+        self.assertEqual(chrome['notes_dynamic_mount'], 'tiptap_js')
+        self.assertNotIn('mantine_provider_scope', chrome)
         self.assertEqual(chrome['header_size'], 'compact')
         self.assertEqual(chrome['header_line_gap'], 'loose')
         self.assertEqual(chrome['table_menu_order'], ALLOWED_TABLE_KEYS)
@@ -417,7 +439,12 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         paint = report_layout.paint_spec()
-        self.assertEqual(paint['python_inputs'], ('tabs', 'lineup_store'))
+        self.assertEqual(paint['python_inputs'], ('tabs',))
+        self.assertEqual(
+            paint['python_states'],
+            ('bs_store', 'lineup_store', 'match_info_store', 'game_id'),
+        )
+        self.assertEqual(paint['lineup_precompute'], 'game_id_trigger_size5')
         self.assertFalse(paint['layout_store_rebuilds_pane'])
         self.assertEqual(paint['layout_mutations'], 'clientside')
         self.assertEqual(paint['add_table'], 'clone_template')
@@ -429,11 +456,13 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertTrue(paint['grid_fills_paper'])
         self.assertEqual(paint['new_page_blocks'], ())
         self.assertEqual(paint['table_block_height'], 'fit_content_with_handle')
+        self.assertEqual(paint['fit_batch'], 'read_then_write')
         self.assertEqual(paint['compact'], 'first_paint_and_reset')
         self.assertEqual(paint['report_tab'], 'finished_only')
         self.assertEqual(paint['player_stats_sort'], '+/-_desc')
         self.assertEqual(paint['image_validate'], 'clientside')
         self.assertNotIn('report_layout_store', paint['python_inputs'])
+        self.assertNotIn('lineup_store', paint['python_inputs'])
 
     def test_header_is_two_lines_with_venue_after_time(self):
         if report_layout is None:

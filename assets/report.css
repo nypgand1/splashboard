@@ -316,6 +316,132 @@
     margin-bottom: 4px;
 }
 
+.report-toolbar-divider {
+    width: 1px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.55);
+    margin: 0 4px;
+}
+
+.report-note-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+}
+
+.report-rte-btn {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 14px !important;
+}
+
+.report-rte-btn.is-active {
+    background: rgba(255, 255, 255, 0.9) !important;
+    color: #1e3a8a !important;
+    font-weight: bold;
+}
+
+.report-rte-dropdown-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.report-rte-picker-btn {
+    position: relative;
+    display: inline-flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.report-rte-color-indicator {
+    display: block;
+    width: 16px;
+    height: 3px;
+    background: #3498db;
+    border-radius: 2px;
+    margin-top: 1px;
+}
+
+#report-btn-highlight-picker .report-rte-color-indicator {
+    background: #f1c40f;
+}
+
+.report-rte-color-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 204px;
+    padding: 6px 8px;
+    z-index: 1200;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.report-rte-color-menu[hidden] {
+    display: none !important;
+}
+
+.report-rte-palette-grid {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 3px;
+}
+
+.report-rte-color-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.15s ease;
+    outline: none;
+    flex-shrink: 0;
+}
+
+.report-rte-color-dot:hover {
+    transform: scale(1.25);
+    box-shadow: 0 0 4px rgba(0,0,0,0.3);
+}
+
+.report-rte-custom-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 24px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    font-size: 11px;
+    font-weight: 500;
+    color: #1e293b;
+    cursor: pointer;
+    margin: 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.report-rte-custom-btn:hover {
+    background: rgba(255, 255, 255, 0.95);
+}
+
+.report-rte-custom-input {
+    position: absolute;
+    top: -20px;
+    left: -20px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
 .report-text-block {
     min-height: 100%;
     font-size: 13px;
@@ -324,10 +450,55 @@
     white-space: pre-wrap;
 }
 
-.report-text-block:empty::before {
+.report-text-block:empty::before,
+.report-text-block p:empty:first-child::before,
+.report-text-block p.is-editor-empty:first-child::before {
     content: attr(data-placeholder);
     color: #94a3b8;
+    float: left;
+    height: 0;
     pointer-events: none;
+}
+
+/* Multi-level nested list styling */
+.report-text-block ul,
+.report-text-block ol {
+    padding-left: 20px;
+    margin: 2px 0;
+}
+
+.report-text-block ul {
+    list-style-type: disc;
+}
+
+.report-text-block ul ul {
+    list-style-type: circle;
+}
+
+.report-text-block ul ul ul,
+.report-text-block ul ul ul ul {
+    list-style-type: square;
+}
+
+.report-text-block ol {
+    list-style-type: decimal;
+}
+
+.report-text-block ol ol {
+    list-style-type: lower-alpha;
+}
+
+.report-text-block ol ol ol,
+.report-text-block ol ol ol ol {
+    list-style-type: lower-roman;
+}
+
+.report-text-block li {
+    margin: 1px 0;
+}
+
+.report-text-block p {
+    margin: 0 0 4px 0;
 }
 
 .report-spacer {
@@ -449,6 +620,18 @@
 }
 
 @media print {
+    *, *::before, *::after {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+    }
+    html, body {
+        background: #ffffff !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 297mm !important;
+        height: auto !important;
+    }
     .no-print,
     #report-toolbar,
     #report-page-list,
@@ -459,17 +642,47 @@
         display: none !important;
     }
     .report-workspace {
-        background: #fff;
-        padding: 0;
-        min-height: 0;
+        background: #ffffff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        min-height: 0 !important;
+        width: 297mm !important;
     }
     .report-workspace-row {
-        display: block;
+        display: block !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 297mm !important;
+    }
+    .report-main,
+    .report-papers {
+        display: block !important;
+        width: 297mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        gap: 0 !important;
     }
     .report-paper {
-        box-shadow: none;
-        page-break-after: always;
-        margin: 0;
+        display: flex !important;
+        flex-direction: column !important;
+        width: 297mm !important;
+        height: 210mm !important;
+        max-height: 210mm !important;
+        box-shadow: none !important;
+        page-break-after: always !important;
+        break-after: page !important;
+        margin: 0 !important;
+        padding: 6mm !important;
+        box-sizing: border-box !important;
+        background: #ffffff !important;
+        overflow: hidden !important;
+    }
+    .report-grid {
+        display: block !important;
+        position: relative !important;
+    }
+    .grid-stack-item {
+        position: absolute !important;
     }
     @page {
         size: A4 landscape;

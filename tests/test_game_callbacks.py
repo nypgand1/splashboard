@@ -29,7 +29,7 @@ class HiddenTabTests(unittest.TestCase):
         self.assertIs(game_page.update_pane_bs('{}', 'tab-lineup'), no_update)
         self.assertIs(game_page.update_pane_rotation('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_pbp('{}', 'tab-bs'), no_update)
-        self.assertIs(game_page.update_pane_lineup('{}', 5, 'tab-bs'), no_update)
+        self.assertIs(game_page.update_pane_lineup(5, 'tab-bs', '{}', None), no_update)
         self.assertIs(game_page.update_pane_report('tab-bs', '{}', '{}', '{}', None), no_update)
 
     def test_report_tab_hidden_for_live_and_shown_when_finished(self):
