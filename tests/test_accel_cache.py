@@ -368,5 +368,27 @@ class PaneRenderGateTests(unittest.TestCase):
         self.assertIs(game_page.update_pane_report('tab-bs', '{}', '{}', '{}', None), no_update)
 
 
+class BackgroundWarmupTests(unittest.TestCase):
+    def test_warmup_and_prefetch_helpers_execute_without_raising(self):
+        import pandas as pd
+        from synergy_inbounder.runtime_cache import warmup_game_report, prefetch_latest_games
+        
+        # Test warmup on none/empty
+        warmup_game_report(None)
+        warmup_game_report('')
+        
+        # Test prefetch on empty df
+        prefetch_latest_games(None)
+        prefetch_latest_games(pd.DataFrame())
+        
+        # Test prefetch on sample df
+        sample_df = pd.DataFrame([
+            {'fixtureId': 'g1', 'status': 'FINISHED'},
+            {'fixtureId': 'g2', 'status': 'CONFIRMED'},
+            {'fixtureId': 'g3', 'status': 'IN_PROGRESS'},
+        ])
+        prefetch_latest_games(sample_df, max_games=2)
+
+
 if __name__ == '__main__':
     unittest.main()

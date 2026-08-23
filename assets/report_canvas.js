@@ -691,6 +691,18 @@
         return reportFontLoading;
     }
 
+    try {
+        if (typeof window !== 'undefined' && window.requestIdleCallback) {
+            window.requestIdleCallback(function () {
+                loadReportFont().catch(function () {});
+            });
+        } else if (typeof window !== 'undefined') {
+            setTimeout(function () {
+                loadReportFont().catch(function () {});
+            }, 1000);
+        }
+    } catch (e) {}
+
     function registerReportFont(pdf) {
         if (reportFontBinary) {
             pdf.addFileToVFS('NotoSansTC-Regular.ttf', reportFontBinary);

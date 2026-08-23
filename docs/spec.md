@@ -48,6 +48,12 @@ A `dcc.Store` that is `None` or invalid JSON is treated as an empty object. Call
   - PBP HTTP cache and live report cache = 25 seconds
   - Play-By-Play and Rotation share that cadence
 
+## Background warmup and prefetch
+
+- **Game page Tab warmup**: For finished games (`FINISHED`, `CONFIRMED`), after `game_id` load, a background daemon thread precomputes Lineup `(4, 3, 2)` combinations and Rotation payload into `PostGameReport` memoized caches so tab switching is instantaneous.
+- **Font prefetch**: In Game pages, `NotoSansTC-Regular.ttf` (2.2MB) is preloaded asynchronously via JS upon initial render, eliminating download latency when clicking PDF export.
+- **Home page 2-game prefetch**: Upon loading the Home schedule list, a background sequential worker pre-fetches and memoizes `PostGameReport` for up to the latest 2 games (safely limited to avoid live API rate limits). Any direct user page request preempts background warmup.
+
 ## Rotation
 
 - Plotly heatmap, colorscale `PuBu`.

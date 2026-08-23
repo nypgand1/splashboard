@@ -78,6 +78,9 @@ Do not call live Synergy. Do not drive a browser in this file.
 | R37 | `update_pane_report` fires exactly once per tab switch (no double render); `lineup_store` is `State` |
 | R38 | Hidden table templates provide reliable client-side cloning for add table |
 | R39 | `fitAllTableBlocks` batches all `scrollHeight` reads before any `grid.update` writes (no interleaved reflows) |
+| R40 | Finished games trigger background thread warmup for Lineup (4, 3, 2) and Rotation payload without blocking main callback |
+| R41 | PDF font (`NotoSansTC-Regular.ttf`) is preloaded in background via JS on Game page load |
+| R42 | Home schedule list triggers sequential background prefetch for up to the latest 2 games |
 | H1 | Header is two lines: away score `@` home score, then date + time + venue on one line |
 
 ## PDF contract (unit, not a rendered file)

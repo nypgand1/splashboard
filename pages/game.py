@@ -229,6 +229,8 @@ def update_lineup_store(n, game_id):
         return json.dumps({})
     try:
         report = get_cached_report(game_id)
+        from synergy_inbounder.runtime_cache import warmup_game_report
+        warmup_game_report(game_id)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
         return json.dumps({})
