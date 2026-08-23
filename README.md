@@ -50,4 +50,4 @@ fly deploy
 
 Set secrets before the first deploy that no longer bakes credentials into the image. Later `fly deploy` runs keep the existing secrets.
 
-Product behavior: `docs/spec.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.
+Product behavior: `docs/spec.md`. Report canvas ADR: `docs/adr/0001-report-canvas.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.

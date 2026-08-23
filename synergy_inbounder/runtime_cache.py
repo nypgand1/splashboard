@@ -127,6 +127,51 @@ def get_cached_id_table(org_id, builder):
     return value
 
 
+def warmup_game_report(game_id, match_info=None):
+    """Background warmup for finished games: computes 4,3,2 lineup combinations and rotation."""
+    if not game_id:
+        return
+    def _run():
+        try:
+            report = get_cached_report(game_id)
+            status = lookup_game_status(game_id)
+            if is_finished_status(status):
+                report.get_all_lineup_stats_json_dict(sizes=(5, 4, 3, 2))
+                info = match_info or {}
+                report.get_rotation_payload(
+                    home_team_id=info.get('home_team_id'),
+                    away_team_id=info.get('away_team_id'),
+                )
+        except Exception as e:
+            print(f"Background warmup error for {game_id}: {e}")
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
+def prefetch_latest_games(season_df, max_games=2):
+    """Background sequential worker to prefetch up to max_games reports."""
+    if season_df is None or season_df.empty:
+        return
+    
+    finished_rows = season_df[season_df['status'].apply(is_finished_status)]
+    target_ids = []
+    if not finished_rows.empty:
+        target_ids = finished_rows.tail(max_games)['fixtureId'].tolist()
+    else:
+        target_ids = season_df.tail(max_games)['fixtureId'].tolist()
+
+    def _worker():
+        for gid in target_ids:
+            try:
+                get_cached_report(gid)
+            except Exception as e:
+                print(f"Prefetch error for game {gid}: {e}")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+
 def clear_runtime_caches():
     with _report_lock:
         _report_cache.clear()
@@ -134,3 +179,4 @@ def clear_runtime_caches():
     with _meta_lock:
         _season_cache.clear()
         _id_table_cache.clear()
+

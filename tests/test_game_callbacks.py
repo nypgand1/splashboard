@@ -29,5 +29,27 @@ class HiddenTabTests(unittest.TestCase):
         self.assertIs(game_page.update_pane_bs('{}', 'tab-lineup'), no_update)
         self.assertIs(game_page.update_pane_rotation('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_pbp('{}', 'tab-bs'), no_update)
-        self.assertIs(game_page.update_pane_lineup('{}', 5, 'tab-bs'), no_update)
-        self.assertIs(game_page.update_pane_report('{}', '{}', '{}', 'tab-bs'), no_update)
+        self.assertIs(game_page.update_pane_lineup(5, 'tab-bs', '{}', None), no_update)
+        self.assertIs(game_page.update_pane_report('tab-bs', '{}', '{}', '{}', None), no_update)
+
+    def test_report_tab_hidden_for_live_and_shown_when_finished(self):
+        live_style, live_tab = game_page.toggle_report_tab(
+            json.dumps({'status': 'IN_PROGRESS'}),
+            'tab-bs',
+        )
+        self.assertEqual(live_style, {'display': 'none'})
+        self.assertIs(live_tab, no_update)
+
+        live_on_report_style, switched = game_page.toggle_report_tab(
+            json.dumps({'status': 'PENDING'}),
+            'tab-report',
+        )
+        self.assertEqual(live_on_report_style, {'display': 'none'})
+        self.assertEqual(switched, 'tab-bs')
+
+        done_style, done_tab = game_page.toggle_report_tab(
+            json.dumps({'status': 'FINISHED'}),
+            'tab-bs',
+        )
+        self.assertEqual(done_style, {})
+        self.assertIs(done_tab, no_update)

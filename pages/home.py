@@ -45,6 +45,12 @@ def df_data():
     game_list_df = Parser.parse_season_game_list_df(SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
     
+    try:
+        from synergy_inbounder.runtime_cache import prefetch_latest_games
+        prefetch_latest_games(game_list_df, max_games=2)
+    except Exception as e:
+        print(f"Failed to start home prefetch: {e}")
+    
     df = game_list_df
     df['Time'] = df['startTimeLocal']
     df['Game Type'] = df['fixtureType']

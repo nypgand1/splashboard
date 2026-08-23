@@ -2,7 +2,9 @@
 
 Read the matching spec before changing behavior or fixing a bug.
 
-- Product behavior (pages, tabs, finished vs live, Rotation, English UI): `docs/spec.md`
+- Product behavior (pages, tabs, finished vs live, Rotation, English UI, Report canvas): `docs/spec.md`
+- Report canvas decisions (GridStack, `dbc.Table`, localStorage, glass chrome, JS paint): `docs/adr/0001-report-canvas.md`
+- Report v2 unit cases: `docs/report-tests.md`
 - Synergy hosts, official vs `/live`, token, roster, periodId, rate limits: `docs/synergy.md`
 - Local run, tests, deploy, environment variables: `README.md`
 
@@ -18,4 +20,4 @@ Read the matching spec before changing behavior or fixing a bug.
 ## Do not
 
 - Do not add `basketball_rest.json` or `token_openapi.yml` to git.
-- Do not write tests for behavior that is not implemented (429 Retry-After, serialized live bundle, Report PDF).
+- Do not write tests for 429 Retry-After, serialized live bundle, Shot Chart, play-type tables, or manual cell styling.
