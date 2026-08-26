@@ -16,10 +16,17 @@ This file is the source of truth for product behavior. Tests and later feature w
   - `--row-hover`: `#e0f2fe` (gentle cyan hover highlight)
   - `--card-bg`: `#ffffff` (white card containers with 10px radius & `#e2e8f0` border)
 - Tabs: Top radius 10px, active tab filled with `linear-gradient(135deg, #0077b6, #00b4d8)` and pure white text.
-- Tables & Alignment:
-  - Text columns (Team, Player) left-aligned; all numeric / stat columns right-aligned.
+- Tables & Alignment Rules (strictly unified across `dmc.Table` and `dag.AgGrid`):
+  - **Left Align (靠左對齊)**: `Player`, `Lineup`, `Lineups`, `Team` (single team name in Box Score).
+  - **Center Align (置中對齊)**: `Home Team`, `Away Team`, `Venue`, `Game Type`, `Status`, `Score`.
+  - **Right Align (靠右對齊)**: `Time`, `Min`, `+/-`, `PM`, `PTS`, `REB`, `AST`, `TOV`, `STL`, `BLK`, `PF`, `OR`, `DR`, `2PM-A (%)`, `3PM-A (%)`, `FTM-A (%)`, `eFG%`, `USG%`, `Poss`, `Pace`, `PPP`, `ORB%`, `TOV%`, `FT-R`, `PIPM-A`, `PIP`, `SCPM-A`, `SCP`, `FBP`, `POT`, `BP` and all numeric/time statistics.
+  - Header cells and data cells must strictly share the identical alignment for every column.
   - Team summary tables have a 3.5px left indicator bar (Home: `#0077b6`, Away: `#94a3b8`).
   - Player detail tables prefixed with 8px dot (Home: `#00b4d8`, Away: `#94a3b8`).
+- Responsive Layout (RWD):
+  - **Mobile (≤ 768px)**: Canvas `padding: 0`, Device Frame full bleed (`border-radius: 0; border: none; box-shadow: none;`), content `padding: 12px`, Tabs single-row smooth horizontal scrolling (`overflow-x: auto`), data tables support horizontal swipe with sticky first column.
+  - **Tablet (769px ~ 1024px)**: Canvas `padding: 12px`, Device Frame `border-radius: 12px`.
+  - **Desktop (> 1024px)**: Canvas `padding: 24px`, Device Frame `max-width: 1440px`, `border-radius: 14px`, floating shadow `0 8px 30px rgba(15, 23, 42, 0.15)`.
 
 ## Pages
 

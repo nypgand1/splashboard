@@ -35,6 +35,9 @@ def layout(game_id=None):
     return html.Div([
         html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
         
+        # Game Info Banner Card (visible across all tabs)
+        html.Div(id='game-info-banner-wrap'),
+
         # Upper Tabs (DMC Tabs with Dark Liquid Glass container, sticky below 56px Navbar)
         dmc.Tabs(
             [
@@ -145,15 +148,17 @@ def update_bs_store(n, game_id):
         't_adv_df': report.get_team_advance_stats_df().to_json(date_format='iso', orient='split'),
         't_df': report.get_team_stats_df().to_json(date_format='iso', orient='split'),
         'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
-        'p_df_dict': report.get_player_stats_json_dict()
+        'p_df_dict': report.get_player_stats_json_dict(),
+        'p_summary_dict': report.get_player_box_score_summary_json_dict(),
     }
     return json.dumps(bs_dict)
 
 @callback(
     Output('match_info_store', 'data'),
-    Input('game_id', 'children'),
+    [Input('interval-component', 'n_intervals'),
+     Input('game_id', 'children')]
 )
-def update_match_info_store(game_id):
+def update_match_info_store(n, game_id):
     if not game_id:
         return json.dumps({})
     try:
@@ -193,6 +198,114 @@ def update_match_info_store(game_id):
     except Exception as e:
         print(f"Error loading match info: {e}")
         return json.dumps({})
+
+@callback(
+    Output('game-info-banner-wrap', 'children'),
+    Input('match_info_store', 'data')
+)
+def render_game_info_banner(match_info_store):
+    info = safe_loads(match_info_store)
+    if not info:
+        return html.Div()
+    
+    home_name = info.get('home_team') or 'Home'
+    away_name = info.get('away_team') or 'Away'
+    home_score = info.get('home_score') or '—'
+    away_score = info.get('away_score') or '—'
+    status = info.get('status') or ''
+    date_val = info.get('date') or ''
+    time_val = info.get('time') or ''
+    venue_val = info.get('venue') or ''
+    
+    is_live = status.upper() in ('LIVE', 'IN_PROGRESS', 'RUNNING')
+    badge_color = "red" if is_live else "blue"
+    badge_label = "● LIVE" if is_live else (status.upper() if status else "FINISHED")
+
+    return html.Div(
+        [
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Span(
+                                away_name,
+                                style={
+                                    "fontSize": "16px",
+                                    "fontWeight": 800,
+                                    "color": "#0f172a",
+                                }
+                            ),
+                            html.Span(
+                                f"{away_score}",
+                                style={
+                                    "fontSize": "22px",
+                                    "fontWeight": 900,
+                                    "color": "#0077b6",
+                                    "margin": "0 12px 0 10px",
+                                }
+                            ),
+                            html.Span(
+                                "vs",
+                                style={
+                                    "fontSize": "13px",
+                                    "fontWeight": 700,
+                                    "color": "#94a3b8",
+                                    "marginRight": "12px",
+                                }
+                            ),
+                            html.Span(
+                                f"{home_score}",
+                                style={
+                                    "fontSize": "22px",
+                                    "fontWeight": 900,
+                                    "color": "#0077b6",
+                                    "marginRight": "10px",
+                                }
+                            ),
+                            html.Span(
+                                home_name,
+                                style={
+                                    "fontSize": "16px",
+                                    "fontWeight": 800,
+                                    "color": "#0f172a",
+                                }
+                            ),
+                        ],
+                        style={"display": "flex", "alignItems": "center"}
+                    ),
+                    dmc.Badge(
+                        badge_label,
+                        color=badge_color,
+                        variant="light",
+                        size="md",
+                        radius="sm",
+                        style={"fontWeight": 700}
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "justifyContent": "space-between",
+                    "flexWrap": "wrap",
+                    "gap": "10px",
+                    "marginBottom": "4px",
+                }
+            ),
+            html.Div(
+                " • ".join(p for p in (date_val, time_val, venue_val) if p),
+                style={"fontSize": "12px", "color": "#64748b", "fontWeight": 500}
+            )
+        ],
+        className="braves-card-wrapper game-info-banner",
+        style={
+            "backgroundColor": "#ffffff",
+            "borderRadius": "10px",
+            "border": "1px solid #e2e8f0",
+            "boxShadow": "0 1px 3px rgba(0,0,0,0.03)",
+            "padding": "12px 18px",
+            "marginBottom": "16px",
+        }
+    )
 
 @callback(
     Output('interval-component', 'disabled'),
@@ -297,24 +410,40 @@ def _loading_placeholder():
     return html.Div("Loading...", className="p-4 text-center text-muted")
 
 
+def _align_from_header(col):
+    col_str = str(col).lower()
+    if 'player' in col_str or 'lineup' in col_str or 'team' in col_str:
+        return "right"
+    return "center"
+
+
 def _parse_numeric_stat(val):
     if val is None or pd.isna(val):
         return None
     s = str(val).strip()
     if not s or s in ('nan', 'None', '—', '-'):
         return None
-    # If percentage in parentheses e.g. "16-47 (34.0%)" or "34.0%"
-    if '%' in s:
+    # If percentage e.g. "59.1%"
+    if s.endswith('%'):
         try:
-            # Extract number before %
-            import re
-            m = re.search(r'([\d\.]+)%', s)
-            if m:
-                return float(m.group(1))
+            return float(s[:-1])
+        except Exception:
+            return None
+    # If fraction e.g. "26-44" or "30-62 (48.4%)"
+    if '(' in s and '%' in s:
+        try:
+            pct_part = s.split('(')[1].split('%')[0].strip()
+            return float(pct_part)
         except Exception:
             pass
-    # If time MM:SS
-    if ':' in s and len(s.split(':')) == 2:
+    if '-' in s and not s.startswith('-'):
+        try:
+            made_part = s.split('-')[0].strip()
+            return float(made_part)
+        except Exception:
+            pass
+    # If MM:SS
+    if ':' in s:
         try:
             parts = s.split(':')
             return float(parts[0]) * 60 + float(parts[1])
@@ -331,40 +460,247 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
     if df is None or df.empty:
         return html.Div("—", className="text-muted fst-italic text-center p-2")
     
-    # Alignment: Team/Player left, numeric/stats right
     def _align(col):
-        return "left" if col in ('Team', 'Player', 'Venue', 'Game Type', 'Time', 'Status') else "right"
+        return "center"
 
     # Precalculate winning values for each column across rows (team summary tables have 2 rows: Home vs Away)
+    is_timeouts_card = bool(title and 'timeout' in title.lower())
     col_winners = {}
-    if is_team_summary and len(df) == 2:
+    if is_team_summary and len(df) == 2 and not is_timeouts_card:
+        is_fouls_card = bool(title and 'foul' in title.lower())
         for col in df.columns:
             if col in ('Team', 'Min'):
                 continue
             val0 = _parse_numeric_stat(df.iloc[0][col])
             val1 = _parse_numeric_stat(df.iloc[1][col])
             if val0 is not None and val1 is not None and val0 != val1:
-                # Lower is better for TOV and PF
-                if col in ('TOV', 'PF'):
+                # Lower is better for Fouls, TO, TOV, TOV%, PF
+                if is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TOV%'):
                     col_winners[col] = 0 if val0 < val1 else 1
                 else:
                     col_winners[col] = 0 if val0 > val1 else 1
 
-    header = [html.Tr([
-        html.Th(
-            col,
-            style={
-                "textAlign": _align(col),
-                "padding": "7px 10px",
-                "fontSize": "13px",
-                "fontWeight": 700,
-                "color": "#0f172a",
-                "borderBottom": "1px solid #e2e8f0",
-                "backgroundColor": "#f8fafc",
-                "whiteSpace": "nowrap",
-            }
-        ) for col in df.columns
-    ])]
+    has_grouped_cols = any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%'))
+    has_key_stats_grouped = any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP', 'SCPM', 'SCPA', 'SCP'))
+    
+    if has_grouped_cols:
+        top_row = []
+        sub_row = []
+        for col in ('Team', 'Min'):
+            if col in df.columns:
+                top_row.append(html.Th(
+                    col.upper(),
+                    rowSpan=2,
+                    style={
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "padding": "6px 10px",
+                        "fontSize": "12px",
+                        "fontWeight": 700,
+                        "color": "#0f172a",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                        "whiteSpace": "nowrap",
+                    }
+                ))
+
+        if any(c in df.columns for c in ('2M', '2A', '2FG%')):
+            top_row.append(html.Th("2PT", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        if any(c in df.columns for c in ('3M', '3A', '3FG%')):
+            top_row.append(html.Th("3PT", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        if any(c in df.columns for c in ('FTM', 'FTA', 'FT%')):
+            top_row.append(html.Th("FT", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        if any(c in df.columns for c in ('OR', 'DR', 'REB')):
+            top_row.append(html.Th("REB", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                html.Th("O", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("D", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("T", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        for col in ('AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
+            if col in df.columns:
+                top_row.append(html.Th(
+                    col,
+                    rowSpan=2,
+                    style={
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "padding": "6px 8px",
+                        "fontSize": "12px",
+                        "fontWeight": 700,
+                        "color": "#0f172a",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                        "whiteSpace": "nowrap",
+                    }
+                ))
+        header = [html.Tr(top_row), html.Tr(sub_row)]
+    elif has_key_stats_grouped:
+        top_row = []
+        sub_row = []
+        if 'Team' in df.columns:
+            top_row.append(html.Th(
+                "TEAM",
+                rowSpan=2,
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        if any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP')):
+            top_row.append(html.Th("PIP", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+        if any(c in df.columns for c in ('SCPM', 'SCPA', 'SCP')):
+            top_row.append(html.Th("SCP", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                html.Th("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+        for col in ('FBP', 'POT', 'BP'):
+            if col in df.columns:
+                top_row.append(html.Th(
+                    col,
+                    rowSpan=2,
+                    style={
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "padding": "6px 8px",
+                        "fontSize": "12px",
+                        "fontWeight": 700,
+                        "color": "#0f172a",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                        "whiteSpace": "nowrap",
+                    }
+                ))
+        header = [html.Tr(top_row), html.Tr(sub_row)]
+    elif any(c in df.columns for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R')):
+        top_row = []
+        sub_row = []
+        if 'Team' in df.columns:
+            top_row.append(html.Th(
+                "TEAM",
+                rowSpan=2,
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        if 'Pace' in df.columns:
+            top_row.append(html.Th(
+                "PACE",
+                rowSpan=2,
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        if 'PPP' in df.columns:
+            top_row.append(html.Th(
+                "PPP",
+                rowSpan=2,
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        ff_cols = [c for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R') if c in df.columns]
+        if ff_cols:
+            top_row.append(html.Th(
+                "4 FACTORS",
+                colSpan=len(ff_cols),
+                style={
+                    "textAlign": "center",
+                    "padding": "4px 8px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                }
+            ))
+            for fc in ff_cols:
+                sub_row.append(html.Th(
+                    fc,
+                    style={
+                        "textAlign": "center",
+                        "padding": "4px 6px",
+                        "fontSize": "11px",
+                        "fontWeight": 700,
+                        "color": "#475569",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                    }
+                ))
+        header = [html.Tr(top_row), html.Tr(sub_row)]
+    else:
+        header = [html.Tr([
+            html.Th(
+                col,
+                style={
+                    "textAlign": "center",
+                    "padding": "7px 10px",
+                    "fontSize": "13px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ) for col in df.columns
+        ])]
 
     rows = []
     for row_idx in range(len(df)):
@@ -378,19 +714,22 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
             val = df.iloc[row_idx][col]
             if pd.isna(val) or val is None or str(val).strip() in ('nan', 'None'):
                 val_str = ""
+            elif is_timeouts_card and str(val).strip() in ('0', '0.0'):
+                val_str = ""
             else:
                 val_str = str(val)
 
-            # Determine bolding: Only winning row in column is bold (team name itself is regular or semi-bold)
+            # Determine bolding and color: Only winning row in column is bold blue (team name itself is regular or semi-bold)
             is_winner = col_winners.get(col) == row_idx
+            text_color = "#0077b6" if is_winner else "#1e293b"
             font_weight = 700 if is_winner else 400
 
             cell_style = {
-                "textAlign": _align(col),
+                "textAlign": "center",
                 "padding": "7px 10px",
                 "fontSize": "13px",
                 "fontWeight": font_weight,
-                "color": "#1e293b",
+                "color": text_color,
                 "whiteSpace": "nowrap",
             }
             if c_idx == 0 and team_stripe_style:
@@ -451,54 +790,231 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
     )
 
 
-def _ag_grid_from_df(df, page_size=None, filterable_cols=None):
+def _build_stats_column_defs(columns, filterable_cols=None):
+    col_set = set(columns)
+    column_defs = []
+
+    sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
+
+    # Pinned left columns: #, PLAYER/LINEUP/TEAM, S
+    if '#' in col_set:
+        column_defs.append({
+            "field": "#",
+            "headerName": "#",
+            "pinned": "left",
+            "sortable": True,
+            "filter": False,
+            "cellDataType": "text",
+            "minWidth": 36,
+            "width": 38,
+            "cellStyle": {"textAlign": "center", "fontWeight": "600", "color": "#64748b"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+            "valueFormatter": {"function": "params.value != null ? params.value : ''"},
+            "colSpan": {"function": "params.data && (params.data['#'] === 'TEAM / COACHES' || params.data['#'] === 'TOTAL') ? 3 : 1"},
+        })
+
+    first_col = next((c for c in ('Player', 'Lineup', 'Lineups', 'Team') if c in col_set), None)
+    if first_col:
+        is_lineup = 'lineup' in first_col.lower()
+        has_filter = bool(filterable_cols and any(fc.lower() in first_col.lower() for fc in filterable_cols))
+        col_def = {
+            "field": first_col,
+            "headerName": first_col.upper(),
+            "pinned": "left",
+            "sortable": True,
+            "filter": has_filter,
+            "minWidth": 260 if is_lineup else 95,
+            "cellStyle": {"textAlign": "center", "fontWeight": "700"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        }
+        if is_lineup:
+            col_def["flex"] = 1
+        else:
+            col_def["width"] = 95
+        column_defs.append(col_def)
+
+    if 'S' in col_set:
+        column_defs.append({
+            "field": "S",
+            "headerName": "S",
+            "pinned": "left",
+            "sortable": True,
+            "minWidth": 34,
+            "width": 36,
+            "cellStyle": {"textAlign": "center", "fontWeight": "700", "color": "#0077b6"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        })
+
+    if 'Min' in col_set:
+        column_defs.append({
+            "field": "Min",
+            "headerName": "MIN",
+            "sortable": True,
+            "minWidth": 50,
+            "width": 56,
+            "cellStyle": {"textAlign": "center"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        })
+
+    if '+/-' in col_set:
+        column_defs.append({
+            "field": "+/-",
+            "headerName": "+/-",
+            "sortable": True,
+            "minWidth": 42,
+            "width": 46,
+            "cellStyle": {"textAlign": "center"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        })
+
+    if any(c in col_set for c in ('2M', '2A', '2FG%')):
+        children = []
+        if '2M' in col_set:
+            children.append({"field": "2M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '2A' in col_set:
+            children.append({"field": "2A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '2FG%' in col_set:
+            children.append({"field": "2FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "2PT",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    if any(c in col_set for c in ('3M', '3A', '3FG%')):
+        children = []
+        if '3M' in col_set:
+            children.append({"field": "3M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '3A' in col_set:
+            children.append({"field": "3A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '3FG%' in col_set:
+            children.append({"field": "3FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "3PT",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    if any(c in col_set for c in ('FTM', 'FTA', 'FT%')):
+        children = []
+        if 'FTM' in col_set:
+            children.append({"field": "FTM", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'FTA' in col_set:
+            children.append({"field": "FTA", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'FT%' in col_set:
+            children.append({"field": "FT%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "FT",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    if any(c in col_set for c in ('OR', 'DR', 'REB')):
+        children = []
+        if 'OR' in col_set:
+            children.append({"field": "OR", "headerName": "O", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'DR' in col_set:
+            children.append({"field": "DR", "headerName": "D", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'REB' in col_set:
+            children.append({"field": "REB", "headerName": "T", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "REB",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    stat_specs = [
+        ('AST', 'AST', 42, 44),
+        ('TO', 'TO', 42, 44),
+        ('ST', 'ST', 42, 44),
+        ('BL', 'BL', 42, 44),
+        ('PF', 'PF', 42, 44),
+        ('FD', 'FD', 42, 44),
+        ('PTS', 'PTS', 44, 46),
+        ('eFG%', 'eFG%', 54, 58),
+        ('USG%', 'USG%', 54, 58),
+        ('PM', 'PM', 56, 62),
+    ]
+    for col_name, hdr_name, min_w, w in stat_specs:
+        if col_name in col_set:
+            column_defs.append({
+                "field": col_name,
+                "headerName": hdr_name,
+                "sortable": True,
+                "minWidth": min_w,
+                "width": w,
+                "cellStyle": {"textAlign": "center"},
+                "cellClass": "ag-cell-align-center",
+                "headerClass": "ag-header-align-center",
+                "cellClassRules": sorted_cell_rules,
+            })
+
+    return column_defs
+
+
+def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None):
     if df is None or df.empty:
         return html.Div("—", className="text-muted fst-italic text-center p-2")
     
-    column_defs = []
-    for c in df.columns:
-        align = "left" if c in ('Player', 'Team', 'Lineup', 'Lineups') or 'lineup' in c.lower() else "right"
-        cell_style = {"textAlign": align}
-        
-        # Bolding rules: Player name or Lineup combinations bold
-        if c in ('Player', 'Lineup', 'Lineups') or 'lineup' in c.lower():
-            cell_style["fontWeight"] = "700"
+    sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
 
-        # Filter rules:
-        has_filter = bool(filterable_cols and (c in filterable_cols or any(fc.lower() in c.lower() for fc in filterable_cols)))
+    # If standard basketball stats table (2PT/3PT/FT breakdown present), use multi-level grouped columns
+    if any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%')):
+        column_defs = _build_stats_column_defs(df.columns, filterable_cols=filterable_cols)
+    else:
+        column_defs = []
+        for c_idx, c in enumerate(df.columns):
+            align = "center"
 
-        # Column width settings: Lineup needs generous minWidth to prevent truncating player names
-        col_width_props = {}
-        if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
-            col_width_props["minWidth"] = 320
-            col_width_props["flex"] = 4
-        elif c in ('Player', 'Team'):
-            col_width_props["minWidth"] = 110
-            col_width_props["flex"] = 1.8
-        elif c in ('2PM-A (%)', '3PM-A (%)', 'FTM-A (%)'):
-            col_width_props["minWidth"] = 100
-            col_width_props["flex"] = 1.2
-        elif c == 'Min':
-            col_width_props["minWidth"] = 65
-            col_width_props["flex"] = 0.9
-        elif c in ('PM', '+/-'):
-            col_width_props["minWidth"] = 55
-            col_width_props["flex"] = 0.8
-        else:
-            col_width_props["minWidth"] = 45
-            col_width_props["flex"] = 0.75
+            cell_style = {"textAlign": align}
+            if c in ('Player', 'Lineup', 'Lineups') or 'lineup' in c.lower():
+                cell_style["fontWeight"] = "700"
 
-        col_def = {
-            "field": c,
-            "headerName": c,
-            "sortable": True,
-            "filter": has_filter,
-            "type": "rightAligned" if align == "right" else None,
-            "cellStyle": cell_style,
-            "headerClass": f"ag-header-align-{align}",
-            **col_width_props
-        }
-        column_defs.append(col_def)
+            has_filter = bool(filterable_cols and (c in filterable_cols or any(fc.lower() in c.lower() for fc in filterable_cols)))
+
+            col_width_props = {}
+            if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
+                col_width_props["minWidth"] = 260
+                col_width_props["flex"] = 1
+            elif c in ('Player', 'Team'):
+                col_width_props["minWidth"] = 90
+                col_width_props["width"] = 95
+            elif c == 'Min':
+                col_width_props["minWidth"] = 50
+                col_width_props["width"] = 55
+            elif c in ('PM', '+/-'):
+                col_width_props["minWidth"] = 42
+                col_width_props["width"] = 45
+            else:
+                col_width_props["minWidth"] = 38
+                col_width_props["width"] = 42
+
+            col_def = {
+                "field": c,
+                "headerName": c,
+                "sortable": True,
+                "filter": has_filter,
+                "cellStyle": cell_style,
+                "cellClass": f"ag-cell-align-{align}",
+                "headerClass": f"ag-header-align-{align}",
+                "cellClassRules": sorted_cell_rules,
+                **col_width_props
+            }
+            column_defs.append(col_def)
 
     dash_options = {
         "domLayout": "autoHeight",
@@ -507,12 +1023,14 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None):
     if page_size:
         dash_options["pagination"] = True
         dash_options["paginationPageSize"] = page_size
+    if pinned_bottom_data:
+        dash_options["pinnedBottomRowData"] = pinned_bottom_data
 
     return html.Div(
         dag.AgGrid(
             rowData=df.to_dict('records'),
             columnDefs=column_defs,
-            defaultColDef={"sortable": True, "filter": False, "resizable": True},
+            defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules},
             dashGridOptions=dash_options,
             className="ag-theme-alpine braves-clean-ag-grid",
             style={'width': '100%'}
@@ -539,9 +1057,10 @@ def render_bs_children(bs_store):
     qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
 
     t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
-    t_adv_df['Poss'] = t_adv_df['Poss'].apply(lambda x: f"{float(x):.1f}")
-    t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
-    t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
+    if 'Pace' in t_adv_df.columns:
+        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
+    if 'PPP' in t_adv_df.columns:
+        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
 
     t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
     k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
@@ -558,12 +1077,12 @@ def render_bs_children(bs_store):
         style={"marginBottom": "12px"}
     )
 
-    # Row 2: 2-column with titles 'POSS & 4 FACTORS' and 'PAINT / 2nd CHANCE / FASTBREAK / OFF TOV / BENCH' (gap 12px)
+    # Row 2: 2-column with titles 'PACE & 4 FACTORS' and 'PAINT / 2nd CHANCE / FASTBREAK / OFF TOV / BENCH' (gap 12px)
     row2 = dmc.SimpleGrid(
         cols={"base": 1, "sm": 2},
         spacing="12px",
         children=[
-            _dmc_table_from_df(t_adv_df, is_team_summary=True, title="Poss & 4 Factors"),
+            _dmc_table_from_df(t_adv_df, is_team_summary=True, title="Pace & 4 Factors"),
             _dmc_table_from_df(k_df, is_team_summary=True, title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench"),
         ],
         style={"marginBottom": "12px"}
@@ -580,6 +1099,7 @@ def render_bs_children(bs_store):
     ]
 
     p_dict = bs_dict.get('p_df_dict', {})
+    p_summary = bs_dict.get('p_summary_dict', {})
     for idx, (team_name, p_json) in enumerate(sorted(p_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
         title_section = html.Div(
@@ -607,7 +1127,8 @@ def render_bs_children(bs_store):
         )
         children.append(title_section)
         p_df = pd.read_json(io.StringIO(p_json), orient='split')
-        children.append(_ag_grid_from_df(p_df, page_size=None))
+        summary_rows = p_summary.get(team_name) if isinstance(p_summary, dict) else None
+        children.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
     return children
 
 

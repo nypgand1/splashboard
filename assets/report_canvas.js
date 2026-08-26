@@ -1814,3 +1814,40 @@ dagComponentFuncs.ScheduleScoreLink = function (props) {
         }
     }, text);
 };
+
+// Global AG Grid sort column cell background updater for B.LEAGUE sorting
+(function () {
+    function updateSortedColHighlight(gridWrap) {
+        if (!gridWrap) return;
+        var sortedHeaders = gridWrap.querySelectorAll(
+            '.ag-header-cell[aria-sort="ascending"], .ag-header-cell[aria-sort="descending"], .ag-header-cell.ag-header-cell-sorted-asc, .ag-header-cell.ag-header-cell-sorted-desc'
+        );
+        var activeColIds = Array.from(sortedHeaders).map(function (h) {
+            return h.getAttribute('col-id');
+        }).filter(Boolean);
+
+        var allCells = gridWrap.querySelectorAll('.ag-cell');
+        allCells.forEach(function (cell) {
+            var colId = cell.getAttribute('col-id');
+            if (colId && activeColIds.indexOf(colId) !== -1) {
+                cell.classList.add('ag-sorted-col-bg');
+            } else {
+                cell.classList.remove('ag-sorted-col-bg');
+            }
+        });
+    }
+
+    document.addEventListener('click', function (e) {
+        var header = e.target.closest('.ag-header-cell');
+        if (header) {
+            var gridWrap = header.closest('.braves-grid-wrap, .ag-theme-alpine');
+            setTimeout(function () {
+                updateSortedColHighlight(gridWrap);
+            }, 30);
+            setTimeout(function () {
+                updateSortedColHighlight(gridWrap);
+            }, 120);
+        }
+    }, true);
+})();
+

@@ -77,7 +77,6 @@ class PostGameReport():
         self.team_stats_df['duration'] = pd.to_timedelta(self.team_stats_df['minutes'].str.replace('PT', '', regex=False) \
                                                                                     .str.replace('M', ' min ', regex=False) \
                                                                                     .str.replace('S', 'sec', regex=False)).dt.total_seconds()/5
-        t_adv_df['Poss'] = self.team_stats_df.apply(lambda x: f"{x['poss']:0.1f}", axis=1)
         #TODO: assume a 48 mins game
         t_adv_df['Pace'] = self.team_stats_df.apply(lambda x: 48*60*x['poss']/x['duration'] if pd.notnull(x['duration']) else None, axis=1)
         t_adv_df['Pace'] = t_adv_df['Pace'].mean()
@@ -95,60 +94,87 @@ class PostGameReport():
         t_df = pd.DataFrame()
         t_df['Team'] = self.team_stats_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
         t_df['Min'] = self.team_stats_df['minutes'].map(minutes_to_mmss)
-        t_df['2PM-A (%)'] = self.team_stats_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:0.1f}%)" if x['pointsTwoAttempted'] else '', axis=1)
-        t_df['3PM-A (%)'] = self.team_stats_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:0.1f}%)" if x['pointsThreeAttempted'] else '', axis=1)
-        t_df['FTM-A (%)'] = self.team_stats_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:0.1f}%)"if x['freeThrowsAttempted'] else '', axis=1)
-        t_df['OR'] = self.team_stats_df['reboundsOffensive']
-        t_df['DR'] = self.team_stats_df['reboundsDefensive']
-        t_df['REB'] = self.team_stats_df['rebounds']
-        t_df['AST'] = self.team_stats_df['assists']
-        t_df['TOV'] = self.team_stats_df['turnovers']
-        t_df['STL'] = self.team_stats_df['steals']
-        t_df['BLK'] = self.team_stats_df['blocks']
-        t_df['PF'] = self.team_stats_df['foulsTotal']
-        t_df['PTS'] = self.team_stats_df['points']
+        t_df['2M'] = self.team_stats_df['pointsTwoMade'].fillna(0).astype(int)
+        t_df['2A'] = self.team_stats_df['pointsTwoAttempted'].fillna(0).astype(int)
+        t_df['2FG%'] = self.team_stats_df.apply(lambda x: f"{x['pointsTwoPercentage']:0.1f}%" if x['pointsTwoAttempted'] != 0 else '', axis=1)
+        t_df['3M'] = self.team_stats_df['pointsThreeMade'].fillna(0).astype(int)
+        t_df['3A'] = self.team_stats_df['pointsThreeAttempted'].fillna(0).astype(int)
+        t_df['3FG%'] = self.team_stats_df.apply(lambda x: f"{x['pointsThreePercentage']:0.1f}%" if x['pointsThreeAttempted'] != 0 else '', axis=1)
+        t_df['FTM'] = self.team_stats_df['freeThrowsMade'].fillna(0).astype(int)
+        t_df['FTA'] = self.team_stats_df['freeThrowsAttempted'].fillna(0).astype(int)
+        t_df['FT%'] = self.team_stats_df.apply(lambda x: f"{x['freeThrowsPercentage']:0.1f}%" if x['freeThrowsAttempted'] != 0 else '', axis=1)
+        t_df['OR'] = self.team_stats_df['reboundsOffensive'].fillna(0).astype(int)
+        t_df['DR'] = self.team_stats_df['reboundsDefensive'].fillna(0).astype(int)
+        t_df['REB'] = self.team_stats_df['rebounds'].fillna(0).astype(int)
+        t_df['AST'] = self.team_stats_df['assists'].fillna(0).astype(int)
+        t_df['TO'] = self.team_stats_df['turnovers'].fillna(0).astype(int)
+        t_df['ST'] = self.team_stats_df['steals'].fillna(0).astype(int)
+        t_df['BL'] = self.team_stats_df['blocks'].fillna(0).astype(int)
+        t_df['PF'] = self.team_stats_df['foulsTotal'].fillna(0).astype(int)
+        t_df['FD'] = self.team_stats_df['foulsDrawn'].fillna(0).astype(int) if 'foulsDrawn' in self.team_stats_df.columns else 0
+        t_df['PTS'] = self.team_stats_df['points'].fillna(0).astype(int)
         t_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return t_df
             
     def get_team_key_stats_df(self):
         k_df = pd.DataFrame()
         k_df['Team'] = self.team_stats_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        k_df['PIPM-A'] = self.team_stats_df.apply(lambda x: f"{x['pointsInThePaintMade']}-{x['pointsInThePaintAttempted']}" if x['pointsInThePaintAttempted'] else '', axis=1)
-        k_df['PIP'] = self.team_stats_df['pointsInThePaint']
-        k_df['SCPM-A'] = self.team_stats_df.apply(lambda x: f"{x['pointsSecondChanceMade']}-{x['pointsSecondChanceAttempted']}" if x['pointsSecondChanceAttempted'] else '', axis=1)
-        k_df['SCP'] = self.team_stats_df['pointsSecondChance']
-        k_df['FBP'] = self.team_stats_df['pointsFastBreak']
-        k_df['POT'] = self.team_stats_df['pointsFromTurnover']
-        k_df['BP'] = self.team_stats_df['pointsFromBench']
+        k_df['PIPM'] = self.team_stats_df['pointsInThePaintMade'].fillna(0).astype(int)
+        k_df['PIPA'] = self.team_stats_df['pointsInThePaintAttempted'].fillna(0).astype(int)
+        k_df['PIP'] = self.team_stats_df['pointsInThePaint'].fillna(0).astype(int)
+        k_df['SCPM'] = self.team_stats_df['pointsSecondChanceMade'].fillna(0).astype(int)
+        k_df['SCPA'] = self.team_stats_df['pointsSecondChanceAttempted'].fillna(0).astype(int)
+        k_df['SCP'] = self.team_stats_df['pointsSecondChance'].fillna(0).astype(int)
+        k_df['FBP'] = self.team_stats_df['pointsFastBreak'].fillna(0).astype(int)
+        k_df['POT'] = self.team_stats_df['pointsFromTurnover'].fillna(0).astype(int)
+        k_df['BP'] = self.team_stats_df['pointsFromBench'].fillna(0).astype(int)
         k_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return k_df
     
     def _get_player_stats_df_dict(self):
+        roster_shirt_dict = {r['personId']: r['shirtNumber'] for r in (self.roster or []) if r.get('shirtNumber') is not None}
+        roster_starter_dict = {r['personId']: bool(r.get('starter')) for r in (self.roster or [])}
+
         p_df_dict = dict()
         for t in self.team_stats_df['entityId'].to_list():
             team_name = self.id_table.get(t, t)
             p_df = self.player_stats_df[self.player_stats_df['entityId']==t]
+            starters_for_team = set(self.starter_dict.get(t, []))
+
             p_df_t = pd.DataFrame()
+            p_df_t['#'] = p_df['personId'].apply(lambda pid: str(roster_shirt_dict.get(pid, '')) if roster_shirt_dict.get(pid) is not None else '')
             p_df_t['Player'] = p_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+            p_df_t['S'] = p_df['personId'].apply(lambda pid: '○' if (roster_starter_dict.get(pid) or pid in starters_for_team) else '')
             p_df_t['Min'] = p_df['minutes'].map(minutes_to_mmss)
             p_df_t['+/-'] = p_df['plusMinus']
-            p_df_t['2PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsTwoMade']}-{x['pointsTwoAttempted']} ({x['pointsTwoPercentage']:0.1f}%)" if x['pointsTwoAttempted']!=0 else '', axis=1)
-            p_df_t['3PM-A (%)'] = p_df.apply(lambda x: f"{x['pointsThreeMade']}-{x['pointsThreeAttempted']} ({x['pointsThreePercentage']:0.1f}%)" if x['pointsThreeAttempted'] !=0 else '', axis=1)
-            p_df_t['FTM-A (%)'] = p_df.apply(lambda x: f"{x['freeThrowsMade']}-{x['freeThrowsAttempted']} ({x['freeThrowsPercentage']:0.1f}%)" if x['freeThrowsAttempted']!=0 else '', axis=1)
-            p_df_t['OR'] = p_df['reboundsOffensive']
-            p_df_t['DR'] = p_df['reboundsDefensive']
-            p_df_t['REB'] = p_df['rebounds']
-            p_df_t['AST'] = p_df['assists']
-            p_df_t['TOV'] = p_df['turnovers']
-            p_df_t['STL'] = p_df['steals']
-            p_df_t['BLK'] = p_df['blocks']
-            p_df_t['PF'] = p_df['foulsTotal']
-            p_df_t['PTS'] = p_df['points']
+            p_df_t['2M'] = p_df['pointsTwoMade'].fillna(0).astype(int)
+            p_df_t['2A'] = p_df['pointsTwoAttempted'].fillna(0).astype(int)
+            p_df_t['2FG%'] = p_df.apply(lambda x: f"{x['pointsTwoPercentage']:0.1f}%" if x['pointsTwoAttempted']!=0 else '', axis=1)
+            p_df_t['3M'] = p_df['pointsThreeMade'].fillna(0).astype(int)
+            p_df_t['3A'] = p_df['pointsThreeAttempted'].fillna(0).astype(int)
+            p_df_t['3FG%'] = p_df.apply(lambda x: f"{x['pointsThreePercentage']:0.1f}%" if x['pointsThreeAttempted']!=0 else '', axis=1)
+            p_df_t['FTM'] = p_df['freeThrowsMade'].fillna(0).astype(int)
+            p_df_t['FTA'] = p_df['freeThrowsAttempted'].fillna(0).astype(int)
+            p_df_t['FT%'] = p_df.apply(lambda x: f"{x['freeThrowsPercentage']:0.1f}%" if x['freeThrowsAttempted']!=0 else '', axis=1)
+            p_df_t['OR'] = p_df['reboundsOffensive'].fillna(0).astype(int)
+            p_df_t['DR'] = p_df['reboundsDefensive'].fillna(0).astype(int)
+            p_df_t['REB'] = p_df['rebounds'].fillna(0).astype(int)
+            p_df_t['AST'] = p_df['assists'].fillna(0).astype(int)
+            p_df_t['TO'] = p_df['turnovers'].fillna(0).astype(int)
+            p_df_t['ST'] = p_df['steals'].fillna(0).astype(int)
+            p_df_t['BL'] = p_df['blocks'].fillna(0).astype(int)
+            p_df_t['PF'] = p_df['foulsTotal'].fillna(0).astype(int)
+            p_df_t['FD'] = (p_df['foulsDrawn'].fillna(0).astype(int)) if 'foulsDrawn' in p_df.columns else 0
+            p_df_t['PTS'] = p_df['points'].fillna(0).astype(int)
             p_df_t['eFG%'] = p_df.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x['fieldGoalsEffectivePercentage']) else '', axis=1)
             p_df_t['USG%'] = p_df.apply(lambda x: f"{x['usageRate']:0.1f}%", axis=1)
             p_df_t['PM'] = p_df.apply(lambda x: f"{x['plus']}-{x['minus']}", axis=1)
     
-            p_df_t.sort_values(by=['PTS', '+/-', 'REB', 'AST'], ascending=False, inplace=True)
+            # Default sorting: Starters first (top 5), then +/- descending, then PTS descending
+            p_df_t['_is_starter'] = p_df['personId'].apply(lambda pid: 0 if (roster_starter_dict.get(pid) or pid in starters_for_team) else 1)
+            p_df_t['_pm_num'] = pd.to_numeric(p_df_t['+/-'], errors='coerce').fillna(-999)
+            p_df_t.sort_values(by=['_is_starter', '_pm_num', 'PTS'], ascending=[True, False, False], inplace=True)
+            p_df_t.drop(columns=['_is_starter', '_pm_num'], inplace=True)
             p_df_dict[team_name] = p_df_t
         return p_df_dict
 
@@ -179,12 +205,12 @@ class PostGameReport():
                         new_row = row.copy()
                         new_row[t] = list(combo)
                         expanded_rows.append(new_row)
-                if expanded_rows:
-                    team_lineup_df = pd.DataFrame(expanded_rows)
-                    team_lineup_df['_combo_key'] = team_lineup_df[t].apply(lambda x: tuple(sorted(x)))
-                    grouped = team_lineup_df.groupby('_combo_key', as_index=False).sum(numeric_only=True, min_count=1)
-                    grouped[t] = grouped['_combo_key'].apply(list)
-                    team_lineup_df = grouped.drop(columns=['_combo_key'])
+                    if expanded_rows:
+                        team_lineup_df = pd.DataFrame(expanded_rows)
+                        team_lineup_df['_combo_key'] = team_lineup_df[t].apply(lambda x: tuple(sorted(x)))
+                        grouped = team_lineup_df.groupby('_combo_key', as_index=False).sum(numeric_only=True, min_count=1)
+                        grouped[t] = grouped['_combo_key'].apply(list)
+                        team_lineup_df = grouped.drop(columns=['_combo_key'])
             elif lineup_size and lineup_size > 5:
                 team_lineup_df = team_lineup_df[team_lineup_df[t].apply(lambda x: len(x) == lineup_size)]
 
@@ -192,16 +218,150 @@ class PostGameReport():
 
             team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{x['duration']//60:02.0f}:{x['duration']%60:02.0f}", axis=1)
             team_lineup_df['+/-'] = team_lineup_df['PTS']-team_lineup_df['Opp_PTS']
-            team_lineup_df['2PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['2M']}-{x['2A']} ({x['2M']/x['2A']:.1%})" if x['2A'] else None, axis=1)
-            team_lineup_df['3PM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['3M']}-{x['3A']} ({x['3M']/x['3A']:.1%})" if x['3A'] else None, axis=1)
-            team_lineup_df['FTM-A (%)'] = team_lineup_df.apply(lambda x: f"{x['1M']}-{x['1A']} ({x['1M']/x['1A']:.1%})" if x['1A'] else None, axis=1)
+            team_lineup_df['2M'] = team_lineup_df['2M'].fillna(0).astype(int)
+            team_lineup_df['2A'] = team_lineup_df['2A'].fillna(0).astype(int)
+            team_lineup_df['2FG%'] = team_lineup_df.apply(lambda x: f"{100*x['2M']/x['2A']:0.1f}%" if x['2A'] > 0 else '', axis=1)
+            team_lineup_df['3M'] = team_lineup_df['3M'].fillna(0).astype(int)
+            team_lineup_df['3A'] = team_lineup_df['3A'].fillna(0).astype(int)
+            team_lineup_df['3FG%'] = team_lineup_df.apply(lambda x: f"{100*x['3M']/x['3A']:0.1f}%" if x['3A'] > 0 else '', axis=1)
+            team_lineup_df['FTM'] = team_lineup_df['1M'].fillna(0).astype(int)
+            team_lineup_df['FTA'] = team_lineup_df['1A'].fillna(0).astype(int)
+            team_lineup_df['FT%'] = team_lineup_df.apply(lambda x: f"{100*x['1M']/x['1A']:0.1f}%" if x['1A'] > 0 else '', axis=1)
+            team_lineup_df['OR'] = team_lineup_df['OR'].fillna(0).astype(int)
+            team_lineup_df['DR'] = team_lineup_df['DR'].fillna(0).astype(int)
+            team_lineup_df['REB'] = team_lineup_df['REB'].fillna(0).astype(int)
+            team_lineup_df['AST'] = team_lineup_df['AST'].fillna(0).astype(int)
+            team_lineup_df['TO'] = team_lineup_df['TOV'].fillna(0).astype(int)
+            team_lineup_df['ST'] = team_lineup_df['STL'].fillna(0).astype(int)
+            team_lineup_df['BL'] = team_lineup_df['BLK'].fillna(0).astype(int)
+            team_lineup_df['PF'] = team_lineup_df['PF'].fillna(0).astype(int)
+            team_lineup_df['FD'] = team_lineup_df['FD'].fillna(0).astype(int) if 'FD' in team_lineup_df.columns else 0
+            team_lineup_df['PTS'] = team_lineup_df['PTS'].fillna(0).astype(int)
             team_lineup_df['PM'] = team_lineup_df.apply(lambda x: f"{x['PTS']}-{x['Opp_PTS']}", axis=1)
 
-            team_lineup_df = team_lineup_df[['Lineup', 'Min', '+/-', '2PM-A (%)', '3PM-A (%)', 'FTM-A (%)', 'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'PM']].copy()
+            team_lineup_df = team_lineup_df[[
+                'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+                'PF', 'FD', 'PTS', 'PM'
+            ]].copy()
             team_lineup_df.sort_values(by=['+/-', 'PTS', 'REB', 'AST'], ascending=False, inplace=True)
             u_df_dict[team_name] = team_lineup_df
 
         return u_df_dict
+
+    def get_player_box_score_summary_json_dict(self):
+        summary_dict = dict()
+        for t in self.team_stats_df['entityId'].to_list():
+            team_name = self.id_table.get(t, t)
+            team_rows = self.team_stats_df[self.team_stats_df['entityId'] == t]
+            if team_rows.empty:
+                continue
+            row = team_rows.iloc[0]
+
+            def _val(k, default=0):
+                v = row.get(k)
+                return default if (pd.isna(v) or v is None) else v
+
+            def _clean_int(k):
+                v = row.get(k)
+                if v is None or v == '' or (isinstance(v, float) and pd.isna(v)):
+                    return None
+                try:
+                    return int(v)
+                except Exception:
+                    return None
+
+            or_team = _clean_int('reboundsTeamOffensive')
+            dr_team = _clean_int('reboundsTeamDefensive')
+            reb_team = _clean_int('reboundsTeamTotal')
+            to_team = _clean_int('turnoversTeam')
+            coach_fouls = int(_val('foulsCoachTechnical', 0)) + int(_val('foulsBenchTechnical', 0)) + int(_val('foulsCoachDisqualifying', 0))
+            pf_team = coach_fouls if coach_fouls > 0 else None
+
+            team_coaches_row = {
+                '#': 'TEAM / COACHES',
+                'Player': '',
+                'S': '',
+                'Min': None,
+                '+/-': None,
+                '2M': None,
+                '2A': None,
+                '2FG%': None,
+                '3M': None,
+                '3A': None,
+                '3FG%': None,
+                'FTM': None,
+                'FTA': None,
+                'FT%': None,
+                'OR': or_team,
+                'DR': dr_team,
+                'REB': reb_team,
+                'AST': None,
+                'TO': to_team,
+                'ST': None,
+                'BL': None,
+                'PF': pf_team,
+                'FD': None,
+                'PTS': None,
+                'eFG%': None,
+                'USG%': None,
+                'PM': None,
+            }
+
+            two_m = _clean_int('pointsTwoMade') if _clean_int('pointsTwoMade') is not None else 0
+            two_a = _clean_int('pointsTwoAttempted') if _clean_int('pointsTwoAttempted') is not None else 0
+            two_pct = f"{float(_val('pointsTwoPercentage', 0)):0.1f}%" if two_a > 0 else None
+
+            three_m = _clean_int('pointsThreeMade') if _clean_int('pointsThreeMade') is not None else 0
+            three_a = _clean_int('pointsThreeAttempted') if _clean_int('pointsThreeAttempted') is not None else 0
+            three_pct = f"{float(_val('pointsThreePercentage', 0)):0.1f}%" if three_a > 0 else None
+
+            ft_m = _clean_int('freeThrowsMade') if _clean_int('freeThrowsMade') is not None else 0
+            ft_a = _clean_int('freeThrowsAttempted') if _clean_int('freeThrowsAttempted') is not None else 0
+            ft_pct = f"{float(_val('freeThrowsPercentage', 0)):0.1f}%" if ft_a > 0 else None
+
+            efg_val = _val('fieldGoalsEffectivePercentage', None)
+            efg_str = f"{float(efg_val):0.1f}%" if pd.notnull(efg_val) else None
+
+            pts_for = _clean_int('points')
+            pts_against = _clean_int('pointsAgainst')
+            pm_str = f"{pts_for}-{pts_against}" if (pts_for is not None and pts_against is not None) else None
+
+            min_val = row.get('minutes')
+            min_str = minutes_to_mmss(min_val) if pd.notnull(min_val) else None
+
+            total_row = {
+                '#': 'TOTAL',
+                'Player': '',
+                'S': '',
+                'Min': min_str,
+                '+/-': _clean_int('plusMinus'),
+                '2M': two_m,
+                '2A': two_a,
+                '2FG%': two_pct,
+                '3M': three_m,
+                '3A': three_a,
+                '3FG%': three_pct,
+                'FTM': ft_m,
+                'FTA': ft_a,
+                'FT%': ft_pct,
+                'OR': _clean_int('reboundsOffensive') if _clean_int('reboundsOffensive') is not None else 0,
+                'DR': _clean_int('reboundsDefensive') if _clean_int('reboundsDefensive') is not None else 0,
+                'REB': _clean_int('rebounds') if _clean_int('rebounds') is not None else 0,
+                'AST': _clean_int('assists') if _clean_int('assists') is not None else 0,
+                'TO': _clean_int('turnovers') if _clean_int('turnovers') is not None else 0,
+                'ST': _clean_int('steals') if _clean_int('steals') is not None else 0,
+                'BL': _clean_int('blocks') if _clean_int('blocks') is not None else 0,
+                'PF': _clean_int('foulsTotal') if _clean_int('foulsTotal') is not None else 0,
+                'FD': _clean_int('foulsDrawn'),
+                'PTS': _clean_int('points') if _clean_int('points') is not None else 0,
+                'eFG%': efg_str,
+                'USG%': None,
+                'PM': pm_str,
+            }
+
+            summary_dict[team_name] = [team_coaches_row, total_row]
+        return summary_dict
 
     def get_player_stats_json_dict(self):
         player_stats_df_dict = self._get_player_stats_df_dict()

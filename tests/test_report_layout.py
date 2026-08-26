@@ -614,5 +614,162 @@ class DbcEliminationContractTests(unittest.TestCase):
             self.assertNotIn('import dbc', code, f"{path} should not import dbc")
 
 
+class AlignmentAndRwdContractTests(unittest.TestCase):
+    def test_css_defines_rwd_media_queries_and_alignment_rules(self):
+        import os
+        css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css')
+        with open(css_path, 'r') as f:
+            css = f.read()
+        self.assertIn('@media (max-width: 768px)', css)
+        self.assertIn('@media (max-width: 1024px) and (min-width: 769px)', css)
+        self.assertIn('overflow-x: auto', css)
+        self.assertIn('scrollbar-width: none', css)
+        self.assertIn('ag-header-align-center', css)
+        self.assertIn('ag-header-align-right', css)
+        self.assertIn('ag-cell-align-right', css)
+        self.assertIn('ag-cell-align-center', css)
+        self.assertIn('justify-content: flex-end', css)
+        self.assertIn('justify-content: center', css)
+
+    def test_home_page_column_alignments(self):
+        import os
+        home_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'home.py')
+        with open(home_path, 'r') as f:
+            code = f.read()
+        self.assertIn('"field": "Time"', code)
+        self.assertIn('"headerClass": "ag-header-align-right"', code)
+        self.assertIn('"field": "Home Team"', code)
+        self.assertIn('"headerClass": "ag-header-align-center"', code)
+        self.assertIn('"field": "Score"', code)
+        self.assertIn('"cellClass": "ag-cell-align-center"', code)
+
+
+class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
+    def test_box_score_column_defs_structure_and_order(self):
+        from pages.game import _build_stats_column_defs
+        cols = [
+            '#', 'Player', 'S', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+            'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+            'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'
+        ]
+        cdefs = _build_stats_column_defs(cols)
+        
+        # Check leading pinned columns: # (center), Player (right), S (center)
+        self.assertEqual(cdefs[0]['field'], '#')
+        self.assertEqual(cdefs[0]['pinned'], 'left')
+        self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
+        self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
+
+        self.assertEqual(cdefs[1]['field'], 'Player')
+        self.assertEqual(cdefs[1]['pinned'], 'left')
+        self.assertEqual(cdefs[1]['headerClass'], 'ag-header-align-center')
+        self.assertEqual(cdefs[1]['cellClass'], 'ag-cell-align-center')
+        self.assertEqual(cdefs[1]['width'], 95)
+
+        self.assertEqual(cdefs[2]['field'], 'S')
+        self.assertEqual(cdefs[2]['pinned'], 'left')
+        self.assertEqual(cdefs[2]['headerClass'], 'ag-header-align-center')
+        self.assertEqual(cdefs[2]['cellClass'], 'ag-cell-align-center')
+        
+        # Check Min & +/- are center-aligned
+        self.assertEqual(cdefs[3]['field'], 'Min')
+        self.assertEqual(cdefs[3]['headerClass'], 'ag-header-align-center')
+        self.assertEqual(cdefs[3]['cellClass'], 'ag-cell-align-center')
+        self.assertEqual(cdefs[4]['field'], '+/-')
+        self.assertEqual(cdefs[4]['headerClass'], 'ag-header-align-center')
+
+        # Check groups: 2PT, 3PT, FT, REB
+        group_headers = [c.get('headerName') for c in cdefs if 'children' in c]
+        self.assertEqual(group_headers, ['2PT', '3PT', 'FT', 'REB'])
+
+        # Check 2PT children: M, A, %, all center-aligned
+        group_2pt = next(c for c in cdefs if c.get('headerName') == '2PT')
+        child_fields_2pt = [ch['field'] for ch in group_2pt['children']]
+        self.assertEqual(child_fields_2pt, ['2M', '2A', '2FG%'])
+        for ch in group_2pt['children']:
+            self.assertTrue(ch['sortable'])
+            self.assertEqual(ch['headerClass'], 'ag-header-align-center')
+            self.assertEqual(ch['cellClass'], 'ag-cell-align-center')
+
+        # Check REB children: O, D, T
+        group_reb = next(c for c in cdefs if c.get('headerName') == 'REB')
+        child_fields_reb = [ch['field'] for ch in group_reb['children']]
+        self.assertEqual(child_fields_reb, ['OR', 'DR', 'REB'])
+        child_headers_reb = [ch['headerName'] for ch in group_reb['children']]
+        self.assertEqual(child_headers_reb, ['O', 'D', 'T'])
+
+        # Check tail standalone columns order: AST, TO, ST, BL, PF, FD, PTS, eFG%, USG%, PM
+        tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('#', 'Player', 'S', 'Min', '+/-')]
+        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'])
+        for c in cdefs:
+            if 'field' in c and c['field'] in tail_cols:
+                self.assertEqual(c['headerClass'], 'ag-header-align-center')
+                self.assertEqual(c['cellClass'], 'ag-cell-align-center')
+
+    def test_lineup_column_defs_structure_and_order(self):
+        from pages.game import _build_stats_column_defs
+        cols = [
+            'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+            'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+            'PF', 'FD', 'PTS', 'PM'
+        ]
+        cdefs = _build_stats_column_defs(cols)
+        self.assertEqual(cdefs[0]['field'], 'Lineup')
+        self.assertEqual(cdefs[0]['pinned'], 'left')
+        self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
+        tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('Lineup', 'Min', '+/-')]
+        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'PM'])
+
+    def test_dmc_table_from_df_group_headers_and_alignments(self):
+        from pages.game import _dmc_table_from_df
+        import pandas as pd
+        df = pd.DataFrame([{
+            'Team': 'Taipei Fubon Braves', 'Min': '265:00',
+            '2M': 26, '2A': 44, '2FG%': '59.1%',
+            '3M': 8, '3A': 34, '3FG%': '23.5%',
+            'FTM': 21, 'FTA': 37, 'FT%': '56.8%',
+            'OR': 16, 'DR': 42, 'REB': 58,
+            'AST': 18, 'TO': 23, 'ST': 12, 'BL': 5, 'PF': 24, 'FD': 29, 'PTS': 97
+        }])
+        card = _dmc_table_from_df(df, is_team_summary=True)
+        # Verify component contains dmc.Table with Thead containing 2 rows (group header + sub header)
+        tbl = card.children if hasattr(card, 'children') and not isinstance(card.children, list) else card
+        # Find the dmc.Table inside
+        import dash_mantine_components as dmc
+        def _find_dmc_table(node):
+            if isinstance(node, dmc.Table):
+                return node
+            if hasattr(node, 'children'):
+                ch = node.children
+                if isinstance(ch, list):
+                    for c in ch:
+                        res = _find_dmc_table(c)
+                        if res:
+                            return res
+                else:
+                    return _find_dmc_table(ch)
+            return None
+        dmc_tbl = _find_dmc_table(card)
+        self.assertIsNotNone(dmc_tbl)
+        thead = dmc_tbl.children[0]
+        # Thead has 2 Tr rows
+        self.assertEqual(len(thead.children), 2)
+        top_row = thead.children[0]
+        sub_row = thead.children[1]
+        top_titles = [th.children for th in top_row.children]
+        self.assertIn('TEAM', top_titles)
+        self.assertIn('2PT', top_titles)
+        self.assertIn('3PT', top_titles)
+        self.assertIn('FT', top_titles)
+        self.assertIn('REB', top_titles)
+        self.assertIn('AST', top_titles)
+        self.assertIn('FD', top_titles)
+        sub_titles = [th.children for th in sub_row.children]
+        self.assertEqual(sub_titles, ['M', 'A', '%', 'M', 'A', '%', 'M', 'A', '%', 'O', 'D', 'T'])
+
+
+
+
+
 
 

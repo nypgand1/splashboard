@@ -162,6 +162,15 @@ Do not call live Synergy. Do not drive a browser in this file.
 | E1 | `requirements.txt` does not declare `dash-bootstrap-components` |
 | E2 | No Python file imports `dash_bootstrap_components` or `dbc` |
 
+## Alignment & RWD contracts
+
+| ID | Case |
+|---|---|
+| A1 | CSS defines `.app-canvas-container` and `.app-device-frame` with tablet (769px~1024px) and mobile (≤768px) media queries |
+| A2 | Mobile RWD (≤768px) enables single-row horizontal scrolling on `.braves-clean-tabs .mantine-Tabs-list` with `scrollbar-width: none` |
+| A3 | AG Grid text-align left, center, right classes (`ag-cell-align-left`, `ag-cell-align-center`, `ag-cell-align-right`) and `justify-content` are defined in `report.css` |
+| A4 | Home schedule columns define `Time` as rightAligned and `Home Team`, `Away Team`, `Venue`, `Game Type`, `Status`, `Score` as center aligned |
+
 ## Out of scope (must not appear)
 
 | ID | Case |
