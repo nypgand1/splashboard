@@ -711,14 +711,14 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         cols = [
             'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
             'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
-            'PF', 'FD', 'PTS', 'PM'
+            'PF', 'FD', 'PTS', 'eFG%', 'PM'
         ]
         cdefs = _build_stats_column_defs(cols)
         self.assertEqual(cdefs[0]['field'], 'Lineup')
         self.assertEqual(cdefs[0]['pinned'], 'left')
         self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
         tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('Lineup', 'Min', '+/-')]
-        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'PM'])
+        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'PM'])
 
     def test_dmc_table_from_df_group_headers_and_alignments(self):
         from pages.game import _dmc_table_from_df

@@ -68,21 +68,36 @@ def layout(game_id=None):
             }
         ),
         
-        # Lineup Dropdown Container
+        # Lineup SegmentedControl Container
         html.Div([
-            html.Label("Lineups", style={'font-weight': 'bold', 'margin-bottom': '5px'}),
-            dcc.Dropdown(
-                id='lineup_size_dropdown',
-                options=[
-                    {'label': '5 Players', 'value': 5},
-                    {'label': '4 Players', 'value': 4},
-                    {'label': '3 Players', 'value': 3},
-                    {'label': '2 Players', 'value': 2},
+            dmc.Group(
+                [
+                    html.Span(
+                        "COMBINATION:",
+                        style={
+                            "fontSize": "11px",
+                            "fontWeight": 700,
+                            "letterSpacing": "0.05em",
+                            "color": "#64748b",
+                        }
+                    ),
+                    dmc.SegmentedControl(
+                        id='lineup_size_dropdown',
+                        data=[
+                            {'label': '5 Players', 'value': '5'},
+                            {'label': '4 Players', 'value': '4'},
+                            {'label': '3 Players', 'value': '3'},
+                            {'label': '2 Players', 'value': '2'},
+                        ],
+                        value='5',
+                        radius="md",
+                        size="xs",
+                        color="blue",
+                    ),
                 ],
-                value=5,
-                clearable=False,
-                searchable=False,
-                style={'width': '200px', 'margin-bottom': '10px'}
+                gap="10px",
+                align="center",
+                style={"marginBottom": "12px"}
             )
         ], id='lineup_dropdown_container', style={'display': 'none'}),
 
@@ -845,7 +860,7 @@ def _build_stats_column_defs(columns, filterable_cols=None):
             "sortable": True,
             "minWidth": 34,
             "width": 36,
-            "cellStyle": {"textAlign": "center", "fontWeight": "700", "color": "#0077b6"},
+            "cellRenderer": "StarterCell",
             "cellClass": "ag-cell-align-center",
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
@@ -858,7 +873,16 @@ def _build_stats_column_defs(columns, filterable_cols=None):
             "sortable": True,
             "minWidth": 50,
             "width": 56,
-            "cellStyle": {"textAlign": "center"},
+            "cellStyle": {
+                "styleConditions": [
+                    {
+                        "condition": "params.value === 'DNP'",
+                        "style": {"textAlign": "center", "fontWeight": "700", "color": "#94a3b8", "letterSpacing": "0.05em"}
+                    }
+                ],
+                "default": {"textAlign": "center"}
+            },
+            "colSpan": {"function": "params.data && params.data['Min'] === 'DNP' ? 30 : 1"},
             "cellClass": "ag-cell-align-center",
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
@@ -869,9 +893,9 @@ def _build_stats_column_defs(columns, filterable_cols=None):
             "field": "+/-",
             "headerName": "+/-",
             "sortable": True,
-            "minWidth": 42,
-            "width": 46,
-            "cellStyle": {"textAlign": "center"},
+            "minWidth": 46,
+            "width": 48,
+            "cellRenderer": "PlusMinusCell",
             "cellClass": "ag-cell-align-center",
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
@@ -1030,7 +1054,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
         dag.AgGrid(
             rowData=df.to_dict('records'),
             columnDefs=column_defs,
-            defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules},
+            defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
             dashGridOptions=dash_options,
             className="ag-theme-alpine braves-clean-ag-grid",
             style={'width': '100%'}
@@ -1172,11 +1196,16 @@ def render_pbp_children(pbp_store):
     return [_last_update_span(), grid]
 
 
-def render_lineup_children(lineup_store, lineup_size):
-    lineup_dict = lineup_tables_for_size(lineup_store, lineup_size)
+def render_lineup_children(lineup_store, lineup_size=5):
+    try:
+        size_int = int(lineup_size)
+    except Exception:
+        size_int = 5
+    lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict:
         return [_last_update_span(), _loading_placeholder()]
     children = [_last_update_span()]
+    page_size = 20 if size_int < 5 else None
     for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
         title_section = html.Div(
@@ -1204,7 +1233,7 @@ def render_lineup_children(lineup_store, lineup_size):
         )
         children.append(title_section)
         l_df = pd.read_json(io.StringIO(l_json), orient='split')
-        children.append(_ag_grid_from_df(l_df, page_size=None, filterable_cols=['Lineup', 'Lineups']))
+        children.append(_ag_grid_from_df(l_df, page_size=page_size, filterable_cols=['Lineup', 'Lineups']))
     return children
 
 
@@ -1260,35 +1289,40 @@ def update_pane_pbp(pbp_store, active_tab):
     State('lineup_store', 'data'),
     State('game_id', 'children'),
 )
-def update_pane_lineup(lineup_size=5, active_tab='tab-lineup', lineup_store=None, game_id=None):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None):
     if active_tab != 'tab-lineup':
         return no_update
-    lineup_dict = lineup_tables_for_size(lineup_store, lineup_size)
+    try:
+        size_int = int(lineup_size)
+    except Exception:
+        size_int = 5
+    lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
             report = get_cached_report(game_id)
-            custom_dict = report.get_lineup_stats_json_dict(lineup_size=lineup_size)
+            custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
                 children = [_last_update_span()]
+                page_size = 20 if size_int < 5 else None
                 for team_name, l_json in sorted(custom_dict.items()):
                     children.append(dmc.Title(team_name, order=4, style={"margin": "16px 0 8px"}))
                     l_df = pd.read_json(io.StringIO(l_json), orient='split')
-                    children.append(_ag_grid_from_df(l_df, page_size=20))
+                    children.append(_ag_grid_from_df(l_df, page_size=page_size))
                 return children
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
-    return render_lineup_children(lineup_store, lineup_size)
+    return render_lineup_children(lineup_store, size_int)
 
 
 @callback(
     Output('pane-report', 'children'),
     Input('tabs', 'value'),
-    State('lineup_store', 'data'),
     State('bs_store', 'data'),
+    State('lineup_store', 'data'),
     State('match_info_store', 'data'),
     State('game_id', 'children'),
 )
-def update_pane_report(active_tab, lineup_store, bs_store, match_info_store, game_id):
+def update_pane_report(active_tab, bs_store, lineup_store, match_info_store, game_id):
     if active_tab != 'tab-report':
         return no_update
     try:

@@ -1815,6 +1815,51 @@ dagComponentFuncs.ScheduleScoreLink = function (props) {
     }, text);
 };
 
+dagComponentFuncs.PlusMinusCell = function (props) {
+    var val = props.value;
+    if (val === null || val === undefined || val === '') {
+        return React.createElement('span', null, '');
+    }
+    var num = parseFloat(val);
+    if (isNaN(num)) {
+        return React.createElement('span', null, String(val));
+    }
+    var intVal = Math.round(num);
+    var style = {
+        textAlign: 'center',
+        display: 'inline-block',
+        width: '100%'
+    };
+    if (intVal > 0) {
+        style.color = '#0077b6';
+        style.fontWeight = '700';
+    } else if (intVal < 0) {
+        style.color = '#e63946';
+        style.fontWeight = '700';
+    } else {
+        style.color = '#64748b';
+        style.fontWeight = '400';
+    }
+    return React.createElement('span', { style: style }, String(intVal));
+};
+
+dagComponentFuncs.StarterCell = function (props) {
+    var val = (props.value || '').trim();
+    if (!val) {
+        return React.createElement('span', null, '');
+    }
+    var style = {
+        textAlign: 'center',
+        display: 'inline-block',
+        width: '100%',
+        color: '#1e293b',
+        fontWeight: '900',
+        fontSize: '16px',
+        lineHeight: '1',
+    };
+    return React.createElement('span', { style: style }, '○');
+};
+
 // Global AG Grid sort column cell background updater for B.LEAGUE sorting
 (function () {
     function updateSortedColHighlight(gridWrap) {

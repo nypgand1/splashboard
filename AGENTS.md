@@ -16,6 +16,9 @@ Read the matching spec before changing behavior or fixing a bug.
 - Do not `git push` or `fly deploy` unless asked.
 - UI strings are English.
 - When changing user-visible UI (layout, tabs, routing, rendered data), walk the related pages in a browser. A single static screenshot is not enough.
+- UI & AG-Grid Verification SOP:
+  - Custom cell formatting and dynamic styles must use `window.dashAgGridComponentFunctions` in `assets/report_canvas.js` (never uncompiled inline Python JS strings).
+  - Headless browser CDP inspections must include hard assertions: assert `document.querySelectorAll('.ag-cell').length > 50` before validating cell contents, and assert `window.getComputedStyle(el).color` directly against expected RGB values.
 
 ## Do not
 

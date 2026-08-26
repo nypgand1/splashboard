@@ -277,7 +277,7 @@ async def run_cdp_verification():
                 'expression': """
                 (() => {
                     const papers = document.querySelectorAll('.report-paper');
-                    const tables = document.querySelectorAll('.report-dbc-table');
+                    const tables = document.querySelectorAll('.report-dmc-table');
                     const textBlocks = document.querySelectorAll('[data-text-block]');
                     return {
                         papersCount: papers.length,

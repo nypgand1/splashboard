@@ -159,13 +159,13 @@ Note slots start as **empty** `text` blocks.
 - Python paints the Report pane **once** when the tab opens. `lineup_store` is a `State` (not an `Input`), so updating it does **not** rebuild `pane-report`. It does **not** rebuild `pane-report` when `report_layout_store` changes either.
 - After that single paint, add note, add page, remove page, remove block, add table, and add image mutate GridStack in JS and write `localStorage` only.
 - Add note, Add image, and Add table insert onto the current page (scroll-spy), auto-placed; a full page adds a new page first.
-- Add table clones a hidden `dbc.Table` template for that `table_key`. Do not mount a new AG Grid.
+- Add table clones a hidden `dmc.Table` template for that `table_key`. Do not mount a new AG Grid.
 - `fitAllTableBlocks` batches DOM measurements: all `scrollHeight` reads run first, then all `grid.update` writes run, to avoid interleaved layout reflows.
 - Reset layout is clientside (default JSON kept in the pane; no Python rebuild).
 
 ### PDF
 
-- Primary: jsPDF walks each paper's DOM (header, `dbc.Table` cells, notes, images) and writes **selectable text**, one PDF page per canvas page, landscape A4. Layout is close to the screen, not pixel-identical. Notes are parsed via a Rich Text DOM Walker:
+- Primary: jsPDF walks each paper's DOM (header, `dmc.Table` cells, notes, images) and writes **selectable text**, one PDF page per canvas page, landscape A4. Layout is close to the screen, not pixel-identical. Notes are parsed via a Rich Text DOM Walker:
   - Paragraphs and multi-level lists (`<ul>`, `<ol>`) maintain hierarchical indentation (approx. 5mm per level).
   - List markers are drawn according to hierarchy: Bullet lists render `disc`, `circle`, `square`; Ordered lists render formatted numbers (`1.`, `a.`, `i.`).
   - Formatting spans parse `color` (`<font color="...">` or CSS `color`), highlight background (`style="background-color: ..."` filled via `pdf.rect`), bold/italic font styles, and draw underlines or strikethrough lines.
@@ -179,16 +179,28 @@ Note slots start as **empty** `text` blocks.
 
 ### Tables in Report
 
-- Report builtin tables are `dbc.Table` (same family as Box Score / Lineup / Home): striped, bordered, `text-nowrap`, read-only.
+- Report builtin tables are `dmc.Table` (`className="text-nowrap report-dmc-table"`): striped, bordered, `text-nowrap`, read-only.
 - Play-By-Play keeps AG Grid. Do not put AG Grid inside Report blocks.
 - Tighter font and padding than Box Score so a table can sit in an A4 block. Overflowing rows are clipped by the paper, not scrolled inside the block.
-- Team Stats and Player Stats `Min` values are `MM:SS` (converted from Synergy `PT` at the data layer). Box Score uses the same values.
-- Report Player Stats (`p_df_home`, `p_df_away`) sort by `+/-` descending. Box Score Player Stats keep their existing PTS-first sort.
+- Team Stats and Player Stats `Min` values are `M:SS` (e.g. `8:21`, `0:06`). Box Score uses the same values.
+- Report Player Stats (`p_df_home`, `p_df_away`) sort by `+/-` descending. Box Score Player Stats sort by starters first, then active players by +/- descending and PTS descending, with DNP players placed last.
 
 ## Lineup Stats
 
 - Lineup size is selectable from 5 down to 2.
-- New store shape is nested by size. The old shape (team name as top-level key) still reads as the 5-player tables.
+- 5-man lineups are displayed completely without pagination; 2/3/4-man lineups paginate with 20 rows per page.
+- Lineup player names are sorted by jersey shirt number (ascending) and connected with hyphens (e.g. `1-7-14-23-42`).
+- Lineup table columns: `Lineup`, `Min`, `+/-`, `2M`, `2A`, `2FG%`, `3M`, `3A`, `3FG%`, `FTM`, `FTA`, `FT%`, `OR`, `DR`, `REB`, `AST`, `TO`, `ST`, `BL`, `PF`, `FD`, `PTS`, `eFG%`, `PM`.
+- Zero-value noise reduction: Except for `+/-` (which shows neutral gray `0`), all 0 statistics are rendered blank `''`. `eFG%` is calculated for lineups and displays `''` when `FGA == 0` or `0.0%` when `FGA > 0` with 0 made.
+
+## Box Score DNP & Zero-Value Rules
+
+- DNP (Did Not Play) rostered players are included and sorted at the bottom of the bench.
+- In AG-Grid, DNP player rows display `DNP` in the `MIN` column with a full-row span (`colSpan`) across subsequent stats columns.
+- Numeric statistics with a value of 0 are left blank `''` (including PTS, REB, AST, shot breakdowns, and percentages).
+- `eFG%` is blank when `FGA == 0` (or DNP) and `0.0%` when `FGA > 0` and 0 made.
+- `USG%` is blank when unplayed/DNP and `0.0%` when played with 0 usage.
+- `+/-` displays pure numbers without `+` prefix (positive in royal blue `#0077b6`, negative in coral red `#e63946`, zero in gray `#64748b`).
 
 ## Config and deploy
 

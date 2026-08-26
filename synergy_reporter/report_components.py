@@ -54,7 +54,7 @@ def create_report_table(df):
         highlightOnHover=True,
         withTableBorder=True,
         withColumnBorders=True,
-        className="text-nowrap report-dbc-table",
+        className="text-nowrap report-dmc-table",
     )
 
 
@@ -77,7 +77,14 @@ def _df_from_split(payload):
 def sort_player_stats_for_report(df):
     if df is None or df.empty or '+/-' not in df.columns:
         return df
-    return df.sort_values(by=['+/-'], ascending=False, kind='mergesort')
+    res = df.copy()
+    is_dnp = res['Min'].apply(lambda m: 1 if str(m) == 'DNP' else 0) if 'Min' in res.columns else 0
+    numeric_pm = pd.to_numeric(res['+/-'], errors='coerce').fillna(-9999)
+    res['_is_dnp'] = is_dnp
+    res['_pm_num'] = numeric_pm
+    res = res.sort_values(by=['_is_dnp', '_pm_num'], ascending=[True, False], kind='mergesort')
+    res = res.drop(columns=['_is_dnp', '_pm_num'])
+    return res
 
 
 CAPTIONED_TABLE_KEYS = ('p_df_home', 'p_df_away', 'lineup_home', 'lineup_away')

@@ -49,9 +49,9 @@ class MinutesFormatTests(unittest.TestCase):
     def test_pt_duration_becomes_mmss(self):
         from synergy_reporter.post_game_report import minutes_to_mmss
         self.assertEqual(minutes_to_mmss('PT38M12S'), '38:12')
-        self.assertEqual(minutes_to_mmss('PT0M05S'), '00:05')
+        self.assertEqual(minutes_to_mmss('PT0M05S'), '0:05')
         self.assertEqual(minutes_to_mmss('PT12M'), '12:00')
-        self.assertEqual(minutes_to_mmss('PT00M30.4S'), '00:30')
+        self.assertEqual(minutes_to_mmss('PT00M30.4S'), '0:30')
         self.assertEqual(minutes_to_mmss(None), '')
         self.assertNotIn('PT', minutes_to_mmss('PT38M12S'))
 

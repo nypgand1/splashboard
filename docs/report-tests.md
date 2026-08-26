@@ -41,7 +41,7 @@ Do not call live Synergy. Do not drive a browser in this file.
 |---|---|
 | R1 | Builtin blocks have no `content` field that overrides cell values |
 | R2 | There is no API to set cell bold or background on a builtin table |
-| R3 | Report table engine is `dbc.Table`; Play-By-Play stays `ag_grid` |
+| R3 | Report table engine is `dmc.Table`; Play-By-Play stays `ag_grid` |
 | R4 | Block overflow is `hidden` (not `auto` or `scroll`) |
 | R5 | Toolbar has no title string |
 | R6 | Icon set is `bootstrap-icons`, scoped to Report editor chrome |
