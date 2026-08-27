@@ -26,7 +26,7 @@ This file is the source of truth for product behavior. Tests and later feature w
 - Four states for every data view: loading (`dmc.Skeleton`), empty (English copy plus a next step), error (`dmc.Alert`, recoverable, no traceback), success (the table or chart).
 - Responsive Layout (RWD):
   - **Mobile (≤ 768px)**: AppShell full bleed (`border-radius: 0; border: none; box-shadow: none;`), main `padding: 12px`, Tabs single-row smooth horizontal scrolling (`overflow-x: auto`).
-  - Data tables (`dmc.Table` and `dag.AgGrid`) never clip columns. Box Score quarter and key-stat cards stack to one column below the `lg` breakpoint (~1200px). When a table is wider than its card, the first column stays sticky and the sheet pans horizontally: touch / trackpad native swipe, desktop mouse click-drag. `cursor: grab` / `grabbing` only if `scrollWidth > clientWidth`; tables that fit keep the default cursor. No overflow fade. Scrollbars are hidden (`scrollbar-width: none`). A drag that moved the sheet does not fire the following click (no sort, no score navigation). Do not hide columns to fit. Home schedule uses the same pan.
+  - Data tables (`dmc.Table` and `dag.AgGrid`) never clip columns. Box Score quarter and key-stat cards stack to one column below the `lg` breakpoint (~1200px). When a table is wider than its card, the first column stays sticky and the sheet pans horizontally: touch / trackpad native swipe, desktop mouse click-drag. `cursor: grab` / `grabbing` only if `scrollWidth > clientWidth`; tables that fit keep the default cursor. No overflow fade. Scrollbars are hidden (`scrollbar-width: none`). A drag that moved the sheet does not fire the following click (no sort, no score navigation). Do not hide columns to fit.
   - **Tablet (769px ~ 1024px)**: AppShell outer margin `12px`, `border-radius: 12px`.
   - **Desktop (> 1024px)**: AppShell outer margin `24px`, `max-width: 1440px`, `border-radius: 14px`, floating shadow `0 8px 30px rgba(15, 23, 42, 0.15)`.
 
@@ -35,17 +35,24 @@ This file is the source of truth for product behavior. Tests and later feature w
 ### Home `/`
 
 - Show `dmc.Skeleton` while the current-season schedule loads.
-- Rendered via `dag.AgGrid` (`ag-theme-alpine braves-clean-ag-grid`) with `domLayout="autoHeight"` (no pagination), sortable and filterable columns.
-- Columns: Time, Status, Game Type, Venue, Home Team, Score, Away Team.
-- **Status 欄位**：badge **color is the bucket**; **label is the raw API `status`** (strip, no rewrite). `IN_PROGRESS` stays `IN_PROGRESS` (not `LIVE`). Empty status shows `UNKNOWN`.
+- Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Scheme A Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. Home has no `dcc.Interval`.
+- The hero reuses `ui_kit.game_banner`: away / scores / home at `fw=800/900`, scores `#0077b6`, status `dmc.Badge` from `BADGE_STYLES` with the raw `status` label, meta `size="xs"` dimmed `date • time • venue`. The hero ignores SHOW and GAME TYPE.
+- **GAME TYPE** `dmc.SegmentedControl` (Lineup pattern: dimmed `size="xs"` label + `size="xs"` `radius="md"` control). Options are the distinct `fixtureType` values this season, insertion order from the sorted schedule. Label = Title Case of the raw enum (`REGULAR` → `Regular`). Hide the control when the season has 0–1 distinct types. Default, computed once on Home load: live-play game's type, else first upcoming's type, else latest finished's type. User changes stick until reload. Do not print Game Type on each row.
+- **SHOW** `dmc.SegmentedControl`, same quiet pattern. Chips: Upcoming / All / Finished. Default **Upcoming**.
+  - Upcoming = live-play ∪ unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty).
+  - Finished = `FINISHED` / `CONFIRMED`.
+  - All = everything, including void.
+- **Status badge** on each compact row: badge **color is the bucket**; **label is the raw API `status`** (strip, no rewrite). `IN_PROGRESS` stays `IN_PROGRESS` (not `LIVE`). Empty status shows `UNKNOWN`.
   - Unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty): cyan (`#e0f2fe` + `#0284c7`).
   - Live-play (`PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS`): coral (`#fee2e2` + `#dc2626`).
   - Finished (`FINISHED`, `CONFIRMED`): gray (`#f1f5f9` + `#475569`).
   - Void (`CANCELLED`, `BYE`, `ABANDONED`): colder gray (`#e2e8f0` + `#334155`).
-- **Score 欄位** (Home schedule redesign of Time format and row chrome is later; this score contract is in effect now):
-  - Finished and live-play, and `ABANDONED`: clickable. Numeric scores (including `0`) render `88 : 79` as a link to `/game/<fixtureId>`. Missing scores render `vs` as that link. Never fabricate `- : -` or `0 : 0`.
-  - Unplayed and void except `ABANDONED`: **not** a link. Display `—` (em dash). No colon.
-- **互動導航**：Score links above are the current path into `/game/<fixtureId>`. **Whole-row click is deferred** to the later Home schedule redesign.
+- **Score** on each compact row uses `format_score_display` unchanged:
+  - Finished, live-play, and `ABANDONED`: numeric scores (including `0`) render `88 : 79`; missing scores render `vs`. Never fabricate `- : -` or `0 : 0`.
+  - Unplayed and void except `ABANDONED`: display `—` (em dash). No colon.
+- Compact row scan line: time (`HH:MM` from `startTimeLocal`; drop the date and the ISO `T`), away name, score, home name, status badge. Venue dimmed on the same row or a second line. Height about 56–72px. Date group headers are `YYYY-MM-DD`, chronological (earliest date first) inside the current filter.
+- **Navigation**: the whole compact row is the hit target. Clickable iff `score_is_clickable`: live-play (including `PENDING`), finished, `ABANDONED`. The row is an `html.A` / `dmc.Anchor` to `/game/<fixtureId>`. Pointer cursor and `--row-hover: #e0f2fe` on clickable rows only. Unplayed and `CANCELLED`/`BYE` are not links (default cursor, no hover). No per-row Dash `n_clicks`. No `ScheduleScoreLink`.
+- Filters only change the list. Empty filtered list (season itself is not empty): `No games in this view.` Next step: `Switch Game Type or Show.` Keep hero + filters; do not replace the page with the season-empty copy.
 - On Synergy failure: `dmc.Alert` with `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception).
 - When the season list is empty: `No games available.` Next step: `Check back when the season schedule is published.`
 
@@ -87,9 +94,8 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 
 ## Deferred (later discussion)
 
-- Home `Time` display format and schedule-table visual redesign.
-- Whole-row click on Home to open `/game/<fixtureId>`.
 - Report canvas DMC-ification beyond toolbar icons (`html.Th` / GridStack cloneNode).
+- Optional later DMC Rotation rewrite (keep Plotly in this wave).
 
 ## Background warmup and prefetch
 

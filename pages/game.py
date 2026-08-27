@@ -14,8 +14,6 @@ from synergy_inbounder.runtime_cache import (
     get_cached_report,
 )
 from synergy_inbounder.game_status import (
-    BADGE_STYLES,
-    badge_label,
     is_live_play_status,
     status_bucket,
 )
@@ -34,6 +32,7 @@ from ui_kit import (
     ERROR_GAME,
     empty_state,
     error_alert,
+    game_banner,
     icon,
     loading_skeleton,
 )
@@ -246,64 +245,15 @@ def render_game_info_banner(match_info_store):
     info = safe_loads(match_info_store)
     if not info:
         return html.Div()
-    
-    home_name = info.get('home_team') or 'Home'
-    away_name = info.get('away_team') or 'Away'
-    home_score = info.get('home_score') or '—'
-    away_score = info.get('away_score') or '—'
-    status = info.get('status') or ''
-    date_val = info.get('date') or ''
-    time_val = info.get('time') or ''
-    venue_val = info.get('venue') or ''
-    
-    bucket = status_bucket(status)
-    badge_style = {
-        'fontWeight': 700,
-        **BADGE_STYLES[bucket],
-    }
-
-    return dmc.Paper(
-        [
-            dmc.Group(
-                [
-                    dmc.Group(
-                        [
-                            dmc.Text(away_name, fw=800, fz="16px"),
-                            dmc.Text(str(away_score), fw=900, fz="22px", c="#0077b6"),
-                            dmc.Text("vs", fw=700, fz="13px", c="dimmed"),
-                            dmc.Text(str(home_score), fw=900, fz="22px", c="#0077b6"),
-                            dmc.Text(home_name, fw=800, fz="16px"),
-                        ],
-                        gap="sm",
-                        align="center",
-                    ),
-                    dmc.Badge(
-                        badge_label(status),
-                        variant="light",
-                        size="md",
-                        radius="sm",
-                        style=badge_style,
-                    ),
-                ],
-                justify="space-between",
-                align="center",
-                wrap="wrap",
-                gap="sm",
-                mb=4,
-            ),
-            dmc.Text(
-                " • ".join(p for p in (date_val, time_val, venue_val) if p),
-                size="xs",
-                c="dimmed",
-                fw=500,
-            ),
-        ],
-        withBorder=True,
-        radius="md",
-        p="md",
-        mb="md",
-        shadow="xs",
-        className="braves-card-wrapper game-info-banner",
+    return game_banner(
+        home_team=info.get('home_team') or 'Home',
+        away_team=info.get('away_team') or 'Away',
+        home_score=info.get('home_score') or '—',
+        away_score=info.get('away_score') or '—',
+        status=info.get('status') or '',
+        date=info.get('date') or '',
+        time=info.get('time') or '',
+        venue=info.get('venue') or '',
     )
 
 @callback(

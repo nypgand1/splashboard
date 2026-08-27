@@ -15,6 +15,8 @@ from ui_kit import (
     EMPTY_GAME,
     EMPTY_GAME_NEXT,
     EMPTY_HOME,
+    EMPTY_HOME_FILTER,
+    EMPTY_HOME_FILTER_NEXT,
     EMPTY_HOME_NEXT,
     ERROR_GAME,
     ERROR_HOME,
@@ -110,26 +112,241 @@ class FourStateTests(unittest.TestCase):
             self.assertIn(EMPTY_GAME, str(empty))
 
 
-class HomeAlignmentTests(unittest.TestCase):
-    def test_every_home_column_is_center(self):
-        df = pd.DataFrame([{
-            'Time': '19:00', 'Status': 'FINISHED', 'rawStatus': 'FINISHED',
-            'Game Type': 'B1', 'Venue': 'Arena', 'Home Team': 'A',
-            'Score': '1 : 2', 'Away Team': 'B', 'fixtureId': 'g1',
-        }])
+def _schedule_df(rows):
+    return pd.DataFrame(rows)
+
+
+def _home_row(**kwargs):
+    status = kwargs.pop('status', kwargs.pop('Status', 'SCHEDULED'))
+    fixture_type = kwargs.pop('fixtureType', kwargs.pop('Game Type', 'REGULAR'))
+    start = kwargs.pop('startTimeLocal', kwargs.pop('Time', '2026-01-01T19:00:00'))
+    home_team = kwargs.pop('home_team', kwargs.pop('Home Team', 'Braves'))
+    away_team = kwargs.pop('away_team', kwargs.pop('Away Team', 'Dreamers'))
+    row = {
+        'Time': start,
+        'startTimeLocal': start,
+        'Status': status,
+        'rawStatus': status,
+        'status': status,
+        'Game Type': fixture_type,
+        'fixtureType': fixture_type,
+        'Venue': 'Arena',
+        'Home Team': home_team,
+        'Away Team': away_team,
+        'Score': '—',
+        'fixtureId': 'g1',
+        'teamScoreHome': None,
+        'teamScoreAway': None,
+        'statusBucket': 'unplayed',
+        'scoreClickable': False,
+    }
+    row.update(kwargs)
+    row['Time'] = row.get('startTimeLocal', start)
+    row['Status'] = row.get('status', status)
+    row['Game Type'] = row.get('fixtureType', fixture_type)
+    return row
+
+
+def _node_id(node):
+    return getattr(node, 'id', None)
+
+
+def _segmented(tree, control_id):
+    for node in walk(tree):
+        if isinstance(node, dmc.SegmentedControl) and _node_id(node) == control_id:
+            return node
+    return None
+
+
+def _papers(tree):
+    return find_type(tree, dmc.Paper)
+
+
+def _anchors(tree):
+    found = []
+    for node in walk(tree):
+        href = getattr(node, 'href', None)
+        if href:
+            found.append(node)
+    return found
+
+
+def _string_values(tree):
+    values = []
+    for node in walk(tree):
+        children = getattr(node, 'children', None)
+        if isinstance(children, str):
+            values.append(children)
+    return values
+
+
+class HomeScheduleTests(unittest.TestCase):
+    def _load(self, rows):
+        df = _schedule_df(rows)
         with patch.object(home_page, 'df_data', return_value=df):
-            grid = home_page.load_home_game_list('home-game-list')
-        self.assertIsInstance(grid, dag.AgGrid)
-        fields = []
-        for cdef in grid.columnDefs:
-            fields.append(cdef['field'])
-            self.assertEqual(cdef['headerClass'], 'ag-header-align-center')
-            self.assertEqual(cdef['cellClass'], 'ag-cell-align-center')
-            self.assertEqual(cdef['cellStyle']['textAlign'], 'center')
+            return home_page.load_home_game_list('home-game-list')
+
+    def test_success_is_not_ag_grid(self):
+        tree = self._load([_home_row(status='FINISHED', fixtureId='g1')])
+        self.assertFalse(find_type(tree, dag.AgGrid))
+        self.assertTrue(_papers(tree))
+
+    def test_hero_is_live_else_first_upcoming_and_hidden_when_empty(self):
+        live_upcoming = self._load([
+            _home_row(
+                status='SCHEDULED', fixtureId='up1',
+                startTimeLocal='2026-03-02T19:00:00',
+                away_team='Upcoming Away', home_team='Upcoming Home',
+            ),
+            _home_row(
+                status='IN_PROGRESS', fixtureId='live1',
+                startTimeLocal='2026-03-01T19:00:00',
+                away_team='Live Away', home_team='Live Home',
+                teamScoreHome=10, teamScoreAway=8, Score='10 : 8',
+            ),
+            _home_row(
+                status='FINISHED', fixtureId='fin1',
+                startTimeLocal='2026-02-01T19:00:00',
+            ),
+        ])
+        hero = str(_papers(live_upcoming)[0])
+        self.assertIn('Live Away', hero)
+        self.assertIn('Live Home', hero)
+        self.assertNotIn('Upcoming Away', hero)
+
+        upcoming_only = self._load([
+            _home_row(
+                status='FINISHED', fixtureId='fin1',
+                startTimeLocal='2026-02-01T19:00:00',
+            ),
+            _home_row(
+                status='SCHEDULED', fixtureId='up1',
+                startTimeLocal='2026-03-02T19:00:00',
+                away_team='Upcoming Away', home_team='Upcoming Home',
+            ),
+        ])
+        hero = str(_papers(upcoming_only)[0])
+        self.assertIn('Upcoming Away', hero)
+
+        empty = self._load([])
+        markup = str(empty)
+        self.assertIn(EMPTY_HOME, markup)
+        self.assertFalse(find_type(empty, dmc.Paper))
+
+    def test_show_defaults_to_upcoming_and_game_type_from_live(self):
+        tree = self._load([
+            _home_row(status='FINISHED', fixtureType='PLAYOFF', fixtureId='f1',
+                      startTimeLocal='2026-01-01T19:00:00'),
+            _home_row(status='IN_PROGRESS', fixtureType='REGULAR', fixtureId='l1',
+                      startTimeLocal='2026-01-02T19:00:00', Score='1 : 2',
+                      teamScoreHome=1, teamScoreAway=2),
+        ])
+        show = _segmented(tree, 'home-show')
+        game_type = _segmented(tree, 'home-game-type')
+        self.assertIsNotNone(show)
+        self.assertEqual(show.value, 'upcoming')
         self.assertEqual(
-            fields,
-            ['Time', 'Status', 'Game Type', 'Venue', 'Home Team', 'Score', 'Away Team'],
+            [item['value'] for item in show.data],
+            ['upcoming', 'all', 'finished'],
         )
+        self.assertEqual(game_type.value, 'REGULAR')
+
+    def test_game_type_control_hidden_when_one_distinct_type(self):
+        one = self._load([
+            _home_row(status='SCHEDULED', fixtureType='REGULAR', fixtureId='g1'),
+            _home_row(status='FINISHED', fixtureType='REGULAR', fixtureId='g2',
+                      startTimeLocal='2026-01-02T19:00:00', Score='1 : 2'),
+        ])
+        wrap = next(
+            node for node in walk(one)
+            if _node_id(node) == 'home-game-type-wrap'
+        )
+        self.assertEqual((wrap.style or {}).get('display'), 'none')
+
+        two = self._load([
+            _home_row(status='SCHEDULED', fixtureType='REGULAR', fixtureId='g1'),
+            _home_row(status='FINISHED', fixtureType='PLAYOFF', fixtureId='g2',
+                      startTimeLocal='2026-01-02T19:00:00', Score='1 : 2'),
+        ])
+        wrap = next(
+            node for node in walk(two)
+            if _node_id(node) == 'home-game-type-wrap'
+        )
+        self.assertNotEqual((wrap.style or {}).get('display'), 'none')
+        control = _segmented(two, 'home-game-type')
+        self.assertEqual(
+            [item['value'] for item in control.data],
+            ['REGULAR', 'PLAYOFF'],
+        )
+        self.assertEqual(
+            [item['label'] for item in control.data],
+            ['Regular', 'Playoff'],
+        )
+
+    def test_upcoming_excludes_finished_and_void_all_includes_void(self):
+        records = home_page.schedule_records(_schedule_df([
+            _home_row(status='IN_PROGRESS', fixtureId='live', startTimeLocal='2026-01-03T19:00:00'),
+            _home_row(status='SCHEDULED', fixtureId='up', startTimeLocal='2026-01-04T19:00:00'),
+            _home_row(status='FINISHED', fixtureId='fin', startTimeLocal='2026-01-01T19:00:00'),
+            _home_row(status='CANCELLED', fixtureId='void', startTimeLocal='2026-01-02T19:00:00'),
+        ]))
+        upcoming = home_page.filter_schedule_records(records, 'upcoming', None)
+        self.assertEqual([row['fixtureId'] for row in upcoming], ['live', 'up'])
+        finished = home_page.filter_schedule_records(records, 'finished', None)
+        self.assertEqual([row['fixtureId'] for row in finished], ['fin'])
+        all_rows = home_page.filter_schedule_records(records, 'all', None)
+        self.assertEqual([row['fixtureId'] for row in all_rows], ['fin', 'void', 'live', 'up'])
+
+    def test_date_header_and_row_time_have_no_iso_t(self):
+        tree = self._load([
+            _home_row(
+                status='SCHEDULED', fixtureId='g1',
+                startTimeLocal='2026-03-15T18:30:00',
+            ),
+        ])
+        values = _string_values(tree)
+        self.assertIn('2026-03-15', values)
+        self.assertIn('18:30', values)
+        self.assertFalse(any('T' in value and value.startswith('2026-') for value in values))
+
+    def test_clickable_rows_and_non_links(self):
+        tree = home_page.render_home_page(home_page.schedule_records(_schedule_df([
+            _home_row(status='PENDING', fixtureId='pending', startTimeLocal='2026-01-05T19:00:00'),
+            _home_row(status='FINISHED', fixtureId='fin', startTimeLocal='2026-01-01T19:00:00',
+                      Score='88 : 79', teamScoreHome=88, teamScoreAway=79),
+            _home_row(status='ABANDONED', fixtureId='abd', startTimeLocal='2026-01-02T19:00:00',
+                      Score='12 : 10', teamScoreHome=12, teamScoreAway=10),
+            _home_row(status='SCHEDULED', fixtureId='sched', startTimeLocal='2026-01-06T19:00:00'),
+            _home_row(status='IF_NEEDED', fixtureId='ifn', startTimeLocal='2026-01-07T19:00:00'),
+            _home_row(status='CANCELLED', fixtureId='can', startTimeLocal='2026-01-03T19:00:00'),
+        ])), show='all', game_type=None)
+        hrefs = {node.href for node in _anchors(tree)}
+        self.assertIn('/game/pending', hrefs)
+        self.assertIn('/game/fin', hrefs)
+        self.assertIn('/game/abd', hrefs)
+        self.assertNotIn('/game/sched', hrefs)
+        self.assertNotIn('/game/ifn', hrefs)
+        self.assertNotIn('/game/can', hrefs)
+
+    def test_filtered_empty_keeps_hero_not_season_empty_copy(self):
+        records = home_page.schedule_records(_schedule_df([
+            _home_row(
+                status='IN_PROGRESS', fixtureId='live', fixtureType='REGULAR',
+                startTimeLocal='2026-01-02T19:00:00',
+                away_team='Live Away', Score='1 : 2', teamScoreHome=2, teamScoreAway=1,
+            ),
+            _home_row(
+                status='FINISHED', fixtureId='fin', fixtureType='PLAYOFF',
+                startTimeLocal='2026-01-01T19:00:00', Score='88 : 79',
+                teamScoreHome=88, teamScoreAway=79,
+            ),
+        ]))
+        tree = home_page.render_home_page(records, show='finished', game_type='REGULAR')
+        markup = str(tree)
+        self.assertIn(EMPTY_HOME_FILTER, markup)
+        self.assertIn(EMPTY_HOME_FILTER_NEXT, markup)
+        self.assertNotIn(EMPTY_HOME, markup)
+        self.assertIn('Live Away', str(_papers(tree)[0]))
 
 
 class PlayerDotColorTests(unittest.TestCase):
@@ -212,8 +429,8 @@ class PageDeleteSvgTests(unittest.TestCase):
         self.assertIn('<svg', js)
         self.assertNotIn('bi-x-lg', js)
         self.assertNotIn('LIVE 🔴', js)
-        self.assertIn('scoreClickable', js)
-        self.assertIn('statusBucket', js)
+        self.assertNotIn('ScheduleStatusBadge', js)
+        self.assertNotIn('ScheduleScoreLink', js)
 
     def test_table_pan_is_bound_without_visible_scrollbar_contract(self):
         js_path = os.path.join(REPO, 'assets', 'report_canvas.js')

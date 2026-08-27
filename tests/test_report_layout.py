@@ -584,13 +584,13 @@ class TableDmcAndAgGridContractTests(unittest.TestCase):
         self.assertIn('dag.AgGrid', code)
         self.assertIn('domLayout', code)
 
-    def test_home_page_uses_ag_grid(self):
+    def test_home_page_does_not_use_ag_grid(self):
         import os
         home_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'home.py')
         with open(home_path, 'r') as f:
             code = f.read()
-        self.assertIn('dag.AgGrid', code)
-        self.assertIn('domLayout', code)
+        self.assertNotIn('dag.AgGrid', code)
+        self.assertNotIn('dash_ag_grid', code)
 
 
 class DbcEliminationContractTests(unittest.TestCase):
@@ -646,8 +646,7 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         with open(home_path, 'r') as f:
             code = f.read()
         self.assertNotIn('rightAligned', code)
-        self.assertIn('"headerClass": "ag-header-align-center"', code)
-        self.assertIn('"cellClass": "ag-cell-align-center"', code)
+        self.assertNotIn('dag.AgGrid', code)
 
 
 class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):

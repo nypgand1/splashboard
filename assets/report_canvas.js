@@ -1781,29 +1781,6 @@
 var dagFuncs = window.dashAgGridFunctions = window.dashAgGridFunctions || {};
 var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
 
-dagComponentFuncs.ScheduleStatusBadge = function (props) {
-    var status = (props.value || '').trim() || 'UNKNOWN';
-    var bucket = (props.data && props.data.statusBucket) || 'unplayed';
-    var cls = 'schedule-badge schedule-badge-' + bucket;
-    return React.createElement('span', { className: cls }, status);
-};
-
-dagComponentFuncs.ScheduleScoreLink = function (props) {
-    var row = props.data || {};
-    var fixtureId = row.fixtureId || '';
-    var text = props.value || '—';
-    if (!row.scoreClickable) {
-        return React.createElement('span', { className: 'schedule-score-plain' }, text);
-    }
-    return React.createElement('a', {
-        href: '/game/' + fixtureId,
-        className: 'schedule-score-link',
-        onClick: function(e) {
-            e.stopPropagation();
-        }
-    }, text);
-};
-
 dagComponentFuncs.PlusMinusCell = function (props) {
     var val = props.value;
     if (val === null || val === undefined || val === '') {

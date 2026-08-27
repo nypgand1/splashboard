@@ -1086,6 +1086,33 @@ body {
     background-color: #e0f2fe !important;
 }
 
+a.home-schedule-row {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+.home-schedule-row {
+    min-height: 56px;
+    border-bottom: 1px solid var(--border);
+}
+
+.home-schedule-list .home-schedule-row:last-child {
+    border-bottom: none;
+}
+
+.home-schedule-row-clickable {
+    cursor: pointer;
+}
+
+.home-schedule-row-clickable:hover {
+    background-color: var(--row-hover);
+}
+
+.home-schedule-row-static {
+    cursor: default;
+}
+
 .schedule-badge {
     display: inline-flex;
     align-items: center;
