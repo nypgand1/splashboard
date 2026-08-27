@@ -352,6 +352,13 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(list(fig.layout.yaxis2.range), [-5, 5])
         self.assertEqual(fig.layout.yaxis3.autorange, 'reversed')
 
+    def test_figure_autosizes_without_fixed_width(self):
+        fig = build_rotation_figure(self._payload())
+        self.assertTrue(fig.layout.autosize)
+        self.assertNotEqual(fig.layout.width, 1220)
+        self.assertTrue(fig.layout.width in (None, 0) or fig.layout.width is False)
+        self.assertEqual(fig.layout.dragmode, False)
+
     def test_score_text_is_larger_and_contrasts_with_cell(self):
         z = [[1, 12], [None, 2]]
         colors = score_text_colors(z, 12)

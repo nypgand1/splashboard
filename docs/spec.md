@@ -106,7 +106,8 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 ## Rotation
 
 - Plotly heatmap, colorscale `PuBu`.
-- Fixed width 1220px, not 100%.
+- Wrapped in `dmc.Paper` (`withBorder`, `radius="md"`, `shadow="xs"`, `className="braves-card-wrapper"`, `overflow: hidden`). `_last_update_span` stays outside the Paper, same as Play-By-Play.
+- Width 100%. `fig.layout.autosize = True`; do not set `layout.width`. Graph style width `100%` and height from the figure. `config`: `displayModeBar=False`, `responsive=True`, `scrollZoom=False`. `layout.dragmode=False`. Do not put `braves-table-scroll` on the graph.
 - Margin ticks in steps of 5.
 - Player rows sort by first time on court, then jersey; DNP rows last.
 - Scoring heatmap accumulates team points per minute bucket.

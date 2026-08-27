@@ -1075,14 +1075,25 @@ def render_rotation_children(rotation_store):
     fig = build_rotation_figure(payload)
     return [
         _last_update_span(),
-        dcc.Graph(
-            id='rotation-graph',
-            figure=fig,
-            config={'displayModeBar': False, 'responsive': False},
-            style={
-                'height': f"{fig.layout.height or 640}px",
-                'width': f"{fig.layout.width or 1220}px",
-            },
+        dmc.Paper(
+            dcc.Graph(
+                id='rotation-graph',
+                figure=fig,
+                config={
+                    'displayModeBar': False,
+                    'responsive': True,
+                    'scrollZoom': False,
+                },
+                style={
+                    'width': '100%',
+                    'height': f"{fig.layout.height or 640}px",
+                },
+            ),
+            withBorder=True,
+            radius='md',
+            shadow='xs',
+            className='braves-card-wrapper',
+            style={'overflow': 'hidden'},
         ),
     ]
 

@@ -447,7 +447,6 @@ def build_rotation_figure(payload):
     home_n = len(home['players']) if home else 1
     away_n = len(away['players']) if away else 1
     height = max(620, 110 + 26 * (home_n + away_n) + 230)
-    width = 1220
     fig = make_subplots(
         rows=4,
         cols=1,
@@ -631,9 +630,9 @@ def build_rotation_figure(payload):
         )
 
     fig.update_layout(
-        width=width,
         height=height,
-        autosize=False,
+        autosize=True,
+        dragmode=False,
         margin=dict(l=140, r=24, t=48, b=72),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',

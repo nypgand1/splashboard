@@ -111,6 +111,49 @@ class FourStateTests(unittest.TestCase):
             empty = renderer('{}')
             self.assertIn(EMPTY_GAME, str(empty))
 
+    def test_rotation_success_wraps_full_width_paper(self):
+        payload = {
+            'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],
+            'buckets': [
+                {'periodId': 1, 'period_label': '1Q', 'minute': 0, 'label': '1Q', 'start': 0.0, 'end': 60.0},
+                {'periodId': 1, 'period_label': '1Q', 'minute': 1, 'label': '1Q', 'start': 60.0, 'end': 120.0},
+            ],
+            'teams': [
+                {
+                    'team_id': 'h',
+                    'team_name': 'Home',
+                    'side': 'home',
+                    'players': [{'label': 'A', 'cells': [1, None]}],
+                },
+                {
+                    'team_id': 'a',
+                    'team_name': 'Away',
+                    'side': 'away',
+                    'players': [{'label': 'B', 'cells': [None, 1]}],
+                },
+            ],
+            'margin': [{'t': 0.0, 'margin': 0}, {'t': 120.0, 'margin': 4}],
+            'scoring': {'home': [1, 12], 'away': [None, 2]},
+        }
+        tree = game_page.render_rotation_children(json.dumps(payload))
+        papers = find_type(tree, dmc.Paper)
+        graphs = [node for node in walk(tree) if getattr(node, '_type', None) == 'Graph'
+                  or node.__class__.__name__ == 'Graph']
+        self.assertTrue(find_type(tree, dmc.Text))
+        self.assertEqual(len(papers), 1)
+        self.assertEqual(papers[0].className, 'braves-card-wrapper')
+        self.assertEqual(len(graphs), 1)
+        self.assertEqual(graphs[0].style.get('width'), '100%')
+        self.assertTrue(graphs[0].config.get('responsive'))
+        self.assertFalse(graphs[0].config.get('displayModeBar'))
+        self.assertFalse(graphs[0].config.get('scrollZoom'))
+        self.assertNotEqual(getattr(graphs[0], 'className', None), 'braves-table-scroll')
+        fig = graphs[0].figure
+        self.assertNotEqual(fig.layout.width, 1220)
+        self.assertTrue(fig.layout.autosize)
+        self.assertEqual(fig.layout.dragmode, False)
+        self.assertIn('Last Update', str(tree))
+
 
 def _schedule_df(rows):
     return pd.DataFrame(rows)
