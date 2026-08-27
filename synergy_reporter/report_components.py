@@ -5,6 +5,8 @@ import pandas as pd
 from dash import dcc, html
 import dash_mantine_components as dmc
 
+from ui_kit import icon as dmc_icon, loading_skeleton
+
 from synergy_reporter.report_layout import (
     ALLOWED_TABLE_KEYS,
     TABLE_TITLES,
@@ -131,7 +133,7 @@ def render_builtin_table(table_key, bs_dict, lineup_store_data, match_info, bloc
     if table_key in ('lineup_home', 'lineup_away'):
         side = 'home' if table_key.endswith('home') else 'away'
         if not lineup_tables_for_size(lineup_store_data, lineup_size=5):
-            return html.Div("Loading...", className="text-muted p-2")
+            return loading_skeleton()
         payload = _lineup_table_json(lineup_store_data, match_info, side)
         df = _df_from_split(payload)
         return create_report_table(df)
@@ -255,7 +257,7 @@ def render_paper(page, page_index, bs_dict, lineup_store_data, match_info, page_
     delete_hidden = page_count <= 1
     return html.Div([
         html.Button(
-            html.I(className="bi bi-x-lg", **{'aria-hidden': 'true'}),
+            dmc_icon("tabler:x", width=16),
             className="report-page-delete no-print" + (" is-disabled" if delete_hidden else ""),
             type="button",
             title="Delete page",
@@ -315,7 +317,7 @@ def render_toolbar():
                 **{f'data-rte-{mode}': hex_color, 'aria-label': f"{name}"}
             ))
         custom_input = html.Label([
-            html.I(className="bi bi-eyedropper", **{'aria-hidden': 'true'}),
+            dmc_icon("tabler:color-picker", width=14),
             html.Span("Custom", className="report-rte-custom-label"),
             dmc.ColorInput(
                 id=f"report-custom-{mode}",
@@ -330,7 +332,7 @@ def render_toolbar():
 
     return html.Div([
         html.Button(
-            html.I(className="bi bi-journal-text", **{'aria-hidden': 'true'}),
+            dmc_icon("tabler:notebook", width=16),
             id="report-add-text",
             className="report-chrome-btn report-chrome-btn-icon",
             type="button",
@@ -339,7 +341,7 @@ def render_toolbar():
         ),
         dcc.Upload(
             [
-                html.I(className="bi bi-image", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:photo", width=16),
                 html.Span("Add image", className="visually-hidden"),
             ],
             id="report-image-upload",
@@ -349,7 +351,7 @@ def render_toolbar():
         ),
         html.Div([
             html.Button(
-                html.I(className="bi bi-table", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:table", width=16),
                 id="report-add-table",
                 className="report-chrome-btn report-chrome-btn-icon",
                 type="button",
@@ -368,42 +370,42 @@ def render_toolbar():
         html.Div([
             html.Div(className="report-toolbar-divider"),
             html.Button(
-                html.I(className="bi bi-type-bold", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:bold", width=16),
                 className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
                 title="Bold",
                 type="button",
                 **{'data-rte-cmd': 'bold', 'aria-label': 'Bold'}
             ),
             html.Button(
-                html.I(className="bi bi-type-italic", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:italic", width=16),
                 className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
                 title="Italic",
                 type="button",
                 **{'data-rte-cmd': 'italic', 'aria-label': 'Italic'}
             ),
             html.Button(
-                html.I(className="bi bi-type-underline", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:underline", width=16),
                 className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
                 title="Underline",
                 type="button",
                 **{'data-rte-cmd': 'underline', 'aria-label': 'Underline'}
             ),
             html.Button(
-                html.I(className="bi bi-type-strikethrough", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:strikethrough", width=16),
                 className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
                 title="Strikethrough",
                 type="button",
                 **{'data-rte-cmd': 'strikethrough', 'aria-label': 'Strikethrough'}
             ),
             html.Button(
-                html.I(className="bi bi-list-ul", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:list", width=16),
                 className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
                 title="Bullet List",
                 type="button",
                 **{'data-rte-cmd': 'bulletList', 'aria-label': 'Bullet List'}
             ),
             html.Button(
-                html.I(className="bi bi-list-ol", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:list-numbers", width=16),
                 className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
                 title="Ordered List",
                 type="button",
@@ -414,7 +416,7 @@ def render_toolbar():
             html.Div([
                 html.Button(
                     [
-                        html.I(className="bi bi-fonts", **{'aria-hidden': 'true'}),
+                        dmc_icon("tabler:letter-case", width=16),
                         html.Span(className="report-rte-color-indicator", id="report-rte-color-indicator"),
                     ],
                     id="report-btn-color-picker",
@@ -430,7 +432,7 @@ def render_toolbar():
             html.Div([
                 html.Button(
                     [
-                        html.I(className="bi bi-highlighter", **{'aria-hidden': 'true'}),
+                        dmc_icon("tabler:highlight", width=16),
                         html.Span(className="report-rte-color-indicator", id="report-rte-highlight-indicator"),
                     ],
                     id="report-btn-highlight-picker",
@@ -445,7 +447,7 @@ def render_toolbar():
 
         html.Div([
             html.Button(
-                html.I(className="bi bi-arrow-counterclockwise", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:restore", width=16),
                 id="report-reset-layout",
                 className="report-chrome-btn report-chrome-btn-icon",
                 type="button",

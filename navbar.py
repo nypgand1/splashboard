@@ -1,5 +1,7 @@
 import dash_mantine_components as dmc
-from dash import html
+
+from ui_kit import icon
+
 
 def create_navbar():
     brand = dmc.Anchor(
@@ -22,7 +24,7 @@ def create_navbar():
         underline="never",
         style={"display": "flex", "alignItems": "center"}
     )
-    
+
     menu = dmc.Menu(
         [
             dmc.MenuTarget(
@@ -31,7 +33,7 @@ def create_navbar():
                     variant="subtle",
                     size="sm",
                     c="#1e293b",
-                    rightSection=html.I(className="bi bi-chevron-down", style={"fontSize": "11px"}),
+                    rightSection=icon("tabler:chevron-down", width=14),
                     style={
                         "backgroundColor": "#f1f5f9",
                         "border": "1px solid #e2e8f0",
@@ -45,7 +47,7 @@ def create_navbar():
                     dmc.MenuItem(
                         "Home",
                         href="/",
-                        leftSection=html.I(className="bi bi-house", style={"fontSize": "13px", "color": "#0077b6"}),
+                        leftSection=icon("tabler:home", width=14, color="#0077b6"),
                         style={"fontWeight": 600, "color": "#1e293b"}
                     ),
                 ],
@@ -61,25 +63,11 @@ def create_navbar():
         position="bottom-end",
         transitionProps={"transition": "pop-top-right", "duration": 150},
     )
-    
-    return html.Div(
-        dmc.Group(
-            [brand, menu],
-            justify="space-between",
-            align="center",
-            h="100%",
-            style={"padding": "0 20px"},
-        ),
-        className="app-navbar no-print",
-        style={
-            "height": "56px",
-            "width": "100%",
-            "zIndex": 100,
-            "backgroundColor": "rgba(255, 255, 255, 0.95)",
-            "backdropFilter": "blur(16px)",
-            "WebkitBackdropFilter": "blur(16px)",
-            "borderBottom": "2px solid #00b4d8",
-            "boxShadow": "0 2px 12px rgba(0, 0, 0, 0.04)",
-        }
-    )
 
+    return dmc.Group(
+        [brand, menu],
+        justify="space-between",
+        align="center",
+        h="100%",
+        px="md",
+    )

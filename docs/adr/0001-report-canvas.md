@@ -16,7 +16,7 @@ The old Report only reordered a 1-D flex list. The PDF needs 2-D placement (tabl
 
 AG Grid inside GridStack showed inner scrollbars, clipped headers, and could not be cloned without a full pane rebuild. Report therefore uses `dmc.Table` (migrated from `dbc.Table`). Home schedule, Play-By-Play, Player Stats, and Lineup Stats use AG Grid for interactive sorting and filtering. Box Score quarter and team summary tables use `dmc.Table`. Rotation stays Plotly. Do not introduce Tabulator.
 
-Bootstrap Icons is an extra stylesheet for Report editor chrome only (toolbar buttons and the page-delete control). It is not a second UI framework and is not used on other tabs.
+Icons use `DashIconify` (Tabler) in Python layouts, including Report toolbar buttons. The Report page-delete button created in JS uses an inline SVG. Bootstrap Icons is not a dependency.
 
 ## JS owns layout after the first paint
 
@@ -52,7 +52,7 @@ There is no Fly volume and machines auto-stop. Layout and images therefore live 
 
 PDF is jsPDF drawing the paper DOM as **selectable text** (header, table cells, notes) plus PNG for user images. A whole-page html2canvas raster was rejected: Chinese and numbers must remain real PDF text. Noto Sans TC is bundled at `assets/NotoSansTC-Regular.ttf` (SIL OFL, Traditional Chinese subset) so export works without a CDN. The reconstruction is close to the screen, not pixel-identical. Tables keep on-screen striped/bordered styling. The filename is `{YYYYMMDD}.pdf` from the game date. The PDF button is disabled with `aria-busy` while export runs. Browser print is the fallback if the font or jsPDF fails. Server-side WeasyPrint/Playwright is out of scope.
 
-Report is a post-game canvas. Live games (`IN_PROGRESS`, `PENDING`, unknown) do not show the Report tab.
+Report is a post-game canvas. Only finished statuses (`FINISHED`, `CONFIRMED`) show the Report tab. Live-play, unplayed, void, and unknown hide it.
 
 Table grid height includes the title row and drag handle, not only the table body, so the block does not grow an inner scrollbar.
 
@@ -60,7 +60,7 @@ The GridStack container uses `minRow` equal to the leftover A4 height so empty p
 
 ## Glass on chrome only
 
-Liquid glass is the editor shell. The A4 sheet is opaque white so the PDF stays print-white. Other tabs stay LITERA.
+Liquid glass is the editor shell. The A4 sheet is opaque white so the PDF stays print-white. Other tabs and the navbar use Scheme A inside `dmc.AppShell`.
 
 ## Default five pages, empty notes, no Shot Chart
 

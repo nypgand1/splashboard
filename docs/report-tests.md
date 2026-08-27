@@ -44,12 +44,12 @@ Do not call live Synergy. Do not drive a browser in this file.
 | R3 | Report table engine is `dmc.Table`; Play-By-Play stays `ag_grid` |
 | R4 | Block overflow is `hidden` (not `auto` or `scroll`) |
 | R5 | Toolbar has no title string |
-| R6 | Icon set is `bootstrap-icons`, scoped to Report editor chrome |
+| R6 | Icon set is `dash-iconify` (Tabler) for Python chrome; JS page-delete uses inline SVG |
 | R7 | Add note / Add image / Add table / Reset layout accessible names stay those English strings |
 | R8 | Python paint trigger is tab open only; `lineup_store` is a `State` (not an `Input`), so its update does not rebuild `pane-report` |
 | R9 | Layout mutations after first paint are clientside; add table clones a template |
 | R10 | Image validation for the editor is clientside; Python `validate_image_upload` remains the unit contract |
-| R11 | Add table is `bi-table` plus a glass menu (`icon_menu`), not a native `<select>` |
+| R11 | Add table is `tabler:table` plus a glass menu (`icon_menu`), not a native `<select>` |
 | R12 | Page delete is × on the paper top-right; the page list has no minus |
 | R13 | `min_pages` is 1 (the last remaining page cannot be deleted) |
 | R14 | Add note / image / table target the current page from scroll-spy; auto-place; overflow adds a page |
@@ -113,40 +113,41 @@ Do not call live Synergy. Do not drive a browser in this file.
 | C7 | Full 5-page default layout tables and headers visual completeness |
 | C8 | Headless browser PDF export completion without runtime JS exceptions |
 
-## DMC infrastructure contract (`dmc-migration-plan.md` Phase 1)
+## DMC infrastructure contract
 
 | ID | Case |
 |---|---|
 | D1 | React 18 is explicitly configured via `dash._dash_renderer._set_react_version('18.2.0')` before Dash app initialization |
 | D2 | `external_stylesheets` does not include `dbc.themes.LITERA` or other Bootstrap themes |
-| D3 | Bootstrap Icons is loaded via standalone CDN URL, not `dbc.icons` |
-| D4 | `app.layout` is wrapped in `dmc.MantineProvider` with `forceColorScheme="dark"` and valid Mantine theme dict; global design system uses Liquid Glass aesthetics while Report paper remains opaque white (`#ffffff`) |
-| D5 | `requirements.txt` declares `dash-mantine-components==2.8.0` |
+| D3 | Bootstrap Icons is not loaded (no CDN URL, no `bi bi-` classes) |
+| D4 | `app.layout` is `dmc.MantineProvider` with `forceColorScheme="light"` wrapping `dmc.AppShell` (`AppShellHeader` + `AppShellMain`); Report paper remains opaque white (`#ffffff`) |
+| D5 | `requirements.txt` declares `dash-mantine-components==2.8.0` and `dash-iconify` |
+| D6 | AppShell header is in document flow (`position: relative`), not viewport-fixed, and does not overlay main content |
 
-## Navbar DMC contract (`dmc-migration-plan.md` Phase 2)
+## Navbar DMC contract
 
 | ID | Case |
 |---|---|
 | N1 | `navbar.py` does not import `dash_bootstrap_components` or `dbc` |
-| N2 | `create_navbar()` returns a DMC-based header with brand link `/` and glass menu |
+| N2 | `create_navbar()` returns a DMC-based header with brand link `/` and menu |
 | N3 | Navbar brand text is `Splashboard TFB` linking to `/` and menu contains a link to `Home` (`/`) |
 
-## Tabs DMC contract (`dmc-migration-plan.md` Phase 3)
+## Tabs DMC contract
 
 | ID | Case |
 |---|---|
-| T1 | `pages/game.py` uses `dmc.Tabs` with `variant="pills"` instead of `dbc.Tabs` |
+| T1 | `pages/game.py` uses `dmc.Tabs` instead of `dbc.Tabs`; tab icons are `DashIconify` |
 | T2 | Tab switching callbacks gate on `Input('tabs', 'value')` instead of `active_tab` |
 | T3 | Report tab visibility is controlled dynamically via `style` on `dmc.TabsTab` (`display: none` when live) |
 
-## Grid DMC contract (`dmc-migration-plan.md` Phase 4)
+## Grid DMC contract
 
 | ID | Case |
 |---|---|
 | G1 | `pages/game.py` does not import or use `dbc.Row` or `dbc.Col` |
 | G2 | Box score quarter stats are structured in `dmc.SimpleGrid` with responsive column configuration |
 
-## Table DMC & AG Grid contract (`dmc-migration-plan.md` Phase 5 & 6)
+## Table DMC & AG Grid contract
 
 | ID | Case |
 |---|---|
@@ -155,7 +156,7 @@ Do not call live Synergy. Do not drive a browser in this file.
 | B3 | Report canvas tables strictly avoid AG Grid (retains `dmc.Table` for pure HTML table clone & PDF export) |
 | B4 | Zero occurrences of `dbc.Table` across the entire codebase (`pages/*.py`, `synergy_reporter/*.py`) |
 
-## DBC Elimination contract (`dmc-migration-plan.md` Phase 7)
+## DBC Elimination contract
 
 | ID | Case |
 |---|---|
@@ -166,10 +167,38 @@ Do not call live Synergy. Do not drive a browser in this file.
 
 | ID | Case |
 |---|---|
-| A1 | CSS defines `.app-canvas-container` and `.app-device-frame` with tablet (769px~1024px) and mobile (≤768px) media queries |
+| A1 | CSS defines AppShell RWD with tablet (769px~1024px) and mobile (≤768px) media queries |
 | A2 | Mobile RWD (≤768px) enables single-row horizontal scrolling on `.braves-clean-tabs .mantine-Tabs-list` with `scrollbar-width: none` |
-| A3 | AG Grid text-align left, center, right classes (`ag-cell-align-left`, `ag-cell-align-center`, `ag-cell-align-right`) and `justify-content` are defined in `report.css` |
-| A4 | Home schedule columns define `Time` as rightAligned and `Home Team`, `Away Team`, `Venue`, `Game Type`, `Status`, `Score` as center aligned |
+| A3 | AG Grid text-align classes (`ag-cell-align-center` and header equivalents) and `justify-content` are defined in `report.css` |
+| A4 | Home schedule columns, including `Time`, are center aligned (header and cell) |
+| A5 | AppShell CSS zeros header offset so in-flow navbar does not cover the game banner |
+| A6 | Box Score `dmc.Table` cards use `.braves-table-scroll` (`overflow-x: auto`) and a sticky first column; SimpleGrid is 1 column until `lg` |
+| A7 | Table pan: hidden scrollbars, `cursor: grab` / `grabbing` only when overflow (`.is-scrollable`), JS click-drag on `.braves-table-scroll` and AG Grid `.ag-center-cols-viewport`; a drag suppresses the following click |
+
+## Fixture status buckets
+
+| ID | Case |
+|---|---|
+| F1 | Finished = `FINISHED`, `CONFIRMED`; live-play = `PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS` |
+| F2 | `should_use_live_endpoints` is true only for live-play; `SCHEDULED` / `IF_NEEDED` / `CANCELLED` / `ABANDONED` are false |
+| F3 | Game interval is disabled unless live-play |
+| F4 | Report tab visible only for `FINISHED` / `CONFIRMED` |
+| F5 | Unplayed and void (except `ABANDONED`) Home scores are `—` and not clickable |
+| F6 | Live-play / finished / `ABANDONED` scores are clickable: numeric `H : A`, else `vs` |
+| F7 | Badge label is the raw status string; `IN_PROGRESS` is not rewritten to `LIVE` |
+
+## Four-state & Python color contracts
+
+| ID | Case |
+|---|---|
+| S1 | Loading placeholders are `dmc.Skeleton`, not the string `Loading...` |
+| S2 | Home empty copy is `No games available.` plus next step `Check back when the season schedule is published.` |
+| S3 | Home error is `dmc.Alert` with `Failed to load games. Please try again later.` |
+| S4 | Game empty copy is `No data available.` plus next step `Open another game from Home.` |
+| S5 | Game error is `dmc.Alert` with `Failed to load this view. Please try again later.` |
+| C9 | Team summary winner cells use `#0077b6` at font-weight 700 |
+| C10 | Team summary left stripe is Home `#0077b6` and Away `#94a3b8` |
+| C11 | Player / Lineup section dots are Home `#00b4d8` and Away `#94a3b8` |
 
 ## Out of scope (must not appear)
 

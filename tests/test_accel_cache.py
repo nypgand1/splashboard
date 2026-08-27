@@ -313,6 +313,8 @@ class ReportCacheTests(unittest.TestCase):
         self.assertFalse(should_use_live_endpoints(status='FINISHED'))
         self.assertTrue(should_use_live_endpoints(status='IN_PROGRESS'))
         self.assertTrue(should_use_live_endpoints(status='PENDING'))
+        self.assertFalse(should_use_live_endpoints(status='SCHEDULED'))
+        self.assertFalse(should_use_live_endpoints(status='IF_NEEDED'))
 
     def test_concurrent_lookups_build_once(self):
         builds = []

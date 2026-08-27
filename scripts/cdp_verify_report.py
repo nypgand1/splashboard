@@ -44,7 +44,6 @@ def create_verification_app():
         __name__,
         assets_folder=os.path.join(REPO_ROOT, 'assets'),
         external_stylesheets=[
-            'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css',
             'https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css',
             '/assets/report.css',
         ],
@@ -109,17 +108,18 @@ def create_verification_app():
             "fontFamily": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
             "defaultRadius": "sm",
         },
-        forceColorScheme="dark",
+        forceColorScheme="light",
         children=dmc.AppShell(
-            header={"height": 56},
-            children=[
-                navbar,
+            [
+                dmc.AppShellHeader(navbar, className="app-navbar no-print", px=0),
                 dmc.AppShellMain(
-                    html.Div([
-                        html.Div(workspace, id="pane-report"),
-                    ])
+                    html.Div(workspace, id="pane-report"),
+                    className="app-main-content",
                 ),
-            ]
+            ],
+            header={"height": 56},
+            padding=0,
+            className="app-shell",
         )
     )
 

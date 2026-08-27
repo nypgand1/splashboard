@@ -1,5 +1,5 @@
 import dash
-from dash import Dash, html, page_container
+from dash import Dash, page_container
 import dash_mantine_components as dmc
 from navbar import create_navbar
 
@@ -41,7 +41,6 @@ MANTINE_THEME = {
 app = Dash(
     __name__,
     external_stylesheets=[
-        'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css',
         'https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css',
         '/assets/report.css',
     ],
@@ -61,17 +60,19 @@ NAVBAR = create_navbar()
 app.layout = dmc.MantineProvider(
     theme=MANTINE_THEME,
     forceColorScheme="light",
-    children=html.Div(
-        className="app-canvas-container",
-        children=[
-            html.Div(
-                className="app-device-frame",
-                children=[
-                    NAVBAR,
-                    html.Div(page_container, className="app-main-content")
-                ]
-            )
-        ]
+    children=dmc.AppShell(
+        [
+            dmc.AppShellHeader(
+                NAVBAR,
+                className="app-navbar no-print",
+                px=0,
+            ),
+            dmc.AppShellMain(page_container, className="app-main-content"),
+        ],
+        header={"height": 56},
+        padding=0,
+        className="app-shell",
+        id="app-shell",
     )
 )
 

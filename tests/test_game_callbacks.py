@@ -19,9 +19,12 @@ class IntervalGateTests(unittest.TestCase):
     def test_finished_disables_interval(self):
         self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'FINISHED'})))
         self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'CONFIRMED'})))
+        self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'SCHEDULED'})))
+        self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'CANCELLED'})))
         self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'IN_PROGRESS'})))
-        self.assertFalse(game_page.set_interval_disabled('not-json'))
-        self.assertFalse(game_page.set_interval_disabled(None))
+        self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'PENDING'})))
+        self.assertTrue(game_page.set_interval_disabled('not-json'))
+        self.assertTrue(game_page.set_interval_disabled(None))
 
 
 class HiddenTabTests(unittest.TestCase):
@@ -54,6 +57,12 @@ class HiddenTabTests(unittest.TestCase):
         self.assertEqual(done_style, {})
         self.assertIs(done_tab, no_update)
 
+        scheduled_style, _ = game_page.toggle_report_tab(
+            json.dumps({'status': 'SCHEDULED'}),
+            'tab-bs',
+        )
+        self.assertEqual(scheduled_style, {'display': 'none'})
+
 
 class TabsDmcContractTests(unittest.TestCase):
     def test_game_page_uses_dmc_tabs(self):
@@ -66,6 +75,9 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('dmc.TabsTab', code)
         self.assertNotIn('dbc.Tabs', code)
         self.assertNotIn('dbc.Tab(', code)
+        self.assertIn('tabler:table', code)
+        self.assertNotIn('bi bi-', code)
+        self.assertIn('loading_skeleton', code)
 
 
 class GridDmcContractTests(unittest.TestCase):
@@ -75,6 +87,10 @@ class GridDmcContractTests(unittest.TestCase):
         with open(page_path, 'r') as f:
             code = f.read()
         self.assertIn('dmc.SimpleGrid', code)
+        self.assertIn('"lg": 3', code)
+        self.assertIn('"lg": 2', code)
+        self.assertNotIn('alwaysShowHorizontalScroll', code)
+        self.assertNotIn('"sm": 3', code)
         self.assertNotIn('dbc.Row', code)
         self.assertNotIn('dbc.Col', code)
 

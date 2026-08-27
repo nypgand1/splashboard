@@ -276,11 +276,11 @@ class ReportTableComponentTests(unittest.TestCase):
         from synergy_reporter.report_components import render_toolbar
         toolbar = render_toolbar()
         markup = str(toolbar)
-        self.assertIn('bi-table', markup)
+        self.assertIn('tabler:table', markup)
         self.assertIn('Add table', markup)
         self.assertIn('report-table-menu', markup)
         self.assertIn('Reset layout', markup)
-        self.assertIn('bi-arrow-counterclockwise', markup)
+        self.assertIn('tabler:restore', markup)
         self.assertNotIn('report-add-table-key', markup)
         self.assertNotIn('html.Select', markup)
         self.assertNotIn('Player Box', markup)
@@ -321,7 +321,7 @@ class ReportTableComponentTests(unittest.TestCase):
         markup = str(paper)
         self.assertIn('report-page-delete', markup)
         self.assertIn('data-delete-page', markup)
-        self.assertIn('bi-x-lg', markup)
+        self.assertIn('tabler:x', markup)
 
     def test_table_handle_is_in_title_row(self):
         from synergy_reporter.report_components import render_grid_item
@@ -364,21 +364,21 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertNotEqual(report_layout.block_overflow_spec(), 'auto')
         self.assertNotEqual(report_layout.block_overflow_spec(), 'scroll')
 
-    def test_toolbar_has_no_title_and_bootstrap_icons(self):
+    def test_toolbar_has_no_title_and_dash_iconify_icons(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         chrome = report_layout.chrome_spec()
         self.assertIsNone(chrome['toolbar_title'])
-        self.assertEqual(chrome['icon_set'], 'bootstrap-icons')
-        self.assertEqual(chrome['icon_scope'], 'report_chrome')
-        self.assertEqual(chrome['add_note_icon'], 'bi-journal-text')
-        self.assertEqual(chrome['add_image_icon'], 'bi-image')
-        self.assertEqual(chrome['add_table_icon'], 'bi-table')
+        self.assertEqual(chrome['icon_set'], 'dash-iconify')
+        self.assertEqual(chrome['icon_scope'], 'app')
+        self.assertEqual(chrome['add_note_icon'], 'tabler:notebook')
+        self.assertEqual(chrome['add_image_icon'], 'tabler:photo')
+        self.assertEqual(chrome['add_table_icon'], 'tabler:table')
         self.assertEqual(chrome['add_note_label'], 'Add note')
         self.assertEqual(chrome['add_image_label'], 'Add image')
         self.assertEqual(chrome['add_table_label'], 'Add table')
         self.assertEqual(chrome['add_table_control'], 'icon_menu')
-        self.assertEqual(chrome['reset_icon'], 'bi-arrow-counterclockwise')
+        self.assertEqual(chrome['reset_icon'], 'tabler:restore')
         self.assertEqual(chrome['reset_label'], 'Reset layout')
         self.assertEqual(
             chrome['reset_confirm'],
@@ -389,7 +389,7 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['dialog_reset'], 'Reset')
         self.assertEqual(chrome['dialog_delete'], 'Delete')
         self.assertEqual(chrome['page_delete'], 'paper_corner')
-        self.assertEqual(chrome['page_delete_icon'], 'bi-x-lg')
+        self.assertEqual(chrome['page_delete_icon'], 'tabler:x')
         self.assertFalse(chrome['page_list_has_delete'])
         self.assertEqual(chrome['min_pages'], 1)
         self.assertEqual(chrome['toolbar_align'], 'paper')
@@ -525,6 +525,7 @@ class DmcInfrastructureContractTests(unittest.TestCase):
         with open(req_path, 'r') as f:
             content = f.read()
         self.assertIn('dash-mantine-components==2.8.0', content)
+        self.assertIn('dash-iconify', content)
 
     def test_app_uses_react_18_and_mantine_provider_without_dbc_theme(self):
         import os
@@ -536,7 +537,10 @@ class DmcInfrastructureContractTests(unittest.TestCase):
         self.assertIn('forceColorScheme="light"', code)
         self.assertNotIn('dbc.themes.LITERA', code)
         self.assertNotIn('dbc.themes.FLATLY', code)
-        self.assertIn('bootstrap-icons', code)
+        self.assertNotIn('bootstrap-icons', code)
+        self.assertIn('AppShell', code)
+        self.assertIn('AppShellHeader', code)
+        self.assertIn('AppShellMain', code)
 
 
 class NavbarDmcContractTests(unittest.TestCase):
@@ -625,22 +629,24 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         self.assertIn('overflow-x: auto', css)
         self.assertIn('scrollbar-width: none', css)
         self.assertIn('ag-header-align-center', css)
-        self.assertIn('ag-header-align-right', css)
-        self.assertIn('ag-cell-align-right', css)
         self.assertIn('ag-cell-align-center', css)
-        self.assertIn('justify-content: flex-end', css)
         self.assertIn('justify-content: center', css)
+        self.assertIn('.app-shell', css)
+        self.assertIn('--app-shell-header-offset: 0px', css)
+        self.assertIn('position: relative !important', css)
+        self.assertIn('.braves-table-scroll', css)
+        self.assertIn('position: sticky', css)
+        self.assertIn('cursor: grab', css)
+        self.assertIn('cursor: grabbing', css)
+        self.assertIn('.is-scrollable', css)
 
     def test_home_page_column_alignments(self):
         import os
         home_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'home.py')
         with open(home_path, 'r') as f:
             code = f.read()
-        self.assertIn('"field": "Time"', code)
-        self.assertIn('"headerClass": "ag-header-align-right"', code)
-        self.assertIn('"field": "Home Team"', code)
+        self.assertNotIn('rightAligned', code)
         self.assertIn('"headerClass": "ag-header-align-center"', code)
-        self.assertIn('"field": "Score"', code)
         self.assertIn('"cellClass": "ag-cell-align-center"', code)
 
 
@@ -654,7 +660,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         ]
         cdefs = _build_stats_column_defs(cols)
         
-        # Check leading pinned columns: # (center), Player (right), S (center)
+        # Check leading pinned columns: #, Player, S (all center)
         self.assertEqual(cdefs[0]['field'], '#')
         self.assertEqual(cdefs[0]['pinned'], 'left')
         self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
@@ -677,6 +683,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(cdefs[3]['cellClass'], 'ag-cell-align-center')
         self.assertEqual(cdefs[4]['field'], '+/-')
         self.assertEqual(cdefs[4]['headerClass'], 'ag-header-align-center')
+        self.assertEqual(cdefs[4]['cellClass'], 'ag-cell-align-center')
 
         # Check groups: 2PT, 3PT, FT, REB
         group_headers = [c.get('headerName') for c in cdefs if 'children' in c]
@@ -686,10 +693,12 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         group_2pt = next(c for c in cdefs if c.get('headerName') == '2PT')
         child_fields_2pt = [ch['field'] for ch in group_2pt['children']]
         self.assertEqual(child_fields_2pt, ['2M', '2A', '2FG%'])
-        for ch in group_2pt['children']:
-            self.assertTrue(ch['sortable'])
-            self.assertEqual(ch['headerClass'], 'ag-header-align-center')
-            self.assertEqual(ch['cellClass'], 'ag-cell-align-center')
+        for group_name in ('2PT', '3PT', 'FT', 'REB'):
+            group = next(c for c in cdefs if c.get('headerName') == group_name)
+            for ch in group['children']:
+                self.assertTrue(ch['sortable'])
+                self.assertEqual(ch['headerClass'], 'ag-header-align-center')
+                self.assertEqual(ch['cellClass'], 'ag-cell-align-center')
 
         # Check REB children: O, D, T
         group_reb = next(c for c in cdefs if c.get('headerName') == 'REB')
@@ -717,6 +726,14 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(cdefs[0]['field'], 'Lineup')
         self.assertEqual(cdefs[0]['pinned'], 'left')
         self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
+        self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
+        for cdef in cdefs:
+            if 'field' in cdef:
+                self.assertEqual(cdef['headerClass'], 'ag-header-align-center')
+                self.assertEqual(cdef['cellClass'], 'ag-cell-align-center')
+            for ch in cdef.get('children') or []:
+                self.assertEqual(ch['headerClass'], 'ag-header-align-center')
+                self.assertEqual(ch['cellClass'], 'ag-cell-align-center')
         tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('Lineup', 'Min', '+/-')]
         self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'PM'])
 
@@ -766,6 +783,50 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertIn('FD', top_titles)
         sub_titles = [th.children for th in sub_row.children]
         self.assertEqual(sub_titles, ['M', 'A', '%', 'M', 'A', '%', 'M', 'A', '%', 'O', 'D', 'T'])
+
+        def walk(node):
+            yield node
+            ch = getattr(node, 'children', None)
+            if isinstance(ch, (list, tuple)):
+                for child in ch:
+                    yield from walk(child)
+            elif ch is not None:
+                yield from walk(ch)
+
+        for node in walk(dmc_tbl):
+            if isinstance(node, (dmc.TableTh, dmc.TableTd)):
+                self.assertEqual(node.style.get('textAlign'), 'center')
+
+    def test_dmc_table_winner_color_and_team_stripe(self):
+        from pages.game import _dmc_table_from_df
+        import pandas as pd
+        import dash_mantine_components as dmc
+        df = pd.DataFrame([
+            {'Team': 'Home', 'PTS': 88},
+            {'Team': 'Away', 'PTS': 79},
+        ])
+        card = _dmc_table_from_df(df, is_team_summary=True)
+
+        def walk(node):
+            yield node
+            ch = getattr(node, 'children', None)
+            if isinstance(ch, (list, tuple)):
+                for child in ch:
+                    yield from walk(child)
+            elif ch is not None:
+                yield from walk(ch)
+
+        tds = [n for n in walk(card) if isinstance(n, dmc.TableTd)]
+        pts_home = next(td for td in tds if td.children == '88')
+        pts_away = next(td for td in tds if td.children == '79')
+        self.assertEqual(pts_home.style.get('color'), '#0077b6')
+        self.assertEqual(pts_home.style.get('fontWeight'), 700)
+        self.assertEqual(pts_away.style.get('color'), '#1e293b')
+        team_home = next(td for td in tds if td.children == 'Home')
+        team_away = next(td for td in tds if td.children == 'Away')
+        self.assertEqual(team_home.style.get('borderLeft'), '3.5px solid #0077b6')
+        self.assertEqual(team_away.style.get('borderLeft'), '3.5px solid #94a3b8')
+
 
 
 

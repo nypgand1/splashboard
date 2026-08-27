@@ -7,6 +7,7 @@ requests-cache==0.7.5
 redis==4.3.6
 dash-ag-grid==35.3.0
 dash-mantine-components==2.8.0
+dash-iconify>=0.1.2
 fastapi==0.141.1
 uvicorn[standard]==0.52.1
 

@@ -29,37 +29,42 @@ body {
     padding: 0;
 }
 
-/* Outer Canvas Container */
-.app-canvas-container {
-    background-color: #dbe1e8;
-    min-height: 100vh;
-    padding: 24px;
-    box-sizing: border-box;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-}
-
-/* App Main Device Frame Card */
-.app-device-frame {
-    width: 100%;
+/* AppShell is the Scheme A device frame */
+.app-shell {
+    --app-shell-header-offset: 0px !important;
+    width: calc(100% - 48px) !important;
     max-width: 1440px;
+    margin: 24px auto !important;
     background-color: #ffffff;
     border-radius: 14px;
     border: 1px solid var(--border);
     box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15);
     overflow: hidden;
+    min-height: calc(100vh - 48px);
+    box-sizing: border-box;
 }
 
-.app-navbar {
+.app-navbar,
+.app-shell .mantine-AppShell-header {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    inset: auto !important;
+    width: 100% !important;
     border-top-left-radius: 14px;
     border-top-right-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 2px solid var(--navbar-border);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
 }
 
-/* Content Area inside Frame */
 .app-main-content {
     background-color: var(--bg);
-    padding: 18px;
+    padding: 18px !important;
+    padding-top: 18px !important;
     min-height: calc(100vh - 104px);
     box-sizing: border-box;
 }
@@ -70,10 +75,9 @@ body {
 
 /* Tablet (769px ~ 1024px) */
 @media (max-width: 1024px) and (min-width: 769px) {
-    .app-canvas-container {
-        padding: 12px;
-    }
-    .app-device-frame {
+    .app-shell {
+        width: calc(100% - 24px) !important;
+        margin: 12px auto !important;
         border-radius: 12px;
     }
     .app-navbar {
@@ -87,15 +91,14 @@ body {
 
 /* Mobile (≤ 768px) */
 @media (max-width: 768px) {
-    .app-canvas-container {
-        padding: 0 !important;
-        background-color: var(--bg) !important;
-    }
-    .app-device-frame {
+    .app-shell {
+        width: 100% !important;
+        margin: 0 !important;
         border-radius: 0 !important;
         border: none !important;
         box-shadow: none !important;
         max-width: 100% !important;
+        min-height: 100vh;
     }
     .app-navbar {
         border-radius: 0 !important;
@@ -286,9 +289,9 @@ body {
     box-sizing: border-box;
 }
 
-.report-image-upload i.bi-image {
-    font-size: 16px;
-    line-height: 1;
+.report-image-upload svg {
+    width: 16px;
+    height: 16px;
     display: inline-block;
     pointer-events: none;
 }
@@ -826,9 +829,42 @@ body {
     overflow: hidden;
 }
 
+.braves-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    scrollbar-width: none;
+}
+
+.braves-table-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+.braves-table-scroll.is-scrollable {
+    cursor: grab;
+}
+
+.braves-table-scroll.is-dragging {
+    cursor: grabbing;
+    user-select: none;
+}
+
 .braves-clean-table {
     border-collapse: collapse;
-    width: 100%;
+    width: max-content;
+    min-width: 100%;
+}
+
+.braves-clean-table th:first-child,
+.braves-clean-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background-color: #ffffff;
+}
+
+.braves-clean-table thead th:first-child {
+    background-color: var(--thead-bg);
 }
 
 .braves-clean-table th {
@@ -855,6 +891,34 @@ body {
    Scheme A: AG-Grid Light Theme Customizations
    ========================================================================== */
 
+.ag-theme-alpine.braves-clean-ag-grid .ag-center-cols-viewport,
+.ag-theme-alpine.braves-clean-ag-grid .ag-body-horizontal-scroll-viewport {
+    scrollbar-width: none;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-center-cols-viewport::-webkit-scrollbar,
+.ag-theme-alpine.braves-clean-ag-grid .ag-body-horizontal-scroll,
+.ag-theme-alpine.braves-clean-ag-grid .ag-body-horizontal-scroll-viewport::-webkit-scrollbar {
+    display: none !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-body-horizontal-scroll {
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid.is-scrollable .ag-center-cols-viewport,
+.ag-theme-alpine.braves-clean-ag-grid.is-scrollable .ag-pinned-left-cols-container {
+    cursor: grab;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid.is-dragging .ag-center-cols-viewport,
+.ag-theme-alpine.braves-clean-ag-grid.is-dragging .ag-pinned-left-cols-container {
+    cursor: grabbing;
+    user-select: none;
+}
+
 .ag-theme-alpine.braves-clean-ag-grid {
     --ag-background-color: #ffffff !important;
     --ag-header-background-color: #f8fafc !important;
@@ -878,6 +942,7 @@ body {
     border-bottom: 1px solid #e2e8f0 !important;
     font-weight: 700 !important;
     font-size: 12px !important;
+    cursor: default;
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-header-cell {
@@ -956,11 +1021,10 @@ body {
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-floating-bottom .ag-cell[col-id="#"] {
-    justify-content: flex-end !important;
-    text-align: right !important;
+    justify-content: center !important;
+    text-align: center !important;
     font-weight: 700 !important;
     color: #0f172a !important;
-    padding-right: 8px !important;
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell {
@@ -1014,7 +1078,7 @@ body {
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-row {
-    cursor: pointer !important;
+    cursor: default !important;
     transition: background-color 0.12s ease !important;
 }
 
@@ -1035,6 +1099,7 @@ body {
     line-height: 1.2;
 }
 
+.schedule-badge-unplayed,
 .schedule-badge-pending {
     background: #e0f2fe !important;
     border: 1px solid #00b4d8 !important;
@@ -1047,13 +1112,18 @@ body {
     border: 1px solid #ef4444 !important;
     color: #dc2626 !important;
     box-shadow: 0 1px 4px rgba(239, 68, 68, 0.2) !important;
-    animation: pulse 1.5s infinite;
 }
 
 .schedule-badge-finished {
     background: #f1f5f9 !important;
     border: 1px solid #cbd5e1 !important;
     color: #475569 !important;
+}
+
+.schedule-badge-void {
+    background: #e2e8f0 !important;
+    border: 1px solid #94a3b8 !important;
+    color: #334155 !important;
 }
 
 .schedule-score-link {
@@ -1074,6 +1144,14 @@ body {
     color: #ffffff !important;
     border-color: #0077b6;
     box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25);
+}
+
+.schedule-score-plain {
+    display: inline-block;
+    padding: 2px 10px;
+    font-weight: 600;
+    font-size: 13px;
+    color: #64748b;
 }
 
 @media print {

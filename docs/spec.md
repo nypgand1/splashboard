@@ -16,66 +16,80 @@ This file is the source of truth for product behavior. Tests and later feature w
   - `--row-hover`: `#e0f2fe` (gentle cyan hover highlight)
   - `--card-bg`: `#ffffff` (white card containers with 10px radius & `#e2e8f0` border)
 - Tabs: Top radius 10px, active tab filled with `linear-gradient(135deg, #0077b6, #00b4d8)` and pure white text.
+- Page chrome is `dmc.AppShell` with `AppShellHeader` (navbar) and `AppShellMain` (pages). Scheme A tokens apply on the AppShell, not a separate Bootstrap frame. Navbar and main share one card: same width, fused corners. The header is **in document flow** (not `position: sticky` / `fixed`) so it never overlays the game banner or other content. Main padding is content padding only; do not rely on an AppShell header offset.
+- Icons use `DashIconify` (Tabler). Bootstrap Icons is not loaded. Report page-delete buttons created in JS use an inline SVG.
 - Tables & Alignment Rules (strictly unified across `dmc.Table` and `dag.AgGrid`):
-  - **Left Align (靠左對齊)**: `Player`, `Lineup`, `Lineups`, `Team` (single team name in Box Score).
-  - **Center Align (置中對齊)**: `Home Team`, `Away Team`, `Venue`, `Game Type`, `Status`, `Score`.
-  - **Right Align (靠右對齊)**: `Time`, `Min`, `+/-`, `PM`, `PTS`, `REB`, `AST`, `TOV`, `STL`, `BLK`, `PF`, `OR`, `DR`, `2PM-A (%)`, `3PM-A (%)`, `FTM-A (%)`, `eFG%`, `USG%`, `Poss`, `Pace`, `PPP`, `ORB%`, `TOV%`, `FT-R`, `PIPM-A`, `PIP`, `SCPM-A`, `SCP`, `FBP`, `POT`, `BP` and all numeric/time statistics.
-  - Header cells and data cells must strictly share the identical alignment for every column.
+  - Every header cell and data cell is **center-aligned**, including `Time`, `Player`, `Lineup`, `Lineups`, `Team`, and all numeric / time statistics.
+  - Header cells and data cells must share the identical alignment for every column.
   - Team summary tables have a 3.5px left indicator bar (Home: `#0077b6`, Away: `#94a3b8`).
   - Player detail tables prefixed with 8px dot (Home: `#00b4d8`, Away: `#94a3b8`).
+- Four states for every data view: loading (`dmc.Skeleton`), empty (English copy plus a next step), error (`dmc.Alert`, recoverable, no traceback), success (the table or chart).
 - Responsive Layout (RWD):
-  - **Mobile (≤ 768px)**: Canvas `padding: 0`, Device Frame full bleed (`border-radius: 0; border: none; box-shadow: none;`), content `padding: 12px`, Tabs single-row smooth horizontal scrolling (`overflow-x: auto`), data tables support horizontal swipe with sticky first column.
-  - **Tablet (769px ~ 1024px)**: Canvas `padding: 12px`, Device Frame `border-radius: 12px`.
-  - **Desktop (> 1024px)**: Canvas `padding: 24px`, Device Frame `max-width: 1440px`, `border-radius: 14px`, floating shadow `0 8px 30px rgba(15, 23, 42, 0.15)`.
+  - **Mobile (≤ 768px)**: AppShell full bleed (`border-radius: 0; border: none; box-shadow: none;`), main `padding: 12px`, Tabs single-row smooth horizontal scrolling (`overflow-x: auto`).
+  - Data tables (`dmc.Table` and `dag.AgGrid`) never clip columns. Box Score quarter and key-stat cards stack to one column below the `lg` breakpoint (~1200px). When a table is wider than its card, the first column stays sticky and the sheet pans horizontally: touch / trackpad native swipe, desktop mouse click-drag. `cursor: grab` / `grabbing` only if `scrollWidth > clientWidth`; tables that fit keep the default cursor. No overflow fade. Scrollbars are hidden (`scrollbar-width: none`). A drag that moved the sheet does not fire the following click (no sort, no score navigation). Do not hide columns to fit. Home schedule uses the same pan.
+  - **Tablet (769px ~ 1024px)**: AppShell outer margin `12px`, `border-radius: 12px`.
+  - **Desktop (> 1024px)**: AppShell outer margin `24px`, `max-width: 1440px`, `border-radius: 14px`, floating shadow `0 8px 30px rgba(15, 23, 42, 0.15)`.
 
 ## Pages
 
 ### Home `/`
 
-- Show `Loading...`, then load the current-season schedule asynchronously.
+- Show `dmc.Skeleton` while the current-season schedule loads.
 - Rendered via `dag.AgGrid` (`ag-theme-alpine braves-clean-ag-grid`) with `domLayout="autoHeight"` (no pagination), sortable and filterable columns.
 - Columns: Time, Status, Game Type, Venue, Home Team, Score, Away Team.
-- **Status 欄位**：
-  - `FINISHED` / `CONFIRMED`: 沉穩淡灰徽章 (`#f1f5f9` + `#475569`)。
-  - `IN_PROGRESS`: 高亮珊瑚紅徽章 (`#fee2e2` + `#dc2626`)。
-  - `PENDING`: 醒目青藍光環徽章 (`#e0f2fe` + `#0284c7`)。
-- **Score 欄位**：
-  - 完賽/進行中：顯示實時比分 `[88 : 79](/game/<fixtureId>)`。
-  - 未開賽 (`PENDING`)：顯示 `[- : -](/game/<fixtureId>)`。
-- **互動導航**：點擊賽程列任一處或比分連結，均可直達該場賽事頁面 `/game/<fixtureId>`。
-- On Synergy failure: `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception).
-- When the season list is empty: `No games available.`
+- **Status 欄位**：badge **color is the bucket**; **label is the raw API `status`** (strip, no rewrite). `IN_PROGRESS` stays `IN_PROGRESS` (not `LIVE`). Empty status shows `UNKNOWN`.
+  - Unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty): cyan (`#e0f2fe` + `#0284c7`).
+  - Live-play (`PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS`): coral (`#fee2e2` + `#dc2626`).
+  - Finished (`FINISHED`, `CONFIRMED`): gray (`#f1f5f9` + `#475569`).
+  - Void (`CANCELLED`, `BYE`, `ABANDONED`): colder gray (`#e2e8f0` + `#334155`).
+- **Score 欄位** (Home schedule redesign of Time format and row chrome is later; this score contract is in effect now):
+  - Finished and live-play, and `ABANDONED`: clickable. Numeric scores (including `0`) render `88 : 79` as a link to `/game/<fixtureId>`. Missing scores render `vs` as that link. Never fabricate `- : -` or `0 : 0`.
+  - Unplayed and void except `ABANDONED`: **not** a link. Display `—` (em dash). No colon.
+- **互動導航**：Score links above are the current path into `/game/<fixtureId>`. **Whole-row click is deferred** to the later Home schedule redesign.
+- On Synergy failure: `dmc.Alert` with `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception).
+- When the season list is empty: `No games available.` Next step: `Check back when the season schedule is published.`
 
 ### Game `/game/<game_id>`
 
-Top tabs, left to right (rendered via DMC `dmc.Tabs` with `variant="pills"` and Dark Liquid Glass container):
+Top tabs, left to right, rendered via `dmc.Tabs` with Scheme A chrome (top radius 10px, active tab `linear-gradient(135deg, #0077b6, #00b4d8)` and white text). Tab icons use `DashIconify` (Tabler).
 
 1. Box Score (tab_id: `tab-bs`)
 2. Rotation (tab_id: `tab-rotation`)
 3. Play-By-Play (tab_id: `tab-pbp`)
 4. Lineup Stats (tab_id: `tab-lineup`)
-5. Report (tab_id: `tab-report`) — **finished games only**. Live games (`IN_PROGRESS`, `PENDING`, unknown, empty) do not show the Report tab (`display: none`). If the status is live while Report is active, switch to Box Score.
+5. Report (tab_id: `tab-report`) — **finished games only** (`FINISHED`, `CONFIRMED`). Every other status hides the Report tab (`display: none`). If Report is active while the status is not finished, switch to Box Score.
 
 Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab render callbacks gate on `Input('tabs', 'value')`, return `no_update`, and do not rebuild children.
 - Quarter tables (points, fouls, timeouts) and team summary tables (four factors, advanced stats, key stats) are rendered via DMC `dmc.Table` (with `dmc.SimpleGrid` for responsive quarter stats layout).
 - Player Stats and Lineup Stats tables use `dag.AgGrid` with `domLayout="autoHeight"` and sortable/filterable columns for interactive exploration.
 - Report canvas tables strictly use `dmc.Table` (per ADR 0001) for stable A4 rendering and PDF export. No `dbc.Table`, `dbc.Row`, or `dbc.Col` is used anywhere in the codebase.
+- Box Score quarter and team summary tables use `dmc.TableThead` / `dmc.TableTh` / `dmc.TableTd` (not raw `html.Th`).
+- Loading uses `dmc.Skeleton`. Empty copy is `No data available.` Next step: `Open another game from Home.` Error uses `dmc.Alert` with `Failed to load this view. Please try again later.` (no traceback).
+- The game banner date is ISO `YYYY-MM-DD`. The banner status badge uses the same bucket colors and raw `status` label as Home (not `● LIVE`).
 
 A `dcc.Store` that is `None` or invalid JSON is treated as an empty object. Callbacks must not crash.
 
-## Finished vs live
+## Fixture status buckets
 
-- Finished statuses: `FINISHED`, `CONFIRMED` (compared after strip).
-- Every other status (`IN_PROGRESS`, `PENDING`, unknown, empty) is live.
-- Finished games:
-  - use official routes (URL has **no** `/live` suffix)
-  - freeze the report cache (no TTL rebuild)
-  - disable the Game-page interval
-- Live games:
-  - use `/live` routes (except fixture roster and org persons/entities/venues)
-  - UI interval = 30 seconds
-  - PBP HTTP cache and live report cache = 25 seconds
-  - Play-By-Play and Rotation share that cadence
+Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. Unknown/empty is **unplayed**.
+
+| Bucket | Statuses | `/live` | Game interval | Report tab | Home score |
+|---|---|---|---|---|---|
+| Unplayed | `SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown, empty | no | off | hidden | `—`, not a link |
+| Live-play | `PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS` | yes | 30s | hidden | link: `H : A` or `vs` |
+| Finished | `FINISHED`, `CONFIRMED` | no | off | shown | link: `H : A` or `vs` |
+| Void | `CANCELLED`, `BYE` | no | off | hidden | `—`, not a link |
+| Void (`ABANDONED`) | `ABANDONED` | no | off | hidden | link: `H : A` or `vs` |
+
+- Finished games freeze the report cache (no TTL rebuild).
+- Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play and Rotation share that cadence.
+- Unplayed and void use official routes and do not poll.
+
+## Deferred (later discussion)
+
+- Home `Time` display format and schedule-table visual redesign.
+- Whole-row click on Home to open `/game/<fixtureId>`.
+- Report canvas DMC-ification beyond toolbar icons (`html.Th` / GridStack cloneNode).
 
 ## Background warmup and prefetch
 
@@ -101,11 +115,11 @@ Throw away the previous Report canvas (Sortable, `window.print()` as the primary
 ### Paper and chrome
 
 - Paper is A4 **landscape** (297mm × 210mm). Opaque white. No glass, no blur.
-- Editor chrome (toolbar, page list, add-block palette, block handles, page-delete) uses Liquid glass. Other tabs and the navbar stay LITERA.
-- Toolbar has no "Report" title. Add note, Add image, Add table, and Reset layout are Bootstrap Icons (`bi-journal-text`, `bi-image`, `bi-table`, `bi-arrow-counterclockwise`) with `aria-label` `Add note` / `Add image` / `Add table` / `Reset layout`. Add table opens a Liquid-glass menu of builtin tables (Player Stats before Lineup Stats). PDF stays a text button.
+- Editor chrome (toolbar, page list, add-block palette, block handles, page-delete) uses Liquid glass. Other tabs and the navbar use Scheme A inside `dmc.AppShell`.
+- Toolbar has no "Report" title. Add note, Add image, Add table, and Reset layout are `DashIconify` Tabler icons (`tabler:notebook`, `tabler:photo`, `tabler:table`, `tabler:restore`) with `aria-label` `Add note` / `Add image` / `Add table` / `Reset layout`. Add table opens a Liquid-glass menu of builtin tables (Player Stats before Lineup Stats). PDF stays a text button.
 - The toolbar is the same width as one A4 paper (297mm) and left-aligned with the papers. The page list sits to the right of that column; do not center the toolbar independently of the paper.
 - Reset layout asks `Reset to the default layout? This cannot be undone.` with `Cancel` / `Reset`. Confirming replaces the canvas with `default_layout` and writes that JSON to `localStorage`. Stored layouts are not auto-discarded.
-- Bootstrap Icons load for the app but are **used only on Report editor chrome** (toolbar and the page-delete control). Do not put icons on other tabs.
+- Icons across the app use `DashIconify` (Tabler). The Report page-delete control that JS inserts uses an inline SVG. Bootstrap Icons is not loaded.
 - Toolbar and page list are `position: sticky` so they stay visible while the papers scroll. The Add table menu stacks above the paper (`z-index`).
 - Every page has a **header template** that is not a block and cannot be dragged. The header is compact (small type, little padding) so the grid gets the rest of the 210mm:
   1. Away name, away score, `@`, home score, home name

@@ -12,7 +12,12 @@ from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
     get_cached_report,
-    is_finished_status,
+)
+from synergy_inbounder.game_status import (
+    BADGE_STYLES,
+    badge_label,
+    is_live_play_status,
+    status_bucket,
 )
 from synergy_reporter.report_components import (
     lineup_tables_for_size,
@@ -23,6 +28,15 @@ from synergy_reporter.report_layout import (
     report_tab_is_visible,
 )
 from synergy_reporter.rotation import build_rotation_figure
+from ui_kit import (
+    EMPTY_GAME,
+    EMPTY_GAME_NEXT,
+    ERROR_GAME,
+    empty_state,
+    error_alert,
+    icon,
+    loading_skeleton,
+)
 
 register_page(
     __name__,
@@ -38,20 +52,19 @@ def layout(game_id=None):
         # Game Info Banner Card (visible across all tabs)
         html.Div(id='game-info-banner-wrap'),
 
-        # Upper Tabs (DMC Tabs with Dark Liquid Glass container, sticky below 56px Navbar)
         dmc.Tabs(
             [
                 dmc.TabsList(
                     [
-                        dmc.TabsTab("Box Score", value="tab-bs", leftSection=html.I(className="bi bi-table")),
-                        dmc.TabsTab("Rotation", value="tab-rotation", leftSection=html.I(className="bi bi-bar-chart-steps")),
-                        dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=html.I(className="bi bi-list-ol")),
-                        dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=html.I(className="bi bi-people")),
+                        dmc.TabsTab("Box Score", value="tab-bs", leftSection=icon("tabler:table", width=14)),
+                        dmc.TabsTab("Rotation", value="tab-rotation", leftSection=icon("tabler:chart-bar", width=14)),
+                        dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
+                        dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=icon("tabler:users", width=14)),
                         dmc.TabsTab(
                             "Report",
                             value="tab-report",
                             id="report-tab",
-                            leftSection=html.I(className="bi bi-file-earmark-richtext"),
+                            leftSection=icon("tabler:file-text", width=14),
                             style={"display": "none"},
                         ),
                     ],
@@ -68,18 +81,15 @@ def layout(game_id=None):
             }
         ),
         
-        # Lineup SegmentedControl Container
         html.Div([
             dmc.Group(
                 [
-                    html.Span(
+                    dmc.Text(
                         "COMBINATION:",
-                        style={
-                            "fontSize": "11px",
-                            "fontWeight": 700,
-                            "letterSpacing": "0.05em",
-                            "color": "#64748b",
-                        }
+                        size="xs",
+                        fw=700,
+                        c="dimmed",
+                        style={"letterSpacing": "0.05em"},
                     ),
                     dmc.SegmentedControl(
                         id='lineup_size_dropdown',
@@ -92,36 +102,50 @@ def layout(game_id=None):
                         value='5',
                         radius="md",
                         size="xs",
-                        color="blue",
                     ),
                 ],
                 gap="10px",
                 align="center",
-                style={"marginBottom": "12px"}
+                mb="sm",
             )
         ], id='lineup_dropdown_container', style={'display': 'none'}),
 
         html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-bs')),
+            dcc.Loading(
+                custom_spinner=loading_skeleton('cards'),
+                children=html.Div(id='pane-bs', children=loading_skeleton('cards')),
+            ),
             id='wrap-bs',
         ),
         html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-rotation')),
+            dcc.Loading(
+                custom_spinner=loading_skeleton('chart'),
+                children=html.Div(id='pane-rotation', children=loading_skeleton('chart')),
+            ),
             id='wrap-rotation',
             style={'display': 'none'},
         ),
         html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-pbp')),
+            dcc.Loading(
+                custom_spinner=loading_skeleton(),
+                children=html.Div(id='pane-pbp', children=loading_skeleton()),
+            ),
             id='wrap-pbp',
             style={'display': 'none'},
         ),
         html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-lineup')),
+            dcc.Loading(
+                custom_spinner=loading_skeleton(),
+                children=html.Div(id='pane-lineup', children=loading_skeleton()),
+            ),
             id='wrap-lineup',
             style={'display': 'none'},
         ),
         html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-report')),
+            dcc.Loading(
+                custom_spinner=loading_skeleton(),
+                children=html.Div(id='pane-report', children=loading_skeleton()),
+            ),
             id='wrap-report',
             style={'display': 'none'},
         ),
@@ -155,7 +179,7 @@ def update_bs_store(n, game_id):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
-        return json.dumps({})
+        return _error_store()
     bs_dict = {
         'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
         'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
@@ -191,7 +215,7 @@ def update_match_info_store(n, game_id):
         dt_str = str(row['startTimeLocal'])
         try:
             dt = pd.to_datetime(dt_str)
-            date_display = dt.strftime('%Y年%m月%d日')
+            date_display = dt.strftime('%Y-%m-%d')
             time_display = dt.strftime('%H:%M')
         except Exception:
             date_display = dt_str
@@ -232,94 +256,54 @@ def render_game_info_banner(match_info_store):
     time_val = info.get('time') or ''
     venue_val = info.get('venue') or ''
     
-    is_live = status.upper() in ('LIVE', 'IN_PROGRESS', 'RUNNING')
-    badge_color = "red" if is_live else "blue"
-    badge_label = "● LIVE" if is_live else (status.upper() if status else "FINISHED")
+    bucket = status_bucket(status)
+    badge_style = {
+        'fontWeight': 700,
+        **BADGE_STYLES[bucket],
+    }
 
-    return html.Div(
+    return dmc.Paper(
         [
-            html.Div(
+            dmc.Group(
                 [
-                    html.Div(
+                    dmc.Group(
                         [
-                            html.Span(
-                                away_name,
-                                style={
-                                    "fontSize": "16px",
-                                    "fontWeight": 800,
-                                    "color": "#0f172a",
-                                }
-                            ),
-                            html.Span(
-                                f"{away_score}",
-                                style={
-                                    "fontSize": "22px",
-                                    "fontWeight": 900,
-                                    "color": "#0077b6",
-                                    "margin": "0 12px 0 10px",
-                                }
-                            ),
-                            html.Span(
-                                "vs",
-                                style={
-                                    "fontSize": "13px",
-                                    "fontWeight": 700,
-                                    "color": "#94a3b8",
-                                    "marginRight": "12px",
-                                }
-                            ),
-                            html.Span(
-                                f"{home_score}",
-                                style={
-                                    "fontSize": "22px",
-                                    "fontWeight": 900,
-                                    "color": "#0077b6",
-                                    "marginRight": "10px",
-                                }
-                            ),
-                            html.Span(
-                                home_name,
-                                style={
-                                    "fontSize": "16px",
-                                    "fontWeight": 800,
-                                    "color": "#0f172a",
-                                }
-                            ),
+                            dmc.Text(away_name, fw=800, fz="16px"),
+                            dmc.Text(str(away_score), fw=900, fz="22px", c="#0077b6"),
+                            dmc.Text("vs", fw=700, fz="13px", c="dimmed"),
+                            dmc.Text(str(home_score), fw=900, fz="22px", c="#0077b6"),
+                            dmc.Text(home_name, fw=800, fz="16px"),
                         ],
-                        style={"display": "flex", "alignItems": "center"}
+                        gap="sm",
+                        align="center",
                     ),
                     dmc.Badge(
-                        badge_label,
-                        color=badge_color,
+                        badge_label(status),
                         variant="light",
                         size="md",
                         radius="sm",
-                        style={"fontWeight": 700}
+                        style=badge_style,
                     ),
                 ],
-                style={
-                    "display": "flex",
-                    "alignItems": "center",
-                    "justifyContent": "space-between",
-                    "flexWrap": "wrap",
-                    "gap": "10px",
-                    "marginBottom": "4px",
-                }
+                justify="space-between",
+                align="center",
+                wrap="wrap",
+                gap="sm",
+                mb=4,
             ),
-            html.Div(
+            dmc.Text(
                 " • ".join(p for p in (date_val, time_val, venue_val) if p),
-                style={"fontSize": "12px", "color": "#64748b", "fontWeight": 500}
-            )
+                size="xs",
+                c="dimmed",
+                fw=500,
+            ),
         ],
+        withBorder=True,
+        radius="md",
+        p="md",
+        mb="md",
+        shadow="xs",
         className="braves-card-wrapper game-info-banner",
-        style={
-            "backgroundColor": "#ffffff",
-            "borderRadius": "10px",
-            "border": "1px solid #e2e8f0",
-            "boxShadow": "0 1px 3px rgba(0,0,0,0.03)",
-            "padding": "12px 18px",
-            "marginBottom": "16px",
-        }
     )
 
 @callback(
@@ -328,7 +312,7 @@ def render_game_info_banner(match_info_store):
 )
 def set_interval_disabled(match_info_store):
     info = safe_loads(match_info_store)
-    return is_finished_status(info.get('status'))
+    return not is_live_play_status(info.get('status'))
 
 
 @callback(
@@ -357,7 +341,7 @@ def update_pbp_store(n, game_id):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading play-by-play: {exc}")
-        return json.dumps({})
+        return _error_store()
     return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
 
 @callback(
@@ -374,7 +358,7 @@ def update_lineup_store(n, game_id):
         warmup_game_report(game_id)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
-        return json.dumps({})
+        return _error_store()
     return json.dumps(report.get_all_lineup_stats_json_dict(sizes=(5,)))
 
 @callback(
@@ -393,7 +377,7 @@ def update_rotation_store(n, game_id, active_tab, match_info_store):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading rotation: {exc}")
-        return json.dumps({})
+        return _error_store()
     info = safe_loads(match_info_store)
     return json.dumps(report.get_rotation_payload(
         home_team_id=info.get('home_team_id'),
@@ -414,22 +398,30 @@ def safe_loads(val):
             return parsed
     return {}
 
+def _error_store(message=None):
+    return json.dumps({
+        '_ui': 'error',
+        'message': message or ERROR_GAME,
+    })
+
+
 def _last_update_span():
-    return html.Span(
+    return dmc.Text(
         f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}',
-        className="text-muted small mb-2 d-block no-print"
+        size="sm",
+        c="dimmed",
+        mb=8,
+        className="no-print",
     )
 
 
-def _loading_placeholder():
-    return html.Div("Loading...", className="p-4 text-center text-muted")
+def _empty_view():
+    return empty_state(EMPTY_GAME, EMPTY_GAME_NEXT)
 
 
-def _align_from_header(col):
-    col_str = str(col).lower()
-    if 'player' in col_str or 'lineup' in col_str or 'team' in col_str:
-        return "right"
-    return "center"
+def _error_view(payload=None):
+    data = payload if isinstance(payload, dict) else safe_loads(payload)
+    return error_alert(data.get('message') or ERROR_GAME)
 
 
 def _parse_numeric_stat(val):
@@ -473,10 +465,7 @@ def _parse_numeric_stat(val):
 
 def _dmc_table_from_df(df, is_team_summary=True, title=None):
     if df is None or df.empty:
-        return html.Div("—", className="text-muted fst-italic text-center p-2")
-    
-    def _align(col):
-        return "center"
+        return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
 
     # Precalculate winning values for each column across rows (team summary tables have 2 rows: Home vs Away)
     is_timeouts_card = bool(title and 'timeout' in title.lower())
@@ -503,9 +492,9 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
         sub_row = []
         for col in ('Team', 'Min'):
             if col in df.columns:
-                top_row.append(html.Th(
+                top_row.append(dmc.TableTh(
                     col.upper(),
-                    rowSpan=2,
+                    tableProps={"rowSpan": 2},
                     style={
                         "textAlign": "center",
                         "verticalAlign": "middle",
@@ -520,42 +509,42 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                 ))
 
         if any(c in df.columns for c in ('2M', '2A', '2FG%')):
-            top_row.append(html.Th("2PT", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            top_row.append(dmc.TableTh("2PT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
-                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
 
         if any(c in df.columns for c in ('3M', '3A', '3FG%')):
-            top_row.append(html.Th("3PT", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            top_row.append(dmc.TableTh("3PT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
-                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
 
         if any(c in df.columns for c in ('FTM', 'FTA', 'FT%')):
-            top_row.append(html.Th("FT", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            top_row.append(dmc.TableTh("FT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
-                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
 
         if any(c in df.columns for c in ('OR', 'DR', 'REB')):
-            top_row.append(html.Th("REB", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            top_row.append(dmc.TableTh("REB", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
-                html.Th("O", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("D", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("T", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("O", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("D", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("T", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
 
         for col in ('AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
-                top_row.append(html.Th(
+                top_row.append(dmc.TableTh(
                     col,
-                    rowSpan=2,
+                    tableProps={"rowSpan": 2},
                     style={
                         "textAlign": "center",
                         "verticalAlign": "middle",
@@ -568,14 +557,14 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                         "whiteSpace": "nowrap",
                     }
                 ))
-        header = [html.Tr(top_row), html.Tr(sub_row)]
+        header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif has_key_stats_grouped:
         top_row = []
         sub_row = []
         if 'Team' in df.columns:
-            top_row.append(html.Th(
+            top_row.append(dmc.TableTh(
                 "TEAM",
-                rowSpan=2,
+                tableProps={"rowSpan": 2},
                 style={
                     "textAlign": "center",
                     "verticalAlign": "middle",
@@ -589,24 +578,24 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                 }
             ))
         if any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP')):
-            top_row.append(html.Th("PIP", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            top_row.append(dmc.TableTh("PIP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
-                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
         if any(c in df.columns for c in ('SCPM', 'SCPA', 'SCP')):
-            top_row.append(html.Th("SCP", colSpan=3, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            top_row.append(dmc.TableTh("SCP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
-                html.Th("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                html.Th("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
         for col in ('FBP', 'POT', 'BP'):
             if col in df.columns:
-                top_row.append(html.Th(
+                top_row.append(dmc.TableTh(
                     col,
-                    rowSpan=2,
+                    tableProps={"rowSpan": 2},
                     style={
                         "textAlign": "center",
                         "verticalAlign": "middle",
@@ -619,14 +608,14 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                         "whiteSpace": "nowrap",
                     }
                 ))
-        header = [html.Tr(top_row), html.Tr(sub_row)]
+        header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R')):
         top_row = []
         sub_row = []
         if 'Team' in df.columns:
-            top_row.append(html.Th(
+            top_row.append(dmc.TableTh(
                 "TEAM",
-                rowSpan=2,
+                tableProps={"rowSpan": 2},
                 style={
                     "textAlign": "center",
                     "verticalAlign": "middle",
@@ -640,9 +629,9 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                 }
             ))
         if 'Pace' in df.columns:
-            top_row.append(html.Th(
+            top_row.append(dmc.TableTh(
                 "PACE",
-                rowSpan=2,
+                tableProps={"rowSpan": 2},
                 style={
                     "textAlign": "center",
                     "verticalAlign": "middle",
@@ -656,9 +645,9 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                 }
             ))
         if 'PPP' in df.columns:
-            top_row.append(html.Th(
+            top_row.append(dmc.TableTh(
                 "PPP",
-                rowSpan=2,
+                tableProps={"rowSpan": 2},
                 style={
                     "textAlign": "center",
                     "verticalAlign": "middle",
@@ -673,9 +662,9 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
             ))
         ff_cols = [c for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R') if c in df.columns]
         if ff_cols:
-            top_row.append(html.Th(
+            top_row.append(dmc.TableTh(
                 "4 FACTORS",
-                colSpan=len(ff_cols),
+                tableProps={"colSpan": len(ff_cols)},
                 style={
                     "textAlign": "center",
                     "padding": "4px 8px",
@@ -687,7 +676,7 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                 }
             ))
             for fc in ff_cols:
-                sub_row.append(html.Th(
+                sub_row.append(dmc.TableTh(
                     fc,
                     style={
                         "textAlign": "center",
@@ -699,10 +688,10 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
                         "backgroundColor": "#f8fafc",
                     }
                 ))
-        header = [html.Tr(top_row), html.Tr(sub_row)]
+        header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     else:
-        header = [html.Tr([
-            html.Th(
+        header = [dmc.TableTr([
+            dmc.TableTh(
                 col,
                 style={
                     "textAlign": "center",
@@ -750,58 +739,36 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
             if c_idx == 0 and team_stripe_style:
                 cell_style.update(team_stripe_style)
 
-            cells.append(html.Td(val_str, style=cell_style))
+            cells.append(dmc.TableTd(val_str, style=cell_style))
 
-        rows.append(html.Tr(
+        rows.append(dmc.TableTr(
             cells,
             className="braves-clean-row",
             style={"backgroundColor": "#ffffff"}
         ))
 
     table = dmc.Table(
-        [html.Thead(header), html.Tbody(rows)],
+        [dmc.TableThead(header), dmc.TableTbody(rows)],
         withTableBorder=False,
         withColumnBorders=False,
         className="braves-clean-table",
         style={"width": "100%"}
     )
 
+    scrolled = dmc.Box(table, className="braves-table-scroll")
+    paper_children = [scrolled]
     if title:
-        return html.Div(
-            [
-                html.Div(
-                    title.upper(),
-                    style={
-                        "fontSize": "11px",
-                        "fontWeight": 700,
-                        "letterSpacing": "0.05em",
-                        "color": "#64748b",
-                        "padding": "0 0 6px 0",
-                    }
-                ),
-                table
-            ],
-            className="braves-card-wrapper",
-            style={
-                "backgroundColor": "#ffffff",
-                "borderRadius": "10px",
-                "border": "1px solid #e2e8f0",
-                "boxShadow": "0 1px 3px rgba(0,0,0,0.03)",
-                "padding": "12px 14px",
-                "overflow": "hidden",
-            }
-        )
-    return html.Div(
-        table,
+        paper_children = [
+            dmc.Text(title.upper(), size="xs", fw=700, c="dimmed", mb=6, style={"letterSpacing": "0.05em"}),
+            scrolled,
+        ]
+    return dmc.Paper(
+        paper_children,
+        withBorder=True,
+        radius="md",
+        p="sm",
+        shadow="xs",
         className="braves-card-wrapper",
-        style={
-            "backgroundColor": "#ffffff",
-            "borderRadius": "10px",
-            "border": "1px solid #e2e8f0",
-            "boxShadow": "0 1px 3px rgba(0,0,0,0.03)",
-            "padding": "12px 14px",
-            "overflow": "hidden",
-        }
     )
 
 
@@ -861,6 +828,7 @@ def _build_stats_column_defs(columns, filterable_cols=None):
             "minWidth": 34,
             "width": 36,
             "cellRenderer": "StarterCell",
+            "cellStyle": {"textAlign": "center"},
             "cellClass": "ag-cell-align-center",
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
@@ -896,6 +864,7 @@ def _build_stats_column_defs(columns, filterable_cols=None):
             "minWidth": 46,
             "width": 48,
             "cellRenderer": "PlusMinusCell",
+            "cellStyle": {"textAlign": "center"},
             "cellClass": "ag-cell-align-center",
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
@@ -992,7 +961,7 @@ def _build_stats_column_defs(columns, filterable_cols=None):
 
 def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None):
     if df is None or df.empty:
-        return html.Div("—", className="text-muted fst-italic text-center p-2")
+        return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
     
     sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
 
@@ -1050,7 +1019,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     if pinned_bottom_data:
         dash_options["pinnedBottomRowData"] = pinned_bottom_data
 
-    return html.Div(
+    return dmc.Paper(
         dag.AgGrid(
             rowData=df.to_dict('records'),
             columnDefs=column_defs,
@@ -1059,22 +1028,21 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
             className="ag-theme-alpine braves-clean-ag-grid",
             style={'width': '100%'}
         ),
+        withBorder=True,
+        radius="md",
+        shadow="xs",
+        mb="md",
         className="braves-grid-wrap",
-        style={
-            "borderRadius": "10px",
-            "border": "1px solid #e2e8f0",
-            "overflow": "hidden",
-            "backgroundColor": "#ffffff",
-            "marginBottom": "20px",
-            "boxShadow": "0 1px 3px rgba(0,0,0,0.03)"
-        }
+        style={"overflowX": "auto"},
     )
 
 
 def render_bs_children(bs_store):
     bs_dict = safe_loads(bs_store)
+    if bs_dict.get('_ui') == 'error':
+        return [_error_view(bs_dict)]
     if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return [_last_update_span(), _loading_placeholder()]
+        return [_empty_view()]
 
     qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
     qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
@@ -1091,7 +1059,7 @@ def render_bs_children(bs_store):
 
     # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
     row1 = dmc.SimpleGrid(
-        cols={"base": 1, "sm": 3},
+        cols={"base": 1, "lg": 3},
         spacing="12px",
         children=[
             _dmc_table_from_df(qt_pts_df, is_team_summary=True, title="Score"),
@@ -1103,7 +1071,7 @@ def render_bs_children(bs_store):
 
     # Row 2: 2-column with titles 'PACE & 4 FACTORS' and 'PAINT / 2nd CHANCE / FASTBREAK / OFF TOV / BENCH' (gap 12px)
     row2 = dmc.SimpleGrid(
-        cols={"base": 1, "sm": 2},
+        cols={"base": 1, "lg": 2},
         spacing="12px",
         children=[
             _dmc_table_from_df(t_adv_df, is_team_summary=True, title="Pace & 4 Factors"),
@@ -1113,7 +1081,7 @@ def render_bs_children(bs_store):
     )
 
     # Row 3: Full Team Box Score
-    row3 = html.Div(_dmc_table_from_df(t_df, is_team_summary=True), style={"marginBottom": "12px"})
+    row3 = dmc.Box(_dmc_table_from_df(t_df, is_team_summary=True), mb="sm")
 
     children = [
         _last_update_span(),
@@ -1126,28 +1094,20 @@ def render_bs_children(bs_store):
     p_summary = bs_dict.get('p_summary_dict', {})
     for idx, (team_name, p_json) in enumerate(sorted(p_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
-        title_section = html.Div(
+        title_section = dmc.Group(
             [
-                html.Span(
-                    style={
-                        "display": "inline-block",
-                        "width": "8px",
-                        "height": "8px",
-                        "borderRadius": "50%",
-                        "backgroundColor": dot_color,
-                        "marginRight": "8px",
-                    }
-                ),
-                html.Span(
-                    team_name,
-                    style={
-                        "fontSize": "16px",
-                        "fontWeight": 800,
-                        "color": "#0f172a",
-                    }
-                ),
+                dmc.Box(style={
+                    "width": "8px",
+                    "height": "8px",
+                    "borderRadius": "50%",
+                    "backgroundColor": dot_color,
+                }),
+                dmc.Text(team_name, fw=800, fz="16px"),
             ],
-            style={"display": "flex", "alignItems": "center", "margin": "20px 0 10px 2px"}
+            gap=8,
+            align="center",
+            mt="md",
+            mb=10,
         )
         children.append(title_section)
         p_df = pd.read_json(io.StringIO(p_json), orient='split')
@@ -1158,8 +1118,10 @@ def render_bs_children(bs_store):
 
 def render_rotation_children(rotation_store):
     payload = safe_loads(rotation_store)
+    if payload.get('_ui') == 'error':
+        return [_error_view(payload)]
     if not payload or not payload.get('teams'):
-        return [_last_update_span(), _loading_placeholder()]
+        return [_empty_view()]
     fig = build_rotation_figure(payload)
     return [
         _last_update_span(),
@@ -1176,24 +1138,34 @@ def render_rotation_children(rotation_store):
 
 
 def render_pbp_children(pbp_store):
-    if not pbp_store or pbp_store == "{}" or pbp_store == '"{}"':
-        return [_last_update_span(), _loading_placeholder()]
+    payload = safe_loads(pbp_store)
+    if payload.get('_ui') == 'error':
+        return [_error_view(payload)]
+    if not payload or 'columns' not in payload:
+        return [_empty_view()]
     pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
-    team_name_list = pbp_df['Team'].dropna().unique()
+    if pbp_df.empty:
+        return [_empty_view()]
+    team_name_list = pbp_df['Team'].dropna().unique() if 'Team' in pbp_df.columns else []
     col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores']
     col_list.extend(team_name_list)
     col_list = [c for c in col_list if c in pbp_df.columns]
     pbp_df = pbp_df[col_list][::-1]
     grid = dag.AgGrid(
         rowData=pbp_df.to_dict('records'),
-        columnDefs=[{"field": c} for c in pbp_df.columns],
+        columnDefs=[{
+            "field": c,
+            "headerClass": "ag-header-align-center",
+            "cellClass": "ag-cell-align-center",
+            "cellStyle": {"textAlign": "center"},
+        } for c in pbp_df.columns],
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
         dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
         columnSize="autoSize",
         className="ag-theme-alpine braves-clean-ag-grid",
         style={'width': '100%'}
     )
-    return [_last_update_span(), grid]
+    return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
 def render_lineup_children(lineup_store, lineup_size=5):
@@ -1201,35 +1173,30 @@ def render_lineup_children(lineup_store, lineup_size=5):
         size_int = int(lineup_size)
     except Exception:
         size_int = 5
+    payload = safe_loads(lineup_store)
+    if payload.get('_ui') == 'error':
+        return [_error_view(payload)]
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict:
-        return [_last_update_span(), _loading_placeholder()]
+        return [_empty_view()]
     children = [_last_update_span()]
     page_size = 20 if size_int < 5 else None
     for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
-        title_section = html.Div(
+        title_section = dmc.Group(
             [
-                html.Span(
-                    style={
-                        "display": "inline-block",
-                        "width": "8px",
-                        "height": "8px",
-                        "borderRadius": "50%",
-                        "backgroundColor": dot_color,
-                        "marginRight": "8px",
-                    }
-                ),
-                html.Span(
-                    team_name,
-                    style={
-                        "fontSize": "16px",
-                        "fontWeight": 800,
-                        "color": "#0f172a",
-                    }
-                ),
+                dmc.Box(style={
+                    "width": "8px",
+                    "height": "8px",
+                    "borderRadius": "50%",
+                    "backgroundColor": dot_color,
+                }),
+                dmc.Text(team_name, fw=800, fz="16px"),
             ],
-            style={"display": "flex", "alignItems": "center", "margin": "20px 0 10px 2px"}
+            gap=8,
+            align="center",
+            mt="md",
+            mb=10,
         )
         children.append(title_section)
         l_df = pd.read_json(io.StringIO(l_json), orient='split')
@@ -1241,8 +1208,10 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
     bs_dict = safe_loads(bs_store) if bs_store else {}
     match_info = safe_loads(match_info_store) if match_info_store else {}
     layout = default_layout(match_info)
+    if bs_dict.get('_ui') == 'error':
+        return [_error_view(bs_dict)]
     if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return [_last_update_span(), _loading_placeholder()]
+        return [_empty_view()]
     return [
         _last_update_span(),
         render_report_workspace(layout, bs_dict, lineup_store, match_info, game_id),
@@ -1336,7 +1305,7 @@ def update_pane_report(active_tab, bs_store, lineup_store, match_info_store, gam
         import traceback
         traceback.print_exc()
         print(f"Error rendering report: {exc}")
-        return [_last_update_span(), html.Div(str(exc), className="p-4 text-danger")]
+        return [_error_view({'_ui': 'error', 'message': ERROR_GAME})]
 
 
 clientside_callback(

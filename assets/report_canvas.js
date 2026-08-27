@@ -341,7 +341,7 @@
         btn.setAttribute('data-delete-page', String(index));
         btn.setAttribute('aria-label', 'Delete page');
         btn.title = 'Delete page';
-        btn.innerHTML = '<i class="bi bi-x-lg" aria-hidden="true"></i>';
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>';
         return btn;
     }
 
@@ -1782,29 +1782,18 @@ var dagFuncs = window.dashAgGridFunctions = window.dashAgGridFunctions || {};
 var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
 
 dagComponentFuncs.ScheduleStatusBadge = function (props) {
-    var status = (props.value || '').trim();
-    var cls = 'schedule-badge schedule-badge-finished';
-    var text = status || 'UNKNOWN';
-    if (status === 'PENDING') {
-        cls = 'schedule-badge schedule-badge-pending';
-        text = 'PENDING';
-    } else if (status === 'IN_PROGRESS') {
-        cls = 'schedule-badge schedule-badge-live';
-        text = 'LIVE 🔴';
-    } else if (status === 'FINISHED' || status === 'CONFIRMED') {
-        cls = 'schedule-badge schedule-badge-finished';
-        text = status;
-    }
-    return React.createElement('span', { className: cls }, text);
+    var status = (props.value || '').trim() || 'UNKNOWN';
+    var bucket = (props.data && props.data.statusBucket) || 'unplayed';
+    var cls = 'schedule-badge schedule-badge-' + bucket;
+    return React.createElement('span', { className: cls }, status);
 };
 
 dagComponentFuncs.ScheduleScoreLink = function (props) {
     var row = props.data || {};
-    var status = (row.rawStatus || '').trim();
     var fixtureId = row.fixtureId || '';
-    var text = props.value || '- : -';
-    if (status === 'PENDING') {
-        text = '- : -';
+    var text = props.value || '—';
+    if (!row.scoreClickable) {
+        return React.createElement('span', { className: 'schedule-score-plain' }, text);
     }
     return React.createElement('a', {
         href: '/game/' + fixtureId,
@@ -1894,5 +1883,118 @@ dagComponentFuncs.StarterCell = function (props) {
             }, 120);
         }
     }, true);
+})();
+
+(function bindTablePan() {
+    var MOVE_PX = 4;
+
+    function scrollerFor(host) {
+        if (host.classList.contains('braves-table-scroll')) {
+            return host;
+        }
+        return host.querySelector('.ag-center-cols-viewport');
+    }
+
+    function updateScrollable(host, scroller) {
+        if (!host || !scroller) {
+            return;
+        }
+        var on = scroller.scrollWidth > scroller.clientWidth + 1;
+        host.classList.toggle('is-scrollable', on);
+        scroller.classList.toggle('is-scrollable', on);
+    }
+
+    function bindHost(host) {
+        if (!host || host.closest('.report-paper, .report-workspace')) {
+            return;
+        }
+        var scroller = scrollerFor(host);
+        if (!scroller) {
+            return;
+        }
+        if (host.dataset.tablePanBound === '1') {
+            updateScrollable(host, scroller);
+            return;
+        }
+        host.dataset.tablePanBound = '1';
+        var dragging = false;
+        var moved = false;
+        var startX = 0;
+        var startScroll = 0;
+        updateScrollable(host, scroller);
+
+        host.addEventListener('mousedown', function (event) {
+            if (event.button !== 0) {
+                return;
+            }
+            if (!host.classList.contains('is-scrollable')) {
+                return;
+            }
+            if (event.target.closest('.ag-header, .ag-header-cell-resize, button, input, textarea, [contenteditable="true"]')) {
+                return;
+            }
+            dragging = true;
+            moved = false;
+            startX = event.clientX;
+            startScroll = scroller.scrollLeft;
+            host.classList.add('is-dragging');
+            scroller.classList.add('is-dragging');
+            event.preventDefault();
+        });
+
+        window.addEventListener('mousemove', function (event) {
+            if (!dragging) {
+                return;
+            }
+            var dx = event.clientX - startX;
+            if (Math.abs(dx) >= MOVE_PX) {
+                moved = true;
+            }
+            scroller.scrollLeft = startScroll - dx;
+            if (moved) {
+                event.preventDefault();
+            }
+        });
+
+        window.addEventListener('mouseup', function () {
+            if (!dragging) {
+                return;
+            }
+            dragging = false;
+            host.classList.remove('is-dragging');
+            scroller.classList.remove('is-dragging');
+            if (moved) {
+                host.dataset.panMoved = '1';
+            }
+        });
+
+        host.addEventListener('click', function (event) {
+            if (host.dataset.panMoved === '1') {
+                event.preventDefault();
+                event.stopPropagation();
+                host.dataset.panMoved = '';
+            }
+        }, true);
+    }
+
+    function scan() {
+        document.querySelectorAll('.braves-table-scroll').forEach(bindHost);
+        document.querySelectorAll('.ag-theme-alpine.braves-clean-ag-grid').forEach(bindHost);
+    }
+
+    var observer = new MutationObserver(scan);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+        if (resizeTimer) {
+            clearTimeout(resizeTimer);
+        }
+        resizeTimer = setTimeout(scan, 200);
+    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scan);
+    } else {
+        scan();
+    }
 })();
 
