@@ -70,8 +70,8 @@ def layout(game_id=None):
                     [
                         dmc.TabsTab("Box Score", value="tab-bs", leftSection=icon("tabler:table", width=14)),
                         dmc.TabsTab("Rotation", value="tab-rotation", leftSection=icon("tabler:chart-bar", width=14)),
-                        dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
                         dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=icon("tabler:users", width=14)),
+                        dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
                         dmc.TabsTab(
                             "Report",
                             value="tab-report",
@@ -701,7 +701,23 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
     )
 
 
-def _build_stats_column_defs(columns, filterable_cols=None):
+LINEUP_COL_SIZES = {
+    2: (140, 150),
+    3: (180, 190),
+    4: (220, 230),
+    5: (260, 270),
+}
+
+
+def _lineup_col_size(lineup_size):
+    try:
+        size = int(lineup_size)
+    except Exception:
+        size = 5
+    return LINEUP_COL_SIZES.get(size, LINEUP_COL_SIZES[5])
+
+
+def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     col_set = set(columns)
     column_defs = []
 
@@ -736,15 +752,25 @@ def _build_stats_column_defs(columns, filterable_cols=None):
             "pinned": "left",
             "sortable": True,
             "filter": has_filter,
-            "minWidth": 260 if is_lineup else 95,
             "cellStyle": {"textAlign": "center", "fontWeight": "700"},
             "cellClass": "ag-cell-align-center",
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
         }
         if is_lineup:
-            col_def["flex"] = 1
+            min_w, width = _lineup_col_size(lineup_size)
+            col_def["minWidth"] = min_w
+            col_def["width"] = width
+            col_def["wrapText"] = True
+            col_def["autoHeight"] = True
+            col_def["cellStyle"] = {
+                "textAlign": "center",
+                "fontWeight": "700",
+                "whiteSpace": "normal",
+                "lineHeight": "1.3",
+            }
         else:
+            col_def["minWidth"] = 95
             col_def["width"] = 95
         column_defs.append(col_def)
 
@@ -888,7 +914,7 @@ def _build_stats_column_defs(columns, filterable_cols=None):
     return column_defs
 
 
-def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None):
+def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None, lineup_size=5):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
     
@@ -896,7 +922,11 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
 
     # If standard basketball stats table (2PT/3PT/FT breakdown present), use multi-level grouped columns
     if any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%')):
-        column_defs = _build_stats_column_defs(df.columns, filterable_cols=filterable_cols)
+        column_defs = _build_stats_column_defs(
+            df.columns,
+            filterable_cols=filterable_cols,
+            lineup_size=lineup_size,
+        )
     else:
         column_defs = []
         for c_idx, c in enumerate(df.columns):
@@ -910,8 +940,9 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
 
             col_width_props = {}
             if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
-                col_width_props["minWidth"] = 260
-                col_width_props["flex"] = 1
+                min_w, width = _lineup_col_size(lineup_size)
+                col_width_props["minWidth"] = min_w
+                col_width_props["width"] = width
             elif c in ('Player', 'Team'):
                 col_width_props["minWidth"] = 90
                 col_width_props["width"] = 95
@@ -936,6 +967,14 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                 "cellClassRules": sorted_cell_rules,
                 **col_width_props
             }
+            if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
+                col_def['wrapText'] = True
+                col_def['autoHeight'] = True
+                col_def['cellStyle'] = {
+                    **cell_style,
+                    'whiteSpace': 'normal',
+                    'lineHeight': '1.3',
+                }
             column_defs.append(col_def)
 
     dash_options = {
@@ -948,13 +987,16 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     if pinned_bottom_data:
         dash_options["pinnedBottomRowData"] = pinned_bottom_data
 
+    grid_class = "ag-theme-alpine braves-clean-ag-grid"
+    if any('lineup' in str(c).lower() for c in df.columns):
+        grid_class += " braves-lineup-grid"
     return dmc.Paper(
         dag.AgGrid(
             rowData=df.to_dict('records'),
             columnDefs=column_defs,
             defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
             dashGridOptions=dash_options,
-            className="ag-theme-alpine braves-clean-ag-grid",
+            className=grid_class,
             style={'width': '100%'}
         ),
         withBorder=True,
@@ -1140,7 +1182,12 @@ def render_lineup_children(lineup_store, lineup_size=5):
         )
         children.append(title_section)
         l_df = pd.read_json(io.StringIO(l_json), orient='split')
-        children.append(_ag_grid_from_df(l_df, page_size=page_size, filterable_cols=['Lineup', 'Lineups']))
+        children.append(_ag_grid_from_df(
+            l_df,
+            page_size=page_size,
+            filterable_cols=['Lineup', 'Lineups'],
+            lineup_size=size_int,
+        ))
     return children
 
 

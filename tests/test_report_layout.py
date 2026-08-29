@@ -497,13 +497,16 @@ class ReportTabAndPlayerSortTests(unittest.TestCase):
         import pandas as pd
         from synergy_reporter.report_components import sort_player_stats_for_report
         df = pd.DataFrame({
-            'Player': ['A', 'B', 'C'],
-            'PTS': [20, 8, 12],
-            '+/-': [1, 9, -2],
+            'Player': ['A', 'B', 'C', 'D', 'E'],
+            '#': ['12', '5', '7', '3', '1'],
+            'S': ['○', '', '○', '', ''],
+            'Min': ['20:00', '18:00', 'DNP', '12:00', '8:00'],
+            'PTS': [20, 8, 0, 8, 8],
+            '+/-': [1, 9, 4, 9, 9],
         })
         sorted_df = sort_player_stats_for_report(df)
-        self.assertEqual(list(sorted_df['Player']), ['B', 'A', 'C'])
-        self.assertEqual(list(sorted_df['+/-']), [9, 1, -2])
+        self.assertEqual(list(sorted_df['Player']), ['E', 'D', 'B', 'A', 'C'])
+        self.assertEqual(list(sorted_df['+/-']), [9, 9, 9, 1, 4])
 
     def test_bundled_pdf_font_exists(self):
         import os
@@ -639,6 +642,8 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         self.assertIn('cursor: grab', css)
         self.assertIn('cursor: grabbing', css)
         self.assertIn('.is-scrollable', css)
+        self.assertIn('.braves-lineup-grid', css)
+        self.assertIn('160px', css)
 
     def test_home_page_column_alignments(self):
         import os
@@ -721,11 +726,19 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
             'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
             'PF', 'FD', 'PTS', 'eFG%', 'PM'
         ]
-        cdefs = _build_stats_column_defs(cols)
+        cdefs = _build_stats_column_defs(cols, lineup_size=5)
         self.assertEqual(cdefs[0]['field'], 'Lineup')
         self.assertEqual(cdefs[0]['pinned'], 'left')
         self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
+        self.assertEqual(cdefs[0]['minWidth'], 260)
+        self.assertEqual(cdefs[0]['width'], 270)
+        self.assertNotIn('flex', cdefs[0])
+        self.assertTrue(cdefs[0].get('wrapText'))
+        self.assertTrue(cdefs[0].get('autoHeight'))
+        two = _build_stats_column_defs(cols, lineup_size=2)
+        self.assertEqual(two[0]['minWidth'], 140)
+        self.assertEqual(two[0]['width'], 150)
         for cdef in cdefs:
             if 'field' in cdef:
                 self.assertEqual(cdef['headerClass'], 'ag-header-align-center')

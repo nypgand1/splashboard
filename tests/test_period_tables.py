@@ -123,4 +123,3 @@ class MinutesFormatTests(unittest.TestCase):
         self.assertNotIn('PT', str(team.iloc[0]['Min']))
         players_out = report._get_player_stats_df_dict()['Braves']
         self.assertEqual(players_out.iloc[0]['Min'], '32:04')
-        self.assertEqual(list(players_out.sort_values(by=['PTS'], ascending=False)['PTS']), list(players_out['PTS']))

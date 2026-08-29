@@ -125,12 +125,9 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
 
     tabs = page.locator('[role="tab"]')
     labels = [tabs.nth(i).inner_text().strip() for i in range(tabs.count())]
-    assert 'Box Score' in labels
-    assert 'Rotation' in labels
-    assert 'Play-By-Play' in labels
-    assert 'Lineup Stats' in labels
+    assert labels[:4] == ['Box Score', 'Rotation', 'Lineup Stats', 'Play-By-Play']
 
-    for name in ('Box Score', 'Play-By-Play', 'Lineup Stats', 'Rotation'):
+    for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
         time.sleep(0.3)
 

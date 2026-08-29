@@ -197,15 +197,8 @@ class PostGameReport():
 
             p_df_t['PM'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else f"{int(round(float(x.get('plus', 0) or 0)))}-{int(round(float(x.get('minus', 0) or 0)))}", axis=1)
     
-            # Default sorting: Starters first (top 5), then Active players by +/- descending and PTS descending, then DNP last (sorted by shirtNumber)
-            p_df_t['_is_starter'] = p_df['personId'].apply(lambda pid: 0 if (roster_starter_dict.get(pid) or pid in starters_for_team) else 1)
-            p_df_t['_is_dnp'] = p_df_t['Min'].apply(lambda m: 1 if m == 'DNP' else 0)
-            p_df_t['_pm_num'] = pd.to_numeric(p_df_t['+/-'], errors='coerce').fillna(-999)
-            p_df_t['_pts_num'] = pd.to_numeric(p_df_t['PTS'], errors='coerce').fillna(-999)
-            p_df_t['_shirt_num'] = p_df_t['#'].apply(lambda s: int(s) if str(s).isdigit() else 999)
-
-            p_df_t.sort_values(by=['_is_dnp', '_is_starter', '_pm_num', '_pts_num', '_shirt_num'], ascending=[True, True, False, False, True], inplace=True)
-            p_df_t.drop(columns=['_is_starter', '_is_dnp', '_pm_num', '_pts_num', '_shirt_num'], inplace=True)
+            from synergy_reporter.report_components import sort_player_stats_for_report
+            p_df_t = sort_player_stats_for_report(p_df_t)
             p_df_dict[team_name] = p_df_t
         return p_df_dict
 

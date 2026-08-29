@@ -65,6 +65,16 @@ class HiddenTabTests(unittest.TestCase):
 
 
 class TabsDmcContractTests(unittest.TestCase):
+    def test_game_tab_order_is_lineup_before_pbp(self):
+        import dash_mantine_components as dmc
+        from tests.test_dmc_ui import find_type
+        tree = game_page.layout('g1')
+        values = [node.value for node in find_type(tree, dmc.TabsTab)]
+        self.assertEqual(
+            values,
+            ['tab-bs', 'tab-rotation', 'tab-lineup', 'tab-pbp', 'tab-report'],
+        )
+
     def test_game_page_uses_dmc_tabs(self):
         import os
         page_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'game.py')
@@ -73,6 +83,10 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('dmc.Tabs', code)
         self.assertIn('dmc.TabsList', code)
         self.assertIn('dmc.TabsTab', code)
+        self.assertLess(
+            code.find('dmc.TabsTab("Lineup Stats"'),
+            code.find('dmc.TabsTab("Play-By-Play"'),
+        )
         self.assertNotIn('dbc.Tabs', code)
         self.assertNotIn('dbc.Tab(', code)
         self.assertIn('tabler:table', code)

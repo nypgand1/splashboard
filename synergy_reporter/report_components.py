@@ -80,12 +80,24 @@ def sort_player_stats_for_report(df):
     if df is None or df.empty or '+/-' not in df.columns:
         return df
     res = df.copy()
-    is_dnp = res['Min'].apply(lambda m: 1 if str(m) == 'DNP' else 0) if 'Min' in res.columns else 0
-    numeric_pm = pd.to_numeric(res['+/-'], errors='coerce').fillna(-9999)
-    res['_is_dnp'] = is_dnp
-    res['_pm_num'] = numeric_pm
-    res = res.sort_values(by=['_is_dnp', '_pm_num'], ascending=[True, False], kind='mergesort')
-    res = res.drop(columns=['_is_dnp', '_pm_num'])
+    res['_is_dnp'] = res['Min'].apply(lambda m: 1 if str(m) == 'DNP' else 0) if 'Min' in res.columns else 0
+    res['_pm_num'] = pd.to_numeric(res['+/-'], errors='coerce').fillna(-9999)
+    if 'PTS' in res.columns:
+        res['_pts_num'] = pd.to_numeric(res['PTS'], errors='coerce').fillna(-9999)
+    else:
+        res['_pts_num'] = 0
+    if '#' in res.columns:
+        res['_shirt_num'] = res['#'].apply(
+            lambda s: int(s) if str(s).strip().isdigit() else 999
+        )
+    else:
+        res['_shirt_num'] = 0
+    res = res.sort_values(
+        by=['_is_dnp', '_pm_num', '_pts_num', '_shirt_num'],
+        ascending=[True, False, False, True],
+        kind='mergesort',
+    )
+    res = res.drop(columns=['_is_dnp', '_pm_num', '_pts_num', '_shirt_num'])
     return res
 
 

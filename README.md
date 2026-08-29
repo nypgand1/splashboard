@@ -1,6 +1,6 @@
 # Splashboard
 
-A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST, lists the season on Home, and shows Box Score, Rotation, Play-By-Play, Lineup Stats, and Report on the Game page.
+A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST, lists the season on Home, and shows Box Score, Rotation, Lineup Stats, Play-By-Play, and Report on the Game page.
 
 ## Requirements
 

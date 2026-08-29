@@ -1086,6 +1086,30 @@ body {
     background-color: #e0f2fe !important;
 }
 
+.ag-theme-alpine.braves-lineup-grid .ag-cell[col-id="Lineup"],
+.ag-theme-alpine.braves-lineup-grid .ag-cell[col-id="Lineups"] {
+    white-space: normal;
+    line-height: 1.3;
+    overflow: visible;
+}
+
+@media (max-width: 768px) {
+    .braves-lineup-grid .ag-pinned-left-header,
+    .braves-lineup-grid .ag-pinned-left-cols-container {
+        width: 160px !important;
+        min-width: 160px !important;
+        max-width: 160px !important;
+    }
+    .braves-lineup-grid .ag-cell[col-id="Lineup"],
+    .braves-lineup-grid .ag-cell[col-id="Lineups"],
+    .braves-lineup-grid .ag-header-cell[col-id="Lineup"],
+    .braves-lineup-grid .ag-header-cell[col-id="Lineups"] {
+        max-width: 160px !important;
+        min-width: 160px !important;
+        width: 160px !important;
+    }
+}
+
 a.home-schedule-row {
     display: block;
     color: inherit;

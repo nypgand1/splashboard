@@ -62,8 +62,8 @@ Top tabs, left to right, rendered via `dmc.Tabs` with Scheme A chrome (top radiu
 
 1. Box Score (tab_id: `tab-bs`)
 2. Rotation (tab_id: `tab-rotation`)
-3. Play-By-Play (tab_id: `tab-pbp`)
-4. Lineup Stats (tab_id: `tab-lineup`)
+3. Lineup Stats (tab_id: `tab-lineup`)
+4. Play-By-Play (tab_id: `tab-pbp`)
 5. Report (tab_id: `tab-report`) — **finished games only** (`FINISHED`, `CONFIRMED`). Every other status hides the Report tab (`display: none`). If Report is active while the status is not finished, switch to Box Score.
 
 Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab render callbacks gate on `Input('tabs', 'value')`, return `no_update`, and do not rebuild children.
@@ -204,13 +204,14 @@ Note slots start as **empty** `text` blocks.
 - Play-By-Play keeps AG Grid. Do not put AG Grid inside Report blocks.
 - Tighter font and padding than Box Score so a table can sit in an A4 block. Overflowing rows are clipped by the paper, not scrolled inside the block.
 - Team Stats and Player Stats `Min` values are `M:SS` (e.g. `8:21`, `0:06`). Box Score uses the same values.
-- Report Player Stats (`p_df_home`, `p_df_away`) sort by `+/-` descending. Box Score Player Stats sort by starters first, then active players by +/- descending and PTS descending, with DNP players placed last.
+- Box Score, Report canvas, and PDF Player Stats share one sort: `+/-` descending, then PTS descending, then jersey `#` ascending. DNP rows last. The starter `S` marker stays on the row and does not pin starters to the top.
 
 ## Lineup Stats
 
 - Lineup size is selectable from 5 down to 2.
 - 5-man lineups are displayed completely without pagination; 2/3/4-man lineups paginate with 20 rows per page.
-- Lineup player names are sorted by jersey shirt number (ascending) and connected with hyphens (e.g. `1-7-14-23-42`).
+- Lineup labels are player **names** from the id table, ordered by jersey shirt number (ascending), joined with hyphens (e.g. `林志傑-張宗憲`). Jersey is the sort key, not the displayed text.
+- On the Game Lineup Stats AG Grid (not Report `dmc.Table`), the Lineup column is pinned left, `fw=700`, centered, no `flex: 1`. Width follows lineup size: 2 → min 140 / width 150; 3 → 180 / 190; 4 → 220 / 230; 5 → 260 / 270. Names wrap inside the cell (`wrapText` + row `autoHeight`); they do not ellipsis. At viewport `max-width: 768px` the pinned Lineup column caps at 160px so Min, `+/-`, and PTS stay on-screen; wrapped names grow the row height.
 - Lineup table columns: `Lineup`, `Min`, `+/-`, `2M`, `2A`, `2FG%`, `3M`, `3A`, `3FG%`, `FTM`, `FTA`, `FT%`, `OR`, `DR`, `REB`, `AST`, `TO`, `ST`, `BL`, `PF`, `FD`, `PTS`, `eFG%`, `PM`.
 - Zero-value noise reduction: Except for `+/-` (which shows neutral gray `0`), all 0 statistics are rendered blank `''`. `eFG%` is calculated for lineups and displays `''` when `FGA == 0` or `0.0%` when `FGA > 0` with 0 made.
 
