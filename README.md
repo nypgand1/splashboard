@@ -23,11 +23,22 @@ Open `http://127.0.0.1:8050`.
 
 ## Tests
 
-Tests do not call live Synergy. A clean clone only needs `requirements.txt`; `.env` is optional:
+Tests do not call live Synergy. A clean clone only needs `requirements.txt`; `.env` is optional.
+
+Unit suite (every change):
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Browser smoke (before commit, or when UI work is done). First machine also needs Chromium:
+
+```bash
+python3 -m playwright install chromium
+python3 -m pytest tests/e2e -q
+```
+
+Smoke drives a local app with fixtures. It does not call live Synergy.
 
 ## Environment variables
 

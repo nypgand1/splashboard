@@ -10,4 +10,6 @@ dash-mantine-components==2.8.0
 dash-iconify>=0.1.2
 fastapi==0.141.1
 uvicorn[standard]==0.52.1
+pytest>=8.0.0
+pytest-playwright>=0.6.2
 

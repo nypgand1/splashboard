@@ -41,6 +41,9 @@ def _report_is_stale(entry):
 
 
 def get_cached_report(game_id):
+    factory = getattr(get_cached_report, 'factory', None)
+    if callable(factory):
+        return factory(game_id)
     if not game_id:
         raise ValueError('game_id is required')
 

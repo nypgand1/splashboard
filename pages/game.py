@@ -1,6 +1,7 @@
 import datetime
 import io
 import json
+import os
 
 from dash import dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
 import dash_mantine_components as dmc
@@ -43,6 +44,18 @@ register_page(
     top_nav=True,
     path_template='/game/<game_id>'
 )
+
+def _pane(wrap_id, pane_id, kind, hidden=False):
+    body = html.Div(id=pane_id, children=loading_skeleton(kind))
+    style = {'display': 'none'} if hidden else {}
+    if os.environ.get('SPLASHBOARD_E2E'):
+        return html.Div(body, id=wrap_id, style=style)
+    return html.Div(
+        dcc.Loading(custom_spinner=loading_skeleton(kind), children=body),
+        id=wrap_id,
+        style=style,
+    )
+
 
 def layout(game_id=None):
     return html.Div([
@@ -109,45 +122,11 @@ def layout(game_id=None):
             )
         ], id='lineup_dropdown_container', style={'display': 'none'}),
 
-        html.Div(
-            dcc.Loading(
-                custom_spinner=loading_skeleton('cards'),
-                children=html.Div(id='pane-bs', children=loading_skeleton('cards')),
-            ),
-            id='wrap-bs',
-        ),
-        html.Div(
-            dcc.Loading(
-                custom_spinner=loading_skeleton('chart'),
-                children=html.Div(id='pane-rotation', children=loading_skeleton('chart')),
-            ),
-            id='wrap-rotation',
-            style={'display': 'none'},
-        ),
-        html.Div(
-            dcc.Loading(
-                custom_spinner=loading_skeleton(),
-                children=html.Div(id='pane-pbp', children=loading_skeleton()),
-            ),
-            id='wrap-pbp',
-            style={'display': 'none'},
-        ),
-        html.Div(
-            dcc.Loading(
-                custom_spinner=loading_skeleton(),
-                children=html.Div(id='pane-lineup', children=loading_skeleton()),
-            ),
-            id='wrap-lineup',
-            style={'display': 'none'},
-        ),
-        html.Div(
-            dcc.Loading(
-                custom_spinner=loading_skeleton(),
-                children=html.Div(id='pane-report', children=loading_skeleton()),
-            ),
-            id='wrap-report',
-            style={'display': 'none'},
-        ),
+        _pane('wrap-bs', 'pane-bs', 'cards'),
+        _pane('wrap-rotation', 'pane-rotation', 'chart', hidden=True),
+        _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
+        _pane('wrap-lineup', 'pane-lineup', 'table', hidden=True),
+        _pane('wrap-report', 'pane-report', 'table', hidden=True),
         html.Div(id='pbp_table', style={'display': 'block'}),
         
         # Background Stores & Intervals
