@@ -15,7 +15,9 @@ Read the matching spec before changing behavior or fixing a bug.
 - Tests use mocks and small fixtures. They do not call live Synergy.
 - Credentials travel only as `SYNERGY_CREDENTIAL_ID` / `SYNERGY_CREDENTIAL_SECRET`. Do not commit them. Do not put them in `fly.toml` `[env]`.
 - Do not `git push` or `fly deploy` unless asked.
+- Git commit messages MUST be exactly a single line (one line only). Never use multi-line commit logs.
 - UI strings are English.
+
 - Resume unfinished work from `git diff` / `git status` and the matching spec. Do not reread whole page modules (`pages/game.py`, `pages/home.py`) when the diff already names the change.
 - Grill or lock product decisions before editing. Implementation is cheap; a second full-page browser pass is not.
 - When changing user-visible UI (layout, tabs, routing, rendered data), walk the related pages in a browser. A single static screenshot is not enough.

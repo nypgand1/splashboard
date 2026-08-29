@@ -143,6 +143,7 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
             const wrap = document.querySelector('#wrap-rotation');
             const rect = graph.getBoundingClientRect();
             const cs = paper ? getComputedStyle(paper) : {};
+            const badges = [...document.querySelectorAll('#wrap-rotation .mantine-Badge-root')];
             return {
                 lastUpdate: !!(wrap && wrap.textContent.includes('Last Update')),
                 hasPaper: !!paper,
@@ -151,6 +152,8 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
                 graphH: Math.round(rect.height),
                 vw: window.innerWidth,
                 tableScroll: !!(graph.closest('.braves-table-scroll')),
+                badgesCount: badges.length,
+                badgesText: badges.map(b => b.textContent),
             };
         }'''
     )
@@ -158,9 +161,12 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert rot['hasPaper'] is True
     assert rot['lastUpdate'] is True
     assert rot['tableScroll'] is False
+    assert rot['badgesCount'] >= 1
+    assert any('Run' in b for b in rot['badgesText'])
     assert rot['graphW'] != 1220
     assert rot['graphW'] > 400
     assert rot['graphH'] > 200
+
 
     page.set_viewport_size({'width': 375, 'height': 812})
     page.wait_for_timeout(800)

@@ -105,12 +105,18 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 
 ## Rotation
 
-- Plotly heatmap, colorscale `PuBu`.
-- Wrapped in `dmc.Paper` (`withBorder`, `radius="md"`, `shadow="xs"`, `className="braves-card-wrapper"`, `overflow: hidden`). `_last_update_span` stays outside the Paper, same as Play-By-Play.
-- Width 100%. `fig.layout.autosize = True`; do not set `layout.width`. Graph style width `100%` and height from the figure. `config`: `displayModeBar=False`, `responsive=True`, `scrollZoom=False`. `layout.dragmode=False`. Do not put `braves-table-scroll` on the graph.
+- Single Plotly chart sharing a common X-axis (game elapsed seconds, with 1Q/2Q/3Q/4Q/OT period boundaries), 3 subplots:
+  1. Top: Home player on-court Gantt bars (`#0077b6`).
+  2. Middle: Margin step-line (`hv`) with dual-color fill (Home lead > 0: `rgba(0, 119, 182, 0.20)`, Away lead < 0: `rgba(148, 163, 184, 0.25)` to zero) + full-height Run bands (`vrect`) for continuous basketball momentum runs (accumulated net margin delta >= 8 pts, opponent scored <= 4 total pts in interval). Each Run band features an in-chart bold score annotation: Home runs annotated at the top of the Margin subplot (`y=+span`, `yanchor='bottom'`), Away runs annotated at the bottom (`y=-span`, `yanchor='top'`).
+  3. Bottom: Away player on-court Gantt bars (`#94a3b8`).
+- Clean Tooltips (no raw titles/keys):
+  - Player Stint Hover: `#12 林志傑 (+7)` / `1Q 08:24 – 02:15 (06:09)`.
+  - Score Margin Hover: Only on score change events (`2Q 05:42` / `勇士 42 - 38 夢想家 (+4)` / `林志傑 3PT`).
+- Major Runs header: A vertical stack (`dmc.Stack`) of `dmc.Badge` pills rendered between `_last_update_span` and `dmc.Paper`, highlighting every major momentum run with team name, score ratio, and period time range (e.g. `領航猿 10-2 Run (1Q 08:24–05:10)`).
+- Wrapped in `dmc.Paper` (`withBorder`, `radius="md"`, `shadow="xs"`, `className="braves-card-wrapper"`, `overflow: hidden`). `_last_update_span` and Major Runs badges stay outside the Paper, same as Play-By-Play.
+- Width 100%. `fig.layout.autosize = True`; do not set `layout.width`. Graph style width `100%` and height from the figure. `config`: `displayModeBar=False`, `responsive=True`, `scrollZoom=False`. `layout.dragmode='pan'` with strict X-axis bounded panning (`minallowed=0`, `maxallowed=game_end+15`) and Y-axes locked (`fixedrange=True`).
 - Margin ticks in steps of 5.
 - Player rows sort by first time on court, then jersey; DNP rows last.
-- Scoring heatmap accumulates team points per minute bucket.
 - Period labels: 1–4 → `1Q`–`4Q`; official OT `periodId` 11 → `OT`, 12 → `2OT`; legacy `periodId` 5 still reads as `OT`.
 
 ## Report

@@ -223,15 +223,16 @@ class FakeReport:
                     'team_id': home_team_id or HOME_ID,
                     'team_name': HOME,
                     'side': 'home',
-                    'players': [{'label': 'Lin', 'cells': [1, None]}],
+                    'players': [{'label': 'Lin', 'stints': [{'start': 0.0, 'end': 60.0}]}],
                 },
                 {
                     'team_id': away_team_id or AWAY_ID,
                     'team_name': AWAY,
                     'side': 'away',
-                    'players': [{'label': 'Chen', 'cells': [None, 1]}],
+                    'players': [{'label': 'Chen', 'stints': [{'start': 60.0, 'end': 120.0}]}],
                 },
             ],
             'margin': [{'t': 0.0, 'margin': 0}, {'t': 120.0, 'margin': 4}],
-            'scoring': {'home': [1, 12], 'away': [None, 2]},
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 0.0, 'end': 60.0, 'delta': 8}],
         }
+

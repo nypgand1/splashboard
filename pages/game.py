@@ -145,6 +145,8 @@ def layout(game_id=None):
         html.Div(dag.AgGrid(id="dummy-grid", rowData=[], columnDefs=[]), style={'display': 'none'})
     ])
 
+
+
 @callback(
     Output('bs_store', 'data'),
     [Input('interval-component', 'n_intervals'),
@@ -1087,6 +1089,50 @@ def render_bs_children(bs_store):
     return children
 
 
+def _format_period_clock(t_seconds, periods):
+    for period in periods:
+        if period['start'] <= t_seconds <= period['end']:
+            rem = max(0, int(period['end'] - t_seconds))
+            return f"{period['label']} {rem // 60:02d}:{rem % 60:02d}"
+    return f"{int(t_seconds // 60):02d}:{int(t_seconds % 60):02d}"
+
+
+def _render_runs_badges(runs, periods, teams):
+    if not runs:
+        return None
+    home = next((t for t in teams if t.get('side') == 'home'), {})
+    away = next((t for t in teams if t.get('side') == 'away'), {})
+    
+    badges = []
+    for run in runs:
+        is_home = run['side'] == 'home'
+        team_name = (home.get('team_name') if is_home else away.get('team_name')) or ('Home' if is_home else 'Away')
+        pts_str = f"{run['home_pts']}-{run['away_pts']}" if is_home else f"{run['away_pts']}-{run['home_pts']}"
+        start_str = _format_period_clock(run['start'], periods)
+        end_str = _format_period_clock(run['end'], periods)
+        
+        # Split period label and clock if matching
+        label = f"{team_name} {pts_str} Run ({start_str} – {end_str})"
+        color = "blue" if is_home else "gray"
+        badges.append(
+            dmc.Badge(
+                label,
+                color=color,
+                variant="light",
+                size="md",
+                radius="sm",
+                style={"width": "fit-content"},
+            )
+        )
+    return dmc.Stack(
+        badges,
+        gap=6,
+        mb="sm",
+        style={"padding": "4px 0"},
+    )
+
+
+
 def render_rotation_children(rotation_store):
     payload = safe_loads(rotation_store)
     if payload.get('_ui') == 'error':
@@ -1094,8 +1140,15 @@ def render_rotation_children(rotation_store):
     if not payload or not payload.get('teams'):
         return [_empty_view()]
     fig = build_rotation_figure(payload)
-    return [
-        _last_update_span(),
+    runs = payload.get('runs') or []
+    periods = payload.get('periods') or []
+    teams = payload.get('teams') or []
+    runs_row = _render_runs_badges(runs, periods, teams)
+    
+    children = [_last_update_span()]
+    if runs_row is not None:
+        children.append(runs_row)
+    children.append(
         dmc.Paper(
             dcc.Graph(
                 id='rotation-graph',
@@ -1115,8 +1168,9 @@ def render_rotation_children(rotation_store):
             shadow='xs',
             className='braves-card-wrapper',
             style={'overflow': 'hidden'},
-        ),
-    ]
+        )
+    )
+    return children
 
 
 def render_pbp_children(pbp_store):
@@ -1306,8 +1360,8 @@ clientside_callback(
         return [
             active_tab === 'tab-bs' ? show : hide,
             active_tab === 'tab-rotation' ? show : hide,
-            active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
+            active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-report' ? show : hide,
             dropdown
         ];
@@ -1315,9 +1369,10 @@ clientside_callback(
     """,
     Output('wrap-bs', 'style'),
     Output('wrap-rotation', 'style'),
-    Output('wrap-pbp', 'style'),
     Output('wrap-lineup', 'style'),
+    Output('wrap-pbp', 'style'),
     Output('wrap-report', 'style'),
     Output('lineup_dropdown_container', 'style'),
     Input('tabs', 'value'),
 )
+

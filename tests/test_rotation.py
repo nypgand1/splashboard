@@ -82,13 +82,13 @@ class RotationPayloadTests(unittest.TestCase):
             away_team_id=away,
         )
 
-        self.assertEqual([b['label'] for b in payload['buckets']], ['1Q', '1Q'])
         home_player = payload['teams'][0]['players'][0]
-        self.assertEqual(home_player['cells'][0], 1.0)
-        self.assertEqual(home_player['cells'][1], 0.5)
+        self.assertEqual(len(home_player['stints']), 1)
+        self.assertEqual(home_player['stints'][0], {'start': 0.0, 'end': 90.0, 'pm': 0})
         self.assertEqual(home_player['seconds'], 90)
 
-    def test_score_margin_is_home_minus_away(self):
+
+    def test_score_margin_and_run_detection(self):
         home, away = 'home-id', 'away-id'
         df = _pbp([
             {
@@ -105,12 +105,12 @@ class RotationPayloadTests(unittest.TestCase):
             {
                 'periodId': 1,
                 'clock': 'PT01M00S',
-                'eventType': '2pt',
+                'eventType': '3pt',
                 'subType': None,
                 'success': 1,
                 'entityId': home,
                 'personId': 'p1',
-                'scores': json.dumps({home: 2, away: 0}),
+                'scores': json.dumps({home: 10, away: 2}),
                 home: ['p1'],
                 away: ['p2'],
             },
@@ -121,7 +121,7 @@ class RotationPayloadTests(unittest.TestCase):
                 'subType': 'end',
                 'entityId': None,
                 'personId': None,
-                'scores': json.dumps({home: 2, away: 5}),
+                'scores': json.dumps({home: 10, away: 2}),
                 home: ['p1'],
                 away: ['p2'],
             },
@@ -135,10 +135,11 @@ class RotationPayloadTests(unittest.TestCase):
         )
         margins = {(round(p['t']), p['margin']) for p in payload['margin']}
         self.assertIn((0, 0), margins)
-        self.assertIn((60, 2), margins)
-        self.assertIn((120, -3), margins)
-        self.assertEqual(payload['scoring']['home'], [None, 2])
-        self.assertEqual(payload['scoring']['away'], [None, None])
+        self.assertIn((60, 8), margins)
+        self.assertTrue(len(payload['runs']) >= 1)
+        self.assertEqual(payload['runs'][0]['side'], 'home')
+        self.assertEqual(payload['runs'][0]['home_pts'], 10)
+        self.assertEqual(payload['runs'][0]['away_pts'], 2)
 
     def test_ot_appends_buckets_after_regulation(self):
         home, away = 'home-id', 'away-id'
@@ -212,15 +213,56 @@ class RotationPayloadTests(unittest.TestCase):
         self.assertEqual(payload['teams'][0]['side'], 'home')
         self.assertEqual(payload['teams'][1]['side'], 'away')
 
+    def test_players_sorted_by_first_on_then_jersey(self):
+        home, away = 'home-id', 'away-id'
+        df = _pbp([
+            {
+                'periodId': 1,
+                'clock': 'PT10M00S',
+                'eventType': 'period',
+                'subType': 'start',
+                'entityId': None,
+                'personId': None,
+                'scores': None,
+                home: ['p1', 'p2'],
+                away: [],
+            },
+            {
+                'periodId': 1,
+                'clock': 'PT06M00S',
+                'eventType': 'substitution',
+                'subType': 'in',
+                'entityId': home,
+                'personId': 'p3',
+                'scores': None,
+                home: ['p1', 'p3'],
+                away: [],
+            },
+        ])
+        payload = build_rotation_payload(
+            df,
+            starter_dict={home: ['p1', 'p2'], away: []},
+            id_table={home: 'Home', away: 'Away', 'p1': 'Late', 'p2': 'Early', 'p3': 'Bench'},
+            home_team_id=home,
+            away_team_id=away,
+            roster=[
+                {'entityId': home, 'personId': 'p1', 'shirtNumber': 23, 'starter': True},
+                {'entityId': home, 'personId': 'p2', 'shirtNumber': 5, 'starter': True},
+                {'entityId': home, 'personId': 'p3', 'shirtNumber': 1, 'starter': False},
+            ],
+        )
+        labels = [p['label'] for p in payload['teams'][0]['players']]
+        self.assertEqual(labels, ['#5 Early', '#23 Late', '#1 Bench'])
+
     def test_dnp_sorted_last_and_jersey_label(self):
         home, away = 'home-id', 'away-id'
         df = _pbp([
             {
                 'periodId': 1,
-                'clock': 'PT01M00S',
+                'clock': 'PT10M00S',
                 'eventType': 'period',
                 'subType': 'start',
-                'entityId': home,
+                'entityId': None,
                 'personId': None,
                 'scores': None,
                 home: ['p1'],
@@ -230,77 +272,18 @@ class RotationPayloadTests(unittest.TestCase):
         payload = build_rotation_payload(
             df,
             starter_dict={home: ['p1'], away: []},
-            id_table={home: 'Home', away: 'Away', 'p1': 'On Court', 'p2': 'Bench'},
+            id_table={home: 'Home', away: 'Away', 'p1': 'Active', 'p2': 'DNP'},
             home_team_id=home,
             away_team_id=away,
             roster=[
-                {
-                    'personId': 'p1',
-                    'entityId': home,
-                    'starter': True,
-                    'participated': True,
-                    'shirtNumber': '12',
-                },
-                {
-                    'personId': 'p2',
-                    'entityId': home,
-                    'starter': False,
-                    'participated': False,
-                    'shirtNumber': '7',
-                },
+                {'entityId': home, 'personId': 'p1', 'shirtNumber': 10, 'starter': True},
+                {'entityId': home, 'personId': 'p2', 'shirtNumber': 2, 'starter': False},
             ],
         )
-        labels = [p['label'] for p in payload['teams'][0]['players']]
-        self.assertEqual(labels, ['#12 On Court', '#7 Bench'])
-        self.assertTrue(payload['teams'][0]['players'][1]['dnp'])
-        self.assertTrue(all(cell is None for cell in payload['teams'][0]['players'][1]['cells']))
-
-    def test_players_sorted_by_first_on_then_jersey(self):
-        home, away = 'home-id', 'away-id'
-        df = _pbp([
-            {
-                'periodId': 1,
-                'clock': 'PT02M00S',
-                'eventType': 'period',
-                'subType': 'start',
-                'entityId': home,
-                'personId': None,
-                'scores': None,
-                home: ['late-starter', 'early-starter'],
-                away: [],
-            },
-            {
-                'periodId': 1,
-                'clock': 'PT01M00S',
-                'eventType': 'substitution',
-                'subType': 'in',
-                'entityId': home,
-                'personId': 'bench',
-                'scores': None,
-                home: ['late-starter', 'early-starter', 'bench'],
-                away: [],
-            },
-        ])
-        payload = build_rotation_payload(
-            df,
-            starter_dict={home: ['late-starter', 'early-starter'], away: []},
-            id_table={
-                home: 'Home',
-                away: 'Away',
-                'early-starter': 'Early',
-                'late-starter': 'Late',
-                'bench': 'Bench',
-            },
-            home_team_id=home,
-            away_team_id=away,
-            roster=[
-                {'personId': 'late-starter', 'entityId': home, 'starter': True, 'shirtNumber': '23'},
-                {'personId': 'early-starter', 'entityId': home, 'starter': True, 'shirtNumber': '5'},
-                {'personId': 'bench', 'entityId': home, 'starter': False, 'shirtNumber': '1'},
-            ],
-        )
-        labels = [p['label'] for p in payload['teams'][0]['players']]
-        self.assertEqual(labels, ['#5 Early', '#23 Late', '#1 Bench'])
+        players = payload['teams'][0]['players']
+        self.assertEqual([p['label'] for p in players], ['#10 Active', '#2 DNP'])
+        self.assertFalse(players[0]['dnp'])
+        self.assertTrue(players[1]['dnp'])
 
 
 class ContrastTextTests(unittest.TestCase):
@@ -330,48 +313,98 @@ class RotationFigureTests(unittest.TestCase):
                     'team_id': 'h',
                     'team_name': 'Home',
                     'side': 'home',
-                    'players': [{'label': 'A', 'cells': [1, None]}],
+                    'players': [{'label': 'A', 'stints': [{'start': 0.0, 'end': 60.0}]}],
                 },
                 {
                     'team_id': 'a',
                     'team_name': 'Away',
                     'side': 'away',
-                    'players': [{'label': 'B', 'cells': [None, 1]}],
+                    'players': [{'label': 'B', 'stints': [{'start': 60.0, 'end': 120.0}]}],
                 },
             ],
             'margin': [{'t': 0.0, 'margin': 0}, {'t': 120.0, 'margin': 4}],
-            'scoring': {'home': [1, 12], 'away': [None, 2]},
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 0.0, 'end': 60.0, 'delta': 8}],
         }
 
-    def test_score_heatmap_sits_below_margin(self):
-        fig = build_rotation_figure(self._payload())
-        score = next(trace for trace in fig.data if trace.type == 'heatmap' and trace.yaxis == 'y3')
-        margin = next(trace for trace in fig.data if trace.type == 'scatter' and trace.mode == 'lines')
-        self.assertEqual(margin.yaxis, 'y2')
-        self.assertEqual(score.yaxis, 'y3')
+    def test_figure_structure_is_3_subpanels(self):
+        payload = self._payload()
+        payload['runs'] = [
+            {'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 0.0, 'end': 60.0, 'delta': 8},
+            {'side': 'away', 'home_pts': 0, 'away_pts': 8, 'start': 60.0, 'end': 120.0, 'delta': 8},
+        ]
+        fig = build_rotation_figure(payload)
+        # Y-axes: y (home gantt), y2 (margin), y3 (away gantt)
+        margin_traces = [trace for trace in fig.data if trace.type == 'scatter' and trace.yaxis == 'y2']
+        self.assertTrue(len(margin_traces) >= 3)  # positive fill, negative fill, and main step-line
         self.assertEqual(list(fig.layout.yaxis2.range), [-5, 5])
-        self.assertEqual(fig.layout.yaxis3.autorange, 'reversed')
+        bars = [trace for trace in fig.data if trace.type == 'bar']
+        self.assertTrue(len(bars) >= 2)
+        
+        # Verify Home run annotation at top (y=5) and Away run annotation at bottom (y=-5)
+        annotations = [ann for ann in fig.layout.annotations if ann.text in ('<b>10-2</b>', '<b>8-0</b>')]
+        self.assertEqual(len(annotations), 2)
+        home_ann = next(ann for ann in annotations if ann.text == '<b>10-2</b>')
+        away_ann = next(ann for ann in annotations if ann.text == '<b>8-0</b>')
+        self.assertEqual(home_ann.y, 5)
+        self.assertEqual(home_ann.yanchor, 'bottom')
+        self.assertEqual(away_ann.y, -5)
+        self.assertEqual(away_ann.yanchor, 'top')
+
+
+
+    def test_momentum_run_breaks_when_opponent_answers_with_4_pts(self):
+        home, away = 'home-id', 'away-id'
+        # Home goes on 8-0 run, then away scores 4 consecutive points
+        events = [
+            (0.0, 0, 0),
+            (30.0, 3, 0),
+            (60.0, 6, 0),
+            (90.0, 8, 0),    # Home 8-0 run (delta=8)
+            (120.0, 8, 2),   # Away +2
+            (150.0, 8, 5),   # Away +3 (total 5 consecutive -> momentum broken!)
+            (180.0, 11, 5),
+        ]
+        from synergy_reporter.rotation import detect_runs
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]['side'], 'home')
+        self.assertEqual(runs[0]['home_pts'], 8)
+        self.assertEqual(runs[0]['away_pts'], 0)
+        self.assertEqual(runs[0]['end'], 90.0)
+
+    def test_run_excludes_slow_blowout_with_high_opponent_scoring(self):
+        # 27-18 (delta=9, but opponent scored 18 points) should NOT be considered a Run
+        events = [
+            (0.0, 0, 0),
+            (60.0, 3, 2),
+            (120.0, 6, 4),
+            (180.0, 9, 6),
+            (240.0, 12, 8),
+            (300.0, 15, 10),
+            (360.0, 18, 12),
+            (420.0, 21, 14),
+            (480.0, 24, 16),
+            (540.0, 27, 18),
+        ]
+        from synergy_reporter.rotation import detect_runs
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(len(runs), 0)
+
 
     def test_figure_autosizes_without_fixed_width(self):
         fig = build_rotation_figure(self._payload())
         self.assertTrue(fig.layout.autosize)
         self.assertNotEqual(fig.layout.width, 1220)
         self.assertTrue(fig.layout.width in (None, 0) or fig.layout.width is False)
-        self.assertEqual(fig.layout.dragmode, False)
-
-    def test_score_text_is_larger_and_contrasts_with_cell(self):
-        z = [[1, 12], [None, 2]]
-        colors = score_text_colors(z, 12)
-        self.assertEqual(colors[0][0], '#1e293b')
-        self.assertEqual(colors[0][1], '#ffffff')
-        fig = build_rotation_figure(self._payload())
-        labels = [trace for trace in fig.data if trace.type == 'scatter' and trace.mode == 'text']
-        self.assertTrue(labels)
-        self.assertEqual({trace.textfont.size for trace in labels}, {14})
-        by_color = {trace.textfont.color: list(trace.text) for trace in labels}
-        self.assertIn('12', by_color['#ffffff'])
-        self.assertIn('1', by_color['#1e293b'])
+        self.assertEqual(fig.layout.dragmode, 'pan')
+        self.assertEqual(fig.layout.xaxis.minallowed, 0)
+        self.assertEqual(fig.layout.xaxis.maxallowed, 135)
+        self.assertTrue(fig.layout.yaxis.fixedrange)
+        self.assertTrue(fig.layout.yaxis2.fixedrange)
+        self.assertTrue(fig.layout.yaxis3.fixedrange)
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
