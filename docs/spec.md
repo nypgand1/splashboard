@@ -5,7 +5,7 @@ This file is the source of truth for product behavior. Tests and later feature w
 ## Scope
 
 - Web dashboard for Taipei Fubon Braves schedule and single-game views.
-- UI theme is **Scheme A: Braves Japanese Clean & Modern (日式簡約・青空水無月 Light Mode)**, inspired by the official **Taipei Fubon Braves** visual identity:
+- UI theme is **Braves Japanese Clean & Modern (日式簡約 Braves 青空藍)**, inspired by the official **Taipei Fubon Braves** visual identity:
   - `--bg`: `#f8fafc` (pure cool light white background)
   - `--navbar-bg`: `rgba(255, 255, 255, 0.9)` with `backdrop-filter: blur(16px)`
   - `--navbar-border`: `#00b4d8` (2px solid cyan bottom border)
@@ -16,7 +16,7 @@ This file is the source of truth for product behavior. Tests and later feature w
   - `--row-hover`: `#e0f2fe` (gentle cyan hover highlight)
   - `--card-bg`: `#ffffff` (white card containers with 10px radius & `#e2e8f0` border)
 - Tabs: Top radius 10px, active tab filled with `linear-gradient(135deg, #0077b6, #00b4d8)` and pure white text.
-- Page chrome is `dmc.AppShell` with `AppShellHeader` (navbar) and `AppShellMain` (pages). Scheme A tokens apply on the AppShell, not a separate Bootstrap frame. Navbar and main share one card: same width, fused corners. The header is **in document flow** (not `position: sticky` / `fixed`) so it never overlays the game banner or other content. Main padding is content padding only; do not rely on an AppShell header offset.
+- Page chrome is `dmc.AppShell` with `AppShellHeader` (navbar) and `AppShellMain` (pages). Theme tokens apply on the AppShell, not a separate Bootstrap frame. Navbar and main share one card: same width, fused corners. The header is **in document flow** (not `position: sticky` / `fixed`) so it never overlays the game banner or other content. Main padding is content padding only; do not rely on an AppShell header offset.
 - Icons use `DashIconify` (Tabler). Bootstrap Icons is not loaded. Report page-delete buttons created in JS use an inline SVG.
 - Tables & Alignment Rules (strictly unified across `dmc.Table` and `dag.AgGrid`):
   - Every header cell and data cell is **center-aligned**, including `Time`, `Player`, `Lineup`, `Lineups`, `Team`, and all numeric / time statistics.
@@ -35,7 +35,7 @@ This file is the source of truth for product behavior. Tests and later feature w
 ### Home `/`
 
 - Show `dmc.Skeleton` while the current-season schedule loads.
-- Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Scheme A Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. Home has no `dcc.Interval`.
+- Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Theme Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. Home has no `dcc.Interval`.
 - The hero reuses `ui_kit.game_banner`: away / scores / home at `fw=800/900`, scores `#0077b6`, status `dmc.Badge` from `BADGE_STYLES` with the raw `status` label, meta `size="xs"` dimmed `date • time • venue`. The hero ignores SHOW and GAME TYPE.
 - **GAME TYPE** `dmc.SegmentedControl` (Lineup pattern: dimmed `size="xs"` label + `size="xs"` `radius="md"` control). Options are the distinct `fixtureType` values this season, insertion order from the sorted schedule. Label = Title Case of the raw enum (`REGULAR` → `Regular`). Hide the control when the season has 0–1 distinct types. Default, computed once on Home load: live-play game's type, else first upcoming's type, else latest finished's type. User changes stick until reload. Do not print Game Type on each row.
 - **SHOW** `dmc.SegmentedControl`, same quiet pattern. Chips: Upcoming / All / Finished. Default **Upcoming**.
@@ -58,7 +58,7 @@ This file is the source of truth for product behavior. Tests and later feature w
 
 ### Game `/game/<game_id>`
 
-Top tabs, left to right, rendered via `dmc.Tabs` with Scheme A chrome (top radius 10px, active tab `linear-gradient(135deg, #0077b6, #00b4d8)` and white text). Tab icons use `DashIconify` (Tabler).
+Top tabs, left to right, rendered via `dmc.Tabs` with theme chrome (top radius 10px, active tab `linear-gradient(135deg, #0077b6, #00b4d8)` and white text). Tab icons use `DashIconify` (Tabler).
 
 1. Box Score (tab_id: `tab-bs`)
 2. Rotation (tab_id: `tab-rotation`)
@@ -121,14 +121,14 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 
 ## Report
 
-Decisions: `docs/adr/0001-report-canvas.md`. Cases: `docs/report-tests.md`.
+Decisions: `docs/adr/0001-report-canvas.md`. Tests: `tests/test_report_layout.py`.
 
 Throw away the previous Report canvas (Sortable, `window.print()` as the primary PDF path, match-info as a draggable block). Keep `PostGameReport` as the data source. Box Score, Rotation, Play-By-Play, and Lineup Stats stay as they are.
 
 ### Paper and chrome
 
 - Paper is A4 **landscape** (297mm × 210mm). Opaque white. No glass, no blur.
-- Editor chrome (toolbar, page list, add-block palette, block handles, page-delete) uses Liquid glass. Other tabs and the navbar use Scheme A inside `dmc.AppShell`.
+- Editor chrome (toolbar, page list, add-block palette, block handles, page-delete) uses Liquid glass. Other tabs and the navbar use the Japanese Clean & Modern theme inside `dmc.AppShell`.
 - Toolbar has no "Report" title. Add note, Add image, Add table, and Reset layout are `DashIconify` Tabler icons (`tabler:notebook`, `tabler:photo`, `tabler:table`, `tabler:restore`) with `aria-label` `Add note` / `Add image` / `Add table` / `Reset layout`. Add table opens a Liquid-glass menu of builtin tables (Player Stats before Lineup Stats). PDF stays a text button.
 - The toolbar is the same width as one A4 paper (297mm) and left-aligned with the papers. The page list sits to the right of that column; do not center the toolbar independently of the paper.
 - Reset layout asks `Reset to the default layout? This cannot be undone.` with `Cancel` / `Reset`. Confirming replaces the canvas with `default_layout` and writes that JSON to `localStorage`. Stored layouts are not auto-discarded.
@@ -147,7 +147,7 @@ Throw away the previous Report canvas (Sortable, `window.print()` as the primary
 - Bullet List and Ordered List support multi-level nested lists. Pressing `Tab` indents the current item into a sub-list; pressing `Shift + Tab` outdents back to the parent list. Bullet List markers cascade as `disc` (Level 1) → `circle` (Level 2) → `square` (Level 3+). Ordered List numbers cascade as `decimal` (1, 2, 3) → `lower-alpha` (a, b, c) → `lower-roman` (i, ii, iii).
 - Note `content` is stored as **HTML** (Tiptap native output). Old plain-text content from previous versions is forward-compatible: Tiptap renders plain text as a `<p>` paragraph.
 - Tiptap and its extensions load via CDN `<script>` tags. Python renders `contenteditable` divs; JS mounts Tiptap editors on them after GridStack init. This avoids React component lifecycle conflicts with GridStack `cloneNode`. All Notes—including those added dynamically via JS—get a Tiptap editor mounted in JS.
-- There is no `spacer` on any default page.
+- There is no `spacer` on any page.
 
 ### Block types
 
@@ -156,7 +156,6 @@ Throw away the previous Report canvas (Sortable, `window.print()` as the primary
 | `builtin_table` | Read-only table from another tab's computed data |
 | `text` | Editable notes |
 | `image` | User-uploaded raster, stored as a data URL |
-| `spacer` | Unused in the default layout |
 
 Allowed `table_key` values: `score_group`, `t_adv_df`, `t_df`, `k_df`, `lineup_home`, `lineup_away`, `p_df_home`, `p_df_away`.
 

@@ -15,7 +15,7 @@ ALLOWED_TABLE_KEYS = (
     'lineup_home',
     'lineup_away',
 )
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'spacer')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image')
 
 
 def _layout():
