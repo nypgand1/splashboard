@@ -20,6 +20,7 @@ from ui_kit import (
     EMPTY_HOME_NEXT,
     ERROR_GAME,
     ERROR_HOME,
+    game_banner,
     loading_skeleton,
 )
 
@@ -221,6 +222,19 @@ def _string_values(tree):
     return values
 
 
+def _style(node):
+    return getattr(node, 'style', None) or {}
+
+
+def _by_class(tree, name):
+    found = []
+    for node in walk(tree):
+        class_name = getattr(node, 'className', None) or ''
+        if name in str(class_name).split():
+            found.append(node)
+    return found
+
+
 class HomeScheduleTests(unittest.TestCase):
     def _load(self, rows):
         df = _schedule_df(rows)
@@ -288,7 +302,7 @@ class HomeScheduleTests(unittest.TestCase):
         self.assertEqual(show.value, 'upcoming')
         self.assertEqual(
             [item['value'] for item in show.data],
-            ['upcoming', 'all', 'finished'],
+            ['upcoming', 'finished', 'all'],
         )
         self.assertEqual(game_type.value, 'REGULAR')
 
@@ -346,8 +360,9 @@ class HomeScheduleTests(unittest.TestCase):
             ),
         ])
         values = _string_values(tree)
-        self.assertIn('2026-03-15', values)
-        self.assertIn('18:30', values)
+        self.assertIn('2026-03-15 Sun', values)
+        self.assertIn('18:30 | Arena', values)
+        self.assertIn('2026-03-15 Sun | 18:30 | Arena', values)
         self.assertFalse(any('T' in value and value.startswith('2026-') for value in values))
 
     def test_clickable_rows_and_non_links(self):
@@ -388,6 +403,89 @@ class HomeScheduleTests(unittest.TestCase):
         self.assertIn(EMPTY_HOME_FILTER_NEXT, markup)
         self.assertNotIn(EMPTY_HOME, markup)
         self.assertIn('Live Away', str(_papers(tree)[0]))
+
+    def test_compact_row_three_digit_well_meta_and_badge(self):
+        records = home_page.schedule_records(_schedule_df([
+            _home_row(
+                status='IN_PROGRESS',
+                fixtureId='live',
+                startTimeLocal='2026-03-15T18:30:00',
+                away_team='Taipei Fubon Braves',
+                home_team='Formosa Dreamers',
+                teamScoreAway=108,
+                teamScoreHome=112,
+                Venue='Taipei Heping Basketball Gymnasium',
+            ),
+        ]))
+        tree = home_page.render_schedule_list(records, 'upcoming', None)
+        score_line = _by_class(tree, 'home-schedule-score-line')[0]
+        meta_line = _by_class(tree, 'home-schedule-meta-line')[0]
+        well = _by_class(tree, 'home-score-well')[0]
+
+        self.assertFalse(find_type(score_line, dmc.Badge))
+        self.assertEqual(meta_line.justify, 'center')
+        badges = find_type(meta_line, dmc.Badge)
+        self.assertEqual(len(badges), 1)
+        self.assertEqual(badges[0].size, 'xs')
+        self.assertEqual(badges[0].children, 'IN_PROGRESS')
+        self.assertIn('18:30 | Taipei Heping Basketball Gymnasium', _string_values(meta_line))
+        meta_texts = [
+            node for node in walk(meta_line)
+            if isinstance(node, dmc.Text) and node.children == (
+                '18:30 | Taipei Heping Basketball Gymnasium'
+            )
+        ]
+        self.assertEqual(len(meta_texts), 1)
+        self.assertTrue(meta_texts[0].truncate)
+        self.assertEqual(meta_texts[0].miw, 0)
+        self.assertNotEqual(getattr(meta_texts[0], 'flex', None), 1)
+
+        well_texts = [node for node in walk(well) if isinstance(node, dmc.Text)]
+        self.assertEqual([node.children for node in well_texts], ['108', ':', '112'])
+        for node in well_texts:
+            if node.children in ('108', '112'):
+                self.assertEqual(node.miw, '3ch')
+                self.assertEqual(_style(node).get('fontVariantNumeric'), 'tabular-nums')
+                self.assertEqual(node.c, '#0077b6')
+                self.assertEqual(node.fw, 900)
+                self.assertEqual(node.fz, '22px')
+        for node in walk(tree):
+            self.assertNotIn(getattr(node, 'w', None), (68, 140, '68', '140'))
+
+        names = [
+            node for node in walk(score_line)
+            if isinstance(node, dmc.Text)
+            and node.children in ('Taipei Fubon Braves', 'Formosa Dreamers')
+        ]
+        self.assertEqual(len(names), 2)
+        for node in names:
+            self.assertTrue(node.truncate)
+            self.assertEqual(node.flex, 1)
+            self.assertEqual(node.miw, 0)
+            self.assertEqual(node.fw, 800)
+            self.assertEqual(node.fz, '16px')
+
+    def test_compact_row_at_well_and_omits_dangling_meta_pipe(self):
+        records = home_page.schedule_records(_schedule_df([
+            _home_row(
+                status='SCHEDULED',
+                fixtureId='up',
+                startTimeLocal='2026-03-16T19:00:00',
+                Venue='',
+            ),
+        ]))
+        tree = home_page.render_schedule_list(records, 'upcoming', None)
+        well = _by_class(tree, 'home-score-well')[0]
+        meta_line = _by_class(tree, 'home-schedule-meta-line')[0]
+        well_values = _string_values(well)
+        self.assertEqual(well_values, ['@'])
+        spacers = [
+            node for node in walk(well)
+            if getattr(node, 'miw', None) == '3ch'
+        ]
+        self.assertEqual(len(spacers), 2)
+        self.assertIn('19:00', _string_values(meta_line))
+        self.assertFalse(any('|' in value for value in _string_values(meta_line)))
 
 
 class PlayerDotColorTests(unittest.TestCase):
@@ -460,6 +558,40 @@ class GameBannerStatusTests(unittest.TestCase):
         self.assertIn('IN_PROGRESS', markup)
         self.assertNotIn('LIVE', markup)
         self.assertEqual(game_page.status_bucket('IN_PROGRESS'), 'live')
+        self.assertIn('2026-01-01 | 19:00 | Arena', _string_values(tree))
+        self.assertNotIn('2026-01-01 • 19:00 • Arena', _string_values(tree))
+        badges = find_type(tree, dmc.Badge)
+        self.assertEqual(badges[0].size, 'md')
+        well = _by_class(tree, 'home-score-well')[0]
+        self.assertEqual(_string_values(well), ['2', ':', '1'])
+        for node in walk(well):
+            if getattr(node, 'children', None) in ('2', '1'):
+                self.assertEqual(node.miw, '3ch')
+                self.assertEqual(_style(node).get('fontVariantNumeric'), 'tabular-nums')
+        self.assertFalse(find_type(_by_class(tree, 'home-schedule-score-line')[0], dmc.Badge))
+        meta_line = _by_class(tree, 'home-schedule-meta-line')[0]
+        self.assertEqual(meta_line.justify, 'center')
+        self.assertEqual(find_type(meta_line, dmc.Badge)[0].size, 'md')
+
+    def test_banner_shares_two_line_composition_with_date_in_cluster(self):
+        tree = game_banner(
+            home_team='Taipei Fubon Braves',
+            away_team='Formosa Dreamers',
+            home_score=112,
+            away_score=108,
+            status='FINISHED',
+            date='2026-05-30',
+            time='19:00',
+            venue='Taipei Heping Basketball Gymnasium',
+        )
+        values = _string_values(tree)
+        self.assertIn('2026-05-30 | 19:00 | Taipei Heping Basketball Gymnasium', values)
+        self.assertNotIn('19:00 | Taipei Heping Basketball Gymnasium', values)
+        self.assertEqual(find_type(tree, dmc.Badge)[0].size, 'md')
+        well_values = _string_values(_by_class(tree, 'home-score-well')[0])
+        self.assertEqual(well_values, ['108', ':', '112'])
+        self.assertFalse(find_type(_by_class(tree, 'home-schedule-score-line')[0], dmc.Badge))
+        self.assertEqual(_by_class(tree, 'home-schedule-meta-line')[0].justify, 'center')
 
 
 class PageDeleteSvgTests(unittest.TestCase):

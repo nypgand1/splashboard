@@ -36,21 +36,26 @@ This file is the source of truth for product behavior. Tests and later feature w
 
 - Show `dmc.Skeleton` while the current-season schedule loads.
 - Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Theme Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. Home has no `dcc.Interval`.
-- The hero reuses `ui_kit.game_banner`: away / scores / home at `fw=800/900`, scores `#0077b6`, status `dmc.Badge` from `BADGE_STYLES` with the raw `status` label, meta `size="xs"` dimmed `date • time • venue`. The hero ignores SHOW and GAME TYPE.
-- **GAME TYPE** `dmc.SegmentedControl` (Lineup pattern: dimmed `size="xs"` label + `size="xs"` `radius="md"` control). Options are the distinct `fixtureType` values this season, insertion order from the sorted schedule. Label = Title Case of the raw enum (`REGULAR` → `Regular`). Hide the control when the season has 0–1 distinct types. Default, computed once on Home load: live-play game's type, else first upcoming's type, else latest finished's type. User changes stick until reload. Do not print Game Type on each row.
-- **SHOW** `dmc.SegmentedControl`, same quiet pattern. Chips: Upcoming / All / Finished. Default **Upcoming**.
-  - Upcoming = live-play ∪ unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty).
-  - Finished = `FINISHED` / `CONFIRMED`.
-  - All = everything, including void.
+- The hero reuses `ui_kit.game_banner` and **shares the compact-row two-line composition** (full-width score line, then a tight centered meta cluster). Hero stays banner-tall via Paper padding and badge `size="md"` (list badges stay `size="xs"`). Do not put the badge in a right-hand column that steals width from the score well. Meta cluster is `date | time | venue` plus the badge (omit missing parts; no dangling `|`). Home hero date is `YYYY-MM-DD Day`; Game page banner date stays ISO `YYYY-MM-DD`. The hero ignores SHOW and GAME TYPE.
+- **Filter controls**: Quiet `dmc.SegmentedControl` without verbose labels.
+  - Game Type: Options are distinct `fixtureType` values this season (`Regular`, `Playoff`). Hidden when 0–1 distinct types.
+  - Status: Chips ordered as `Upcoming` / `Finished` / `All`. Default **Upcoming**.
+    - Upcoming = live-play ∪ unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty).
+    - Finished = `FINISHED` / `CONFIRMED`.
+    - All = everything, including void.
 - **Status badge** on each compact row: badge **color is the bucket**; **label is the raw API `status`** (strip, no rewrite). `IN_PROGRESS` stays `IN_PROGRESS` (not `LIVE`). Empty status shows `UNKNOWN`.
   - Unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty): cyan (`#e0f2fe` + `#0284c7`).
   - Live-play (`PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS`): coral (`#fee2e2` + `#dc2626`).
   - Finished (`FINISHED`, `CONFIRMED`): gray (`#f1f5f9` + `#475569`).
   - Void (`CANCELLED`, `BYE`, `ABANDONED`): colder gray (`#e2e8f0` + `#334155`).
-- **Score** on each compact row uses `format_score_display` unchanged:
-  - Finished, live-play, and `ABANDONED`: numeric scores (including `0`) render `88 : 79`; missing scores render `vs`. Never fabricate `- : -` or `0 : 0`.
-  - Unplayed and void except `ABANDONED`: display `—` (em dash). No colon.
-- Compact row scan line: time (`HH:MM` from `startTimeLocal`; drop the date and the ISO `T`), away name, score, home name, status badge. Venue dimmed on the same row or a second line. Height about 56–72px. Date group headers are `YYYY-MM-DD`, chronological (earliest date first) inside the current filter.
+- **Score** on each compact row uses `format_score_display`:
+  - Finished, live-play, and `ABANDONED`: numeric scores render `Away Score : Home Score` (e.g. `88 : 79`); missing scores render `@`. Never fabricate `- : -`.
+  - Unplayed and void: display `@` (Away @ Home convention).
+- Compact row scan (list, not a mini-hero; same skeleton at 375px and 1280px):
+  - Score line: Away team (`16px`, `fw=800`, right, ellipsis), Score / `@` (`22px`, `fw=900`, `#0077b6`), Home team (`16px`, `fw=800`, left, ellipsis). No status badge on this line.
+  - Score well: two `min-width: 3ch` slots with `font-variant-numeric: tabular-nums`; away score right-aligned, home score left-aligned, colon centered. `@` uses the same well (3ch spacers either side of `@`). Never shrink the well to fit names. Never fixed `w=68` on the well or `w=140` on team names. Team names `flex: 1; min-width: 0`; single-line ellipsis; no wrap; no abbreviation table.
+  - Meta cluster under the score, centered as one nowrap group: `HH:MM | Venue` (omit missing parts; no dangling `|`; ellipsis) glued to the status badge `size="xs"`. The cluster is not `space-between`. Meta text truncates; the badge does not shrink. Date is shown once in the group header `YYYY-MM-DD Day` (e.g. `2026-05-30 Sat`).
+- **Sorting**: Upcoming games sort chronologically nearest first (ascending); Finished games sort newest completed first (descending).
 - **Navigation**: the whole compact row is the hit target. Clickable iff `score_is_clickable`: live-play (including `PENDING`), finished, `ABANDONED`. The row is an `html.A` / `dmc.Anchor` to `/game/<fixtureId>`. Pointer cursor and `--row-hover: #e0f2fe` on clickable rows only. Unplayed and `CANCELLED`/`BYE` are not links (default cursor, no hover). No per-row Dash `n_clicks`. No `ScheduleScoreLink`.
 - Filters only change the list. Empty filtered list (season itself is not empty): `No games in this view.` Next step: `Switch Game Type or Show.` Keep hero + filters; do not replace the page with the season-empty copy.
 - On Synergy failure: `dmc.Alert` with `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception).
@@ -72,7 +77,7 @@ Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab 
 - Report canvas tables strictly use `dmc.Table` (per ADR 0001) for stable A4 rendering and PDF export. No `dbc.Table`, `dbc.Row`, or `dbc.Col` is used anywhere in the codebase.
 - Box Score quarter and team summary tables use `dmc.TableThead` / `dmc.TableTh` / `dmc.TableTd` (not raw `html.Th`).
 - Loading uses `dmc.Skeleton`. Empty copy is `No data available.` Next step: `Open another game from Home.` Error uses `dmc.Alert` with `Failed to load this view. Please try again later.` (no traceback).
-- The game banner date is ISO `YYYY-MM-DD`. The banner status badge uses the same bucket colors and raw `status` label as Home (not `● LIVE`).
+- The game banner date is ISO `YYYY-MM-DD`. It uses the same two-line `game_banner` composition as Home (score line, then `date | time | venue` plus badge `size="md"`). The banner status badge uses the same bucket colors and raw `status` label as Home (not `● LIVE`).
 
 A `dcc.Store` that is `None` or invalid JSON is treated as an empty object. Callbacks must not crash.
 
@@ -82,11 +87,11 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 
 | Bucket | Statuses | `/live` | Game interval | Report tab | Home score |
 |---|---|---|---|---|---|
-| Unplayed | `SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown, empty | no | off | hidden | `—`, not a link |
-| Live-play | `PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS` | yes | 30s | hidden | link: `H : A` or `vs` |
-| Finished | `FINISHED`, `CONFIRMED` | no | off | shown | link: `H : A` or `vs` |
-| Void | `CANCELLED`, `BYE` | no | off | hidden | `—`, not a link |
-| Void (`ABANDONED`) | `ABANDONED` | no | off | hidden | link: `H : A` or `vs` |
+| Unplayed | `SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown, empty | no | off | hidden | `@`, not a link |
+| Live-play | `PENDING`, `ABOUT_TO_START`, `WARM_UP`, `ON_PITCH`, `IN_PROGRESS` | yes | 30s | hidden | link: `A : H` or `@` |
+| Finished | `FINISHED`, `CONFIRMED` | no | off | shown | link: `A : H` or `@` |
+| Void | `CANCELLED`, `BYE` | no | off | hidden | `@`, not a link |
+| Void (`ABANDONED`) | `ABANDONED` | no | off | hidden | link: `A : H` or `@` |
 
 - Finished games freeze the report cache (no TTL rebuild).
 - Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play and Rotation share that cadence.

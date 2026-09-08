@@ -5,8 +5,6 @@ import pandas as pd
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.game_status import (
-    BADGE_STYLES,
-    badge_label,
     format_score_display,
     score_is_clickable,
     status_bucket,
@@ -21,7 +19,12 @@ from ui_kit import (
     error_alert,
     filter_control,
     game_banner,
+    join_meta,
     loading_skeleton,
+    matchup_line,
+    matchup_score_parts,
+    meta_cluster,
+    status_badge,
 )
 
 register_page(
@@ -32,12 +35,12 @@ register_page(
 )
 
 SHOW_UPCOMING = 'upcoming'
-SHOW_ALL = 'all'
 SHOW_FINISHED = 'finished'
+SHOW_ALL = 'all'
 SHOW_OPTIONS = [
     {'label': 'Upcoming', 'value': SHOW_UPCOMING},
-    {'label': 'All', 'value': SHOW_ALL},
     {'label': 'Finished', 'value': SHOW_FINISHED},
+    {'label': 'All', 'value': SHOW_ALL},
 ]
 
 
@@ -133,7 +136,7 @@ def _parse_start(value):
 def format_row_date(value):
     parsed = _parse_start(value)
     if parsed is not None:
-        return parsed.strftime('%Y-%m-%d')
+        return parsed.strftime('%Y-%m-%d %a')
     text = str(value or '')
     if 'T' in text:
         return text.split('T', 1)[0]
@@ -232,12 +235,17 @@ def filter_schedule_records(records, show, game_type):
             row for row in rows
             if status_bucket(row.get('status')) in ('live', 'unplayed')
         ]
+        rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.max)
     elif show == SHOW_FINISHED:
         rows = [
             row for row in rows
             if status_bucket(row.get('status')) == 'finished'
         ]
-    rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.max)
+        # Finished games: newest completed first (descending)
+        rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.min, reverse=True)
+    else:
+        # All: chronological order
+        rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.max)
     return rows
 
 
@@ -271,34 +279,29 @@ def render_hero(records):
     )
 
 
-def _status_badge(status):
-    bucket = status_bucket(status)
-    return dmc.Badge(
-        badge_label(status),
-        variant='light',
-        size='sm',
-        radius='sm',
-        style={'fontWeight': 700, **BADGE_STYLES[bucket]},
-    )
-
-
 def _compact_row(record):
-    inner = dmc.Group(
+    away_team = record.get('awayTeam') or ''
+    home_team = record.get('homeTeam') or ''
+    status = record.get('status') or ''
+    away_display, home_display = matchup_score_parts(
+        status,
+        record.get('homeScore'),
+        record.get('awayScore'),
+    )
+    inner = dmc.Stack(
         [
-            dmc.Text(format_row_time(record.get('startTimeLocal')), fw=600, size='sm', w=48),
-            dmc.Text(record.get('awayTeam') or '', fw=700, size='sm'),
-            dmc.Text(record.get('score') or '—', fw=800, size='sm', c='#0077b6'),
-            dmc.Text(record.get('homeTeam') or '', fw=700, size='sm'),
-            _status_badge(record.get('status')),
-            dmc.Text(record.get('venue') or '', size='xs', c='dimmed'),
+            matchup_line(away_team, home_team, away_display, home_display),
+            meta_cluster(
+                join_meta(
+                    format_row_time(record.get('startTimeLocal')),
+                    record.get('venue') or '',
+                ),
+                status_badge(status, 'xs'),
+            ),
         ],
-        gap='sm',
-        align='center',
-        wrap='wrap',
-        justify='flex-start',
+        gap=4,
         px='md',
         py='sm',
-        style={'minHeight': '56px'},
     )
     fixture_id = record.get('fixtureId') or ''
     if score_is_clickable(record.get('status')):
@@ -306,6 +309,7 @@ def _compact_row(record):
             inner,
             href=f'/game/{fixture_id}',
             className='home-schedule-row home-schedule-row-clickable',
+            style={'display': 'block', 'textDecoration': 'none', 'color': 'inherit'},
         )
     return dmc.Box(inner, className='home-schedule-row home-schedule-row-static')
 
@@ -362,12 +366,12 @@ def render_home_page(records, show=SHOW_UPCOMING, game_type=None):
             dcc.Store(id='home-schedule-store', data=records),
             html.Div(render_hero(records), id='home-hero'),
             filter_control(
-                'GAME TYPE',
+                '',
                 type_control,
                 wrap_id='home-game-type-wrap',
                 visible=len(options) > 1,
             ),
-            filter_control('SHOW', show_control),
+            filter_control('', show_control),
             html.Div(
                 render_schedule_list(records, show, game_type),
                 id='home-schedule-list',

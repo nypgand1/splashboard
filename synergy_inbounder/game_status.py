@@ -18,6 +18,7 @@ BUCKET_LIVE = 'live'
 BUCKET_UNPLAYED = 'unplayed'
 BUCKET_VOID = 'void'
 
+SCORE_AT = '@'
 SCORE_EM_DASH = '—'
 SCORE_VS = 'vs'
 
@@ -102,7 +103,7 @@ def _is_numeric_score(val):
 
 def format_score_display(status, home_score=None, away_score=None):
     if not score_is_clickable(status):
-        return SCORE_EM_DASH
-    if _is_numeric_score(home_score) and _is_numeric_score(away_score):
-        return f"{home_score} : {away_score}"
-    return SCORE_VS
+        return SCORE_AT
+    if _is_numeric_score(away_score) and _is_numeric_score(home_score):
+        return f"{away_score} : {home_score}"
+    return SCORE_AT

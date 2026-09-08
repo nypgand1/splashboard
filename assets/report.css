@@ -1121,6 +1121,22 @@ a.home-schedule-row {
     border-bottom: 1px solid var(--border);
 }
 
+.home-schedule-score-line,
+.home-schedule-meta-line,
+.home-schedule-meta-cluster {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.home-schedule-score-line,
+.home-schedule-meta-line {
+    width: 100%;
+}
+
+.home-score-well {
+    flex-shrink: 0;
+}
+
 .home-schedule-list .home-schedule-row:last-child {
     border-bottom: none;
 }

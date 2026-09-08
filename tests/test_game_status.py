@@ -2,6 +2,7 @@ import unittest
 
 from synergy_inbounder.game_status import (
     BADGE_STYLES,
+    SCORE_AT,
     SCORE_EM_DASH,
     SCORE_VS,
     badge_label,
@@ -39,14 +40,14 @@ class StatusBucketTests(unittest.TestCase):
         self.assertFalse(should_use_live_endpoints(status='ABANDONED'))
 
     def test_score_display_and_clickable(self):
-        self.assertEqual(format_score_display('SCHEDULED', 1, 2), SCORE_EM_DASH)
+        self.assertEqual(format_score_display('SCHEDULED', 1, 2), SCORE_AT)
         self.assertFalse(score_is_clickable('IF_NEEDED'))
         self.assertFalse(score_is_clickable('CANCELLED'))
-        self.assertEqual(format_score_display('FINISHED', 88, 79), '88 : 79')
+        self.assertEqual(format_score_display('FINISHED', 79, 88), '88 : 79')
         self.assertEqual(format_score_display('IN_PROGRESS', 0, 0), '0 : 0')
-        self.assertEqual(format_score_display('PENDING', None, None), SCORE_VS)
-        self.assertEqual(format_score_display('ABANDONED', 12, 10), '12 : 10')
-        self.assertEqual(format_score_display('ABANDONED', None, None), SCORE_VS)
+        self.assertEqual(format_score_display('PENDING', None, None), SCORE_AT)
+        self.assertEqual(format_score_display('ABANDONED', 10, 12), '12 : 10')
+        self.assertEqual(format_score_display('ABANDONED', None, None), SCORE_AT)
         self.assertTrue(score_is_clickable('ABANDONED'))
         self.assertTrue(score_is_clickable('PENDING'))
 
