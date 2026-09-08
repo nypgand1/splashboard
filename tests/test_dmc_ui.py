@@ -137,21 +137,57 @@ class FourStateTests(unittest.TestCase):
             'scoring': {'home': [1, 12], 'away': [None, 2]},
         }
         tree = game_page.render_rotation_children(json.dumps(payload))
-        papers = find_type(tree, dmc.Paper)
+        self.assertFalse(find_type(tree, dmc.Paper))
+        self.assertNotIn('Last Update', str(tree))
+        fig, graph_style, paper_style = game_page.update_rotation_graph(
+            json.dumps(payload), {}, 'tab-rotation',
+        )
+        self.assertIn(fig.layout.dragmode, ('pan', False))
+        self.assertEqual(graph_style.get('width'), '100%')
+        self.assertTrue(graph_style.get('height', '').endswith('px'))
+        self.assertEqual(paper_style.get('overflow'), 'hidden')
+        self.assertNotEqual(paper_style.get('display'), 'none')
+
+    def test_rotation_callback_hosts_live_in_page_layout(self):
+        tree = game_page.layout('g1')
+        ids = {getattr(node, 'id', None) for node in walk(tree)}
+        self.assertIn('rotation-period', ids)
+        self.assertIn('rotation-show-dnp', ids)
+        self.assertIn('rotation-graph', ids)
+        self.assertIn('rotation-graph-paper', ids)
+        self.assertIn('rotation-live', ids)
+        self.assertIn('rotation-last-update', ids)
+        self.assertIn('rotation-click-t', ids)
+        wrap = next(node for node in walk(tree) if getattr(node, 'id', None) == 'wrap-rotation')
+        self.assertEqual(getattr(wrap.children[0], 'id', None), 'rotation-last-update')
+        self.assertIn('Last Update', str(wrap.children[0]))
+        self.assertTrue(find_type(tree, dmc.SegmentedControl))
+        switches = [node for node in find_type(tree, dmc.Switch) if node.id == 'rotation-show-dnp']
+        self.assertEqual(switches[0].label, 'Show DNP')
         graphs = [node for node in walk(tree) if getattr(node, '_type', None) == 'Graph'
                   or node.__class__.__name__ == 'Graph']
-        self.assertTrue(find_type(tree, dmc.Text))
-        self.assertEqual(len(papers), 1)
-        self.assertEqual(papers[0].className, 'braves-card-wrapper')
-        self.assertEqual(len(graphs), 1)
-        self.assertEqual(graphs[0].style.get('width'), '100%')
-        self.assertTrue(graphs[0].config.get('responsive'))
-        self.assertFalse(graphs[0].config.get('displayModeBar'))
-        self.assertFalse(graphs[0].config.get('scrollZoom'))
-        self.assertNotEqual(getattr(graphs[0], 'className', None), 'braves-table-scroll')
-        fig = graphs[0].figure
-        self.assertIn(fig.layout.dragmode, ('pan', False))
-        self.assertIn('Last Update', str(tree))
+        rotation_graph = next(node for node in graphs if getattr(node, 'id', None) == 'rotation-graph')
+        self.assertTrue(rotation_graph.config.get('responsive'))
+        self.assertFalse(rotation_graph.config.get('displayModeBar'))
+        self.assertFalse(rotation_graph.config.get('scrollZoom'))
+        self.assertFalse(rotation_graph.config.get('doubleClick'))
+        self.assertNotEqual(getattr(rotation_graph, 'className', None), 'braves-table-scroll')
+
+    def test_rotation_run_buttons_use_short_clock_label(self):
+        payload = {
+            'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],
+            'teams': [
+                {'team_id': 'h', 'team_name': 'Home', 'side': 'home', 'players': [{'label': 'A'}]},
+                {'team_id': 'a', 'team_name': 'Away', 'side': 'away', 'players': [{'label': 'B'}]},
+            ],
+            'margin': [{'t': 0.0, 'margin': 0}],
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 0.0, 'end': 60.0, 'delta': 8}],
+        }
+        tree = game_page.render_rotation_children(json.dumps(payload))
+        buttons = find_type(tree, dmc.Button)
+        self.assertTrue(buttons)
+        self.assertEqual(buttons[0].children, '1Q 02:00–01:00  10–2')
+        self.assertEqual(buttons[0].id, {'type': 'rotation-run', 'index': 0})
 
 
 def _schedule_df(rows):

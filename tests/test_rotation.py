@@ -4,11 +4,18 @@ import unittest
 import pandas as pd
 
 from synergy_reporter.rotation import (
+    apply_camera_relayout,
     build_rotation_figure,
     build_rotation_payload,
+    clamp_time_window,
     clock_to_seconds,
     contrast_text_color,
+    detect_runs,
+    format_run_label,
+    live_playhead_t,
     margin_tick_span,
+    period_clock_label,
+    period_for_window,
     period_label,
     relative_luminance,
     score_text_colors,
@@ -364,13 +371,40 @@ class RotationFigureTests(unittest.TestCase):
             (150.0, 8, 5),   # Away +3 (total 5 consecutive -> momentum broken!)
             (180.0, 11, 5),
         ]
-        from synergy_reporter.rotation import detect_runs
         runs = detect_runs(events, min_delta=8)
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]['side'], 'home')
         self.assertEqual(runs[0]['home_pts'], 8)
         self.assertEqual(runs[0]['away_pts'], 0)
         self.assertEqual(runs[0]['end'], 90.0)
+
+    def test_run_end_is_max_delta_not_trailing_opponent_points(self):
+        events = [
+            (0.0, 0, 0),
+            (30.0, 8, 0),
+            (60.0, 8, 2),
+            (90.0, 8, 4),
+        ]
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]['home_pts'], 8)
+        self.assertEqual(runs[0]['away_pts'], 0)
+        self.assertEqual(runs[0]['end'], 30.0)
+        self.assertEqual(runs[0]['start'], 30.0)
+
+    def test_run_start_trims_to_first_scorer_of_tight_window(self):
+        events = [
+            (0.0, 0, 0),
+            (30.0, 3, 0),
+            (230.0, 6, 0),
+            (260.0, 11, 0),
+        ]
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]['home_pts'], 8)
+        self.assertEqual(runs[0]['away_pts'], 0)
+        self.assertEqual(runs[0]['start'], 230.0)
+        self.assertEqual(runs[0]['end'], 260.0)
 
     def test_run_excludes_slow_blowout_with_high_opponent_scoring(self):
         # 27-18 (delta=9, but opponent scored 18 points) should NOT be considered a Run
@@ -386,7 +420,6 @@ class RotationFigureTests(unittest.TestCase):
             (480.0, 24, 16),
             (540.0, 27, 18),
         ]
-        from synergy_reporter.rotation import detect_runs
         runs = detect_runs(events, min_delta=8)
         self.assertEqual(len(runs), 0)
 
@@ -398,10 +431,127 @@ class RotationFigureTests(unittest.TestCase):
         self.assertTrue(fig.layout.width in (None, 0) or fig.layout.width is False)
         self.assertEqual(fig.layout.dragmode, 'pan')
         self.assertEqual(fig.layout.xaxis.minallowed, 0)
-        self.assertEqual(fig.layout.xaxis.maxallowed, 135)
+        self.assertEqual(fig.layout.xaxis.maxallowed, 120)
         self.assertTrue(fig.layout.yaxis.fixedrange)
         self.assertTrue(fig.layout.yaxis2.fixedrange)
         self.assertTrue(fig.layout.yaxis3.fixedrange)
+
+    def test_playhead_dims_bench_and_marks_on_court(self):
+        payload = self._payload()
+        fig = build_rotation_figure(payload, playhead=30.0)
+        shapes = list(fig.layout.shapes or [])
+        self.assertTrue(any(
+            abs(getattr(shape, 'x0', -1) - 30.0) < 1e-6
+            and abs(getattr(shape, 'x1', -1) - 30.0) < 1e-6
+            for shape in shapes
+        ))
+        bar_y = [trace.y[0] for trace in fig.data if trace.type == 'bar']
+        self.assertTrue(any(str(label).startswith('● ') for label in bar_y))
+
+    def test_hides_dnp_rows_unless_requested(self):
+        payload = self._payload()
+        payload['teams'][0]['players'].append({
+            'label': '#2 Sit',
+            'dnp': True,
+            'stints': [],
+        })
+        hidden = build_rotation_figure(payload, show_dnp=False)
+        shown = build_rotation_figure(payload, show_dnp=True)
+        hidden_y = [trace.y[0] for trace in hidden.data if getattr(trace, 'y', None)]
+        shown_y = [trace.y[0] for trace in shown.data if getattr(trace, 'y', None)]
+        self.assertFalse(any('Sit' in str(label) for label in hidden_y))
+        self.assertTrue(any('Sit' in str(label) for label in shown_y))
+
+    def test_zoom_range_sets_xaxis(self):
+        fig = build_rotation_figure(self._payload(), x_range=(10, 50))
+        self.assertEqual(list(fig.layout.xaxis.range), [10, 50])
+
+
+class RunLabelTests(unittest.TestCase):
+    def test_same_period_omits_repeated_quarter(self):
+        periods = [{'id': 1, 'label': '1Q', 'seconds': 720, 'start': 0.0, 'end': 720.0}]
+        label = format_run_label(
+            {'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 96.0, 'end': 216.0},
+            periods,
+        )
+        self.assertEqual(label, '1Q 10:24–08:24  10–2')
+
+    def test_cross_period_keeps_both_quarter_labels(self):
+        periods = [
+            {'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0},
+            {'id': 2, 'label': '2Q', 'seconds': 120, 'start': 120.0, 'end': 240.0},
+        ]
+        label = format_run_label(
+            {'side': 'away', 'home_pts': 0, 'away_pts': 8, 'start': 90.0, 'end': 150.0},
+            periods,
+        )
+        self.assertEqual(label, '1Q 00:30–2Q 01:30  8–0')
+
+
+class CameraWindowTests(unittest.TestCase):
+    def test_clamp_stops_at_game_edges_and_keeps_width(self):
+        self.assertEqual(clamp_time_window(-20, 100, 240, 120), (0.0, 120.0))
+        self.assertEqual(clamp_time_window(150, 300, 240, 120), (120.0, 240.0))
+        self.assertEqual(clamp_time_window(0, 240, 240, 120), (60.0, 180.0))
+
+    def test_period_follows_majority_overlap_else_keeps_current(self):
+        periods = [
+            {'id': 1, 'start': 0.0, 'end': 120.0},
+            {'id': 2, 'start': 120.0, 'end': 240.0},
+        ]
+        self.assertEqual(period_for_window(0, 120, periods, current='1'), '1')
+        self.assertEqual(period_for_window(80, 200, periods, current='1'), '2')
+        self.assertEqual(period_for_window(90, 150, periods, current='1'), '1')
+
+    def test_relayout_keeps_slice_width_and_snaps_pinch(self):
+        periods = [
+            {'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0},
+            {'id': 2, 'label': '2Q', 'seconds': 120, 'start': 120.0, 'end': 240.0},
+        ]
+        view = {
+            'period': '1',
+            'x0': 0.0,
+            'x1': 120.0,
+            'slice_width': 120.0,
+            'axis_rev': 0,
+        }
+        panned = apply_camera_relayout(
+            {'xaxis.range[0]': 80.0, 'xaxis.range[1]': 200.0}, view, periods,
+        )
+        self.assertEqual(panned['x0'], 80.0)
+        self.assertEqual(panned['x1'], 200.0)
+        self.assertEqual(panned['slice_width'], 120.0)
+        self.assertEqual(panned['period'], '2')
+        self.assertEqual(panned['axis_rev'], 0)
+        pinched = apply_camera_relayout(
+            {'xaxis.range': [0.0, 240.0]}, view, periods,
+        )
+        self.assertEqual(pinched['x1'] - pinched['x0'], 120.0)
+        self.assertGreater(pinched['axis_rev'], 0)
+
+    def test_all_mode_relayout_cannot_leave_full_game(self):
+        periods = [{'id': 1, 'start': 0.0, 'end': 240.0}]
+        view = {'period': 'all', 'x0': None, 'x1': None, 'slice_width': None, 'axis_rev': 0}
+        out = apply_camera_relayout(
+            {'xaxis.range[0]': 10.0, 'xaxis.range[1]': 130.0}, view, periods,
+        )
+        self.assertIsNone(out['x0'])
+        self.assertIsNone(out['x1'])
+        self.assertEqual(out['period'], 'all')
+        self.assertGreater(out['axis_rev'], 0)
+
+
+class LivePlayheadTests(unittest.TestCase):
+    def test_skips_synthetic_game_end(self):
+        t = live_playhead_t({
+            'margin': [
+                {'t': 0.0, 'desc': 'Game start'},
+                {'t': 80.0, 'desc': 'Lin 3PT'},
+                {'t': 120.0, 'desc': 'Game end'},
+            ],
+            'teams': [],
+        })
+        self.assertEqual(t, 80.0)
 
 
 if __name__ == '__main__':

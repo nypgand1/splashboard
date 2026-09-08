@@ -42,7 +42,13 @@ def loading_skeleton(kind='table'):
             children=[dmc.Skeleton(height=140, radius='md') for _ in range(3)],
         )
     if kind == 'chart':
-        return dmc.Skeleton(height=360, radius='md')
+        return dmc.Stack(
+            [
+                dmc.Skeleton(height=28, radius='sm'),
+                dmc.Skeleton(height=520, radius='md'),
+            ],
+            gap=8,
+        )
     return dmc.Stack(
         [dmc.Skeleton(h=28, radius='sm') for _ in range(8)],
         gap=8,

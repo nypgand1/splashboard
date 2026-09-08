@@ -3,7 +3,7 @@ import io
 import json
 import os
 
-from dash import dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
+from dash import ALL, ctx, dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
 import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
@@ -26,7 +26,12 @@ from synergy_reporter.report_layout import (
     default_layout,
     report_tab_is_visible,
 )
-from synergy_reporter.rotation import build_rotation_figure
+from synergy_reporter.rotation import (
+    apply_camera_relayout,
+    build_rotation_figure,
+    format_run_label,
+    live_playhead_t,
+)
 from ui_kit import (
     EMPTY_GAME,
     EMPTY_GAME_NEXT,
@@ -45,6 +50,14 @@ register_page(
     path_template='/game/<game_id>'
 )
 
+ROTATION_GRAPH_CONFIG = {
+    'displayModeBar': False,
+    'responsive': True,
+    'scrollZoom': False,
+    'doubleClick': False,
+}
+
+
 def _pane(wrap_id, pane_id, kind, hidden=False):
     body = html.Div(id=pane_id, children=loading_skeleton(kind))
     style = {'display': 'none'} if hidden else {}
@@ -53,6 +66,84 @@ def _pane(wrap_id, pane_id, kind, hidden=False):
     return html.Div(
         dcc.Loading(custom_spinner=loading_skeleton(kind), children=body),
         id=wrap_id,
+        style=style,
+    )
+
+
+def _rotation_controls():
+    return dmc.Group(
+        [
+            dmc.Group(
+                [
+                    dmc.Button(
+                        'Live',
+                        id='rotation-live',
+                        size='compact-xs',
+                        variant='filled',
+                        color='blue',
+                        radius='sm',
+                        style={'display': 'none'},
+                    ),
+                    dmc.SegmentedControl(
+                        id='rotation-period',
+                        data=[{'label': 'All', 'value': 'all'}],
+                        value='all',
+                        radius='md',
+                        size='xs',
+                    ),
+                ],
+                gap='sm',
+                align='center',
+                wrap='wrap',
+            ),
+            dmc.Switch(
+                id='rotation-show-dnp',
+                label='Show DNP',
+                checked=False,
+                size='sm',
+                color='gray',
+            ),
+        ],
+        justify='space-between',
+        align='center',
+        mb='sm',
+        wrap='wrap',
+        gap='sm',
+    )
+
+
+def _rotation_graph_paper():
+    return dmc.Paper(
+        dcc.Graph(
+            id='rotation-graph',
+            figure={},
+            config=ROTATION_GRAPH_CONFIG,
+            style={'width': '100%', 'height': '520px'},
+        ),
+        id='rotation-graph-paper',
+        withBorder=True,
+        radius='md',
+        shadow='xs',
+        className='braves-card-wrapper',
+        style={'overflow': 'hidden', 'display': 'none'},
+    )
+
+
+def _rotation_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    pane = html.Div(id='pane-rotation', children=loading_skeleton('chart'))
+    if os.environ.get('SPLASHBOARD_E2E'):
+        body = pane
+    else:
+        body = dcc.Loading(custom_spinner=loading_skeleton('chart'), children=pane)
+    return html.Div(
+        [
+            html.Div(id='rotation-last-update', children=_last_update_span()),
+            _rotation_controls(),
+            body,
+            _rotation_graph_paper(),
+        ],
+        id='wrap-rotation',
         style=style,
     )
 
@@ -123,7 +214,7 @@ def layout(game_id=None):
         ], id='lineup_dropdown_container', style={'display': 'none'}),
 
         _pane('wrap-bs', 'pane-bs', 'cards'),
-        _pane('wrap-rotation', 'pane-rotation', 'chart', hidden=True),
+        _rotation_wrap(hidden=True),
         _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
         _pane('wrap-lineup', 'pane-lineup', 'table', hidden=True),
         _pane('wrap-report', 'pane-report', 'table', hidden=True),
@@ -139,6 +230,18 @@ def layout(game_id=None):
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
         dcc.Store(id='rotation_store'),
+        dcc.Store(id='rotation-click-t'),
+        html.Button(id='rotation-click-fire', n_clicks=0, style={'display': 'none'}),
+        dcc.Store(id='rotation_view_store', data={
+            'period': 'all',
+            't': None,
+            'x0': None,
+            'x1': None,
+            'show_dnp': False,
+            'slice_width': None,
+            'axis_rev': 0,
+            'follow_live': True,
+        }),
         dcc.Store(id='match_info_store'),
         
         # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
@@ -1089,88 +1192,221 @@ def render_bs_children(bs_store):
     return children
 
 
-def _format_period_clock(t_seconds, periods):
-    for period in periods:
-        if period['start'] <= t_seconds <= period['end']:
-            rem = max(0, int(period['end'] - t_seconds))
-            return f"{period['label']} {rem // 60:02d}:{rem % 60:02d}"
-    return f"{int(t_seconds // 60):02d}:{int(t_seconds % 60):02d}"
+DEFAULT_ROTATION_VIEW = {
+    'period': 'all',
+    't': None,
+    'x0': None,
+    'x1': None,
+    'show_dnp': False,
+    'slice_width': None,
+    'axis_rev': 0,
+    'follow_live': True,
+}
 
 
-def _render_runs_badges(runs, periods, teams):
+def _rotation_view(view_store):
+    data = view_store if isinstance(view_store, dict) else safe_loads(view_store)
+    merged = dict(DEFAULT_ROTATION_VIEW)
+    if isinstance(data, dict):
+        for key in DEFAULT_ROTATION_VIEW:
+            if key in data:
+                merged[key] = data[key]
+    return merged
+
+
+def _period_control_data(periods):
+    data = [{'label': 'All', 'value': 'all'}]
+    seen = {'all'}
+    for period in periods or []:
+        value = str(period.get('id'))
+        if value in seen:
+            continue
+        seen.add(value)
+        data.append({'label': period.get('label') or value, 'value': value})
+    return data
+
+
+def _find_period(periods, period_value):
+    for period in periods or []:
+        if str(period.get('id')) == str(period_value):
+            return period
+    return None
+
+
+def _render_run_buttons(runs, periods):
     if not runs:
         return None
-    home = next((t for t in teams if t.get('side') == 'home'), {})
-    away = next((t for t in teams if t.get('side') == 'away'), {})
-    
-    badges = []
-    for run in runs:
-        is_home = run['side'] == 'home'
-        team_name = (home.get('team_name') if is_home else away.get('team_name')) or ('Home' if is_home else 'Away')
-        pts_str = f"{run['home_pts']}-{run['away_pts']}" if is_home else f"{run['away_pts']}-{run['home_pts']}"
-        start_str = _format_period_clock(run['start'], periods)
-        end_str = _format_period_clock(run['end'], periods)
-        
-        # Split period label and clock if matching
-        label = f"{team_name} {pts_str} Run ({start_str} – {end_str})"
-        color = "blue" if is_home else "gray"
-        badges.append(
-            dmc.Badge(
-                label,
-                color=color,
-                variant="light",
-                size="md",
-                radius="sm",
-                style={"width": "fit-content"},
+    buttons = []
+    for index, run in enumerate(runs):
+        is_home = run.get('side') == 'home'
+        buttons.append(
+            dmc.Button(
+                format_run_label(run, periods),
+                id={'type': 'rotation-run', 'index': index},
+                color='blue' if is_home else 'gray',
+                variant='light',
+                size='compact-xs',
+                radius='sm',
+                px=8,
             )
         )
-    return dmc.Stack(
-        badges,
+    return dmc.Group(
+        buttons,
         gap=6,
-        mb="sm",
-        style={"padding": "4px 0"},
+        mb='sm',
+        style={'flexWrap': 'wrap'},
     )
 
 
+def resolve_rotation_playhead(payload, view, match_info_store=None):
+    info = match_info_store if isinstance(match_info_store, dict) else safe_loads(match_info_store)
+    live = is_live_play_status(info.get('status'))
+    periods = (payload or {}).get('periods') or []
+    if live and view.get('follow_live', True):
+        return live_playhead_t(payload)
+    playhead = view.get('t')
+    if playhead is not None:
+        return playhead
+    if live:
+        return live_playhead_t(payload)
+    if periods:
+        return periods[-1]['end']
+    return None
 
-def render_rotation_children(rotation_store):
+
+def _rotation_figure_from_view(payload, view, match_info_store=None):
+    playhead = resolve_rotation_playhead(payload, view, match_info_store)
+    x_range = None
+    if view.get('x0') is not None and view.get('x1') is not None:
+        x_range = (view['x0'], view['x1'])
+    width = (x_range[1] - x_range[0]) if x_range else None
+    uirevision = f"{width if width is not None else 'all'}:{int(view.get('axis_rev') or 0)}"
+    return build_rotation_figure(
+        payload,
+        playhead=playhead,
+        x_range=x_range,
+        show_dnp=bool(view.get('show_dnp')),
+        uirevision=uirevision,
+    )
+
+
+def render_rotation_children(rotation_store, view_store=None, match_info_store=None):
     payload = safe_loads(rotation_store)
     if payload.get('_ui') == 'error':
         return [_error_view(payload)]
     if not payload or not payload.get('teams'):
         return [_empty_view()]
-    fig = build_rotation_figure(payload)
     runs = payload.get('runs') or []
     periods = payload.get('periods') or []
-    teams = payload.get('teams') or []
-    runs_row = _render_runs_badges(runs, periods, teams)
-    
-    children = [_last_update_span()]
+    runs_row = _render_run_buttons(runs, periods)
     if runs_row is not None:
-        children.append(runs_row)
-    children.append(
-        dmc.Paper(
-            dcc.Graph(
-                id='rotation-graph',
-                figure=fig,
-                config={
-                    'displayModeBar': False,
-                    'responsive': True,
-                    'scrollZoom': False,
-                },
-                style={
-                    'width': '100%',
-                    'height': f"{fig.layout.height or 640}px",
-                },
-            ),
-            withBorder=True,
-            radius='md',
-            shadow='xs',
-            className='braves-card-wrapper',
-            style={'overflow': 'hidden'},
-        )
-    )
-    return children
+        return [runs_row]
+    return []
+
+
+def apply_rotation_view_event(
+    triggered_id,
+    period,
+    show_dnp,
+    run_clicks,
+    click_t,
+    rotation_store,
+    game_id,
+    view_store,
+    match_info_store,
+    relayout_data=None,
+):
+    view = _rotation_view(view_store)
+    if triggered_id == 'game_id':
+        return dict(DEFAULT_ROTATION_VIEW)
+    payload = safe_loads(rotation_store)
+    periods = payload.get('periods') or []
+    runs = payload.get('runs') or []
+    if triggered_id == 'rotation-graph.relayoutData':
+        updated = apply_camera_relayout(relayout_data, view, periods)
+        return updated if updated is not None else no_update
+
+    if triggered_id == 'rotation-live':
+        view['follow_live'] = True
+        view['t'] = live_playhead_t(payload)
+        return view
+
+    if triggered_id == 'rotation-period':
+        if period == view.get('period'):
+            already_all = period in (None, 'all') and view.get('x0') is None
+            already_period = (
+                period not in (None, 'all')
+                and _find_period(periods, period)
+                and view.get('x0') == _find_period(periods, period)['start']
+                and view.get('x1') == _find_period(periods, period)['end']
+            )
+            if already_all or already_period:
+                return no_update
+        view['period'] = period or 'all'
+        if view['period'] == 'all':
+            view['x0'] = None
+            view['x1'] = None
+            view['slice_width'] = None
+        else:
+            found = _find_period(periods, view['period'])
+            if found:
+                view['x0'] = found['start']
+                view['x1'] = found['end']
+                view['slice_width'] = float(found['end'] - found['start'])
+                view['t'] = found['start']
+                view['follow_live'] = False
+        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
+        return view
+
+    if triggered_id == 'rotation-show-dnp':
+        checked = bool(show_dnp)
+        if checked == bool(view.get('show_dnp')):
+            return no_update
+        view['show_dnp'] = checked
+        return view
+
+    if isinstance(triggered_id, dict) and triggered_id.get('type') == 'rotation-run':
+        index = triggered_id.get('index')
+        clicks = run_clicks or []
+        if not clicks or not any(clicks):
+            return no_update
+        if not isinstance(index, int) or index < 0 or index >= len(runs):
+            return no_update
+        run = runs[index]
+        view['period'] = 'all'
+        view['x0'] = None
+        view['x1'] = None
+        view['slice_width'] = None
+        view['t'] = run['start']
+        view['follow_live'] = False
+        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
+        return view
+
+    if triggered_id == 'rotation-click-t':
+        if click_t is None:
+            return no_update
+        try:
+            t_val = float(click_t)
+        except (TypeError, ValueError):
+            return no_update
+        game_end = periods[-1]['end'] if periods else None
+        if game_end is not None:
+            t_val = min(max(0.0, t_val), float(game_end))
+        view['t'] = t_val
+        view['follow_live'] = False
+        return view
+
+    if triggered_id in ('rotation_store', 'match_info_store'):
+        info = match_info_store if isinstance(match_info_store, dict) else safe_loads(match_info_store)
+        if is_live_play_status(info.get('status')) and view.get('follow_live', True):
+            now = live_playhead_t(payload)
+            if now == view.get('t'):
+                return no_update
+            view['t'] = now
+            return view
+        return no_update
+
+    return no_update
 
 
 def render_pbp_children(pbp_store):
@@ -1275,10 +1511,143 @@ def update_pane_bs(bs_store, active_tab):
     Input('rotation_store', 'data'),
     Input('tabs', 'value'),
 )
-def update_pane_rotation(rotation_store, active_tab):
+def update_pane_rotation(rotation_store, active_tab, view_store=None, match_info_store=None):
     if active_tab != 'tab-rotation':
         return no_update
-    return render_rotation_children(rotation_store)
+    return render_rotation_children(rotation_store, view_store, match_info_store)
+
+
+@callback(
+    Output('rotation-period', 'data'),
+    Input('rotation_store', 'data'),
+)
+def update_rotation_period_options(rotation_store):
+    payload = safe_loads(rotation_store)
+    return _period_control_data(payload.get('periods') or [])
+
+
+@callback(
+    Output('rotation-graph', 'figure'),
+    Output('rotation-graph', 'style'),
+    Output('rotation-graph-paper', 'style'),
+    Input('rotation_store', 'data'),
+    Input('rotation_view_store', 'data'),
+    Input('tabs', 'value'),
+    State('match_info_store', 'data'),
+)
+def update_rotation_graph(rotation_store, view_store, active_tab, match_info_store=None):
+    if active_tab != 'tab-rotation':
+        return no_update, no_update, no_update
+    payload = safe_loads(rotation_store)
+    hidden_paper = {'overflow': 'hidden', 'display': 'none'}
+    if payload.get('_ui') == 'error' or not payload or not payload.get('teams'):
+        return {}, {'width': '100%', 'height': '520px'}, hidden_paper
+    fig = _rotation_figure_from_view(payload, _rotation_view(view_store), match_info_store)
+    return (
+        fig,
+        {'width': '100%', 'height': f"{fig.layout.height or 520}px"},
+        {'overflow': 'hidden'},
+    )
+
+
+@callback(
+    Output('rotation_view_store', 'data'),
+    Output('rotation-period', 'value'),
+    Output('rotation-show-dnp', 'checked'),
+    Input('rotation-period', 'value'),
+    Input('rotation-show-dnp', 'checked'),
+    Input({'type': 'rotation-run', 'index': ALL}, 'n_clicks'),
+    Input('rotation-live', 'n_clicks'),
+    Input('rotation-click-t', 'data'),
+    Input('rotation-graph', 'relayoutData'),
+    Input('rotation_store', 'data'),
+    Input('game_id', 'children'),
+    State('rotation_view_store', 'data'),
+    State('match_info_store', 'data'),
+    prevent_initial_call=True,
+)
+def update_rotation_view(
+    period,
+    show_dnp,
+    run_clicks,
+    live_clicks,
+    click_t,
+    relayout_data,
+    rotation_store,
+    game_id,
+    view_store,
+    match_info_store,
+):
+    triggered_id = ctx.triggered_id
+    prop_id = ''
+    if ctx.triggered:
+        prop_id = ctx.triggered[0].get('prop_id') or ''
+    if isinstance(prop_id, str) and prop_id.endswith('relayoutData'):
+        triggered_id = 'rotation-graph.relayoutData'
+    if triggered_id == 'rotation-live' and not live_clicks:
+        return no_update, no_update, no_update
+    result = apply_rotation_view_event(
+        triggered_id,
+        period,
+        show_dnp,
+        run_clicks,
+        click_t,
+        rotation_store,
+        game_id,
+        view_store,
+        match_info_store,
+        relayout_data=relayout_data,
+    )
+    if result is no_update:
+        return no_update, no_update, no_update
+    if triggered_id == 'game_id':
+        return result, 'all', False
+    if isinstance(ctx.triggered_id, dict) and ctx.triggered_id.get('type') == 'rotation-run':
+        return result, 'all', no_update
+    if triggered_id == 'rotation-graph.relayoutData':
+        return result, result.get('period') or 'all', no_update
+    return result, no_update, no_update
+
+
+clientside_callback(
+    """
+    function(n) {
+        if (!n) { return window.dash_clientside.no_update; }
+        if (typeof window._rotationClickT !== 'number') {
+            return window.dash_clientside.no_update;
+        }
+        return window._rotationClickT;
+    }
+    """,
+    Output('rotation-click-t', 'data'),
+    Input('rotation-click-fire', 'n_clicks'),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output('rotation-live', 'style'),
+    Output('rotation-live', 'variant'),
+    Input('match_info_store', 'data'),
+    Input('rotation_view_store', 'data'),
+)
+def update_rotation_live_chip(match_info_store, view_store):
+    live = is_live_play_status(safe_loads(match_info_store).get('status'))
+    if not live:
+        return {'display': 'none'}, 'light'
+    follow = _rotation_view(view_store).get('follow_live', True)
+    return {}, ('filled' if follow else 'light')
+
+
+@callback(
+    Output('rotation-last-update', 'children'),
+    Input('rotation_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_rotation_last_update(rotation_store, active_tab):
+    if active_tab != 'tab-rotation':
+        return no_update
+    return _last_update_span()
 
 
 @callback(
