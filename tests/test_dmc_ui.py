@@ -173,6 +173,107 @@ class FourStateTests(unittest.TestCase):
         self.assertFalse(rotation_graph.config.get('doubleClick'))
         self.assertNotEqual(getattr(rotation_graph, 'className', None), 'braves-table-scroll')
 
+    def test_lineup_wrap_puts_last_update_above_size_control(self):
+        tree = game_page.layout('g1')
+        wrap = next(node for node in walk(tree) if getattr(node, 'id', None) == 'wrap-lineup')
+        self.assertEqual(getattr(wrap.children[0], 'id', None), 'lineup-last-update')
+        self.assertIn('Last Update', str(wrap.children[0]))
+        markup = str(wrap)
+        self.assertNotIn('Combination', markup)
+        self.assertNotIn('COMBINATION', markup)
+        self.assertIn('5 Players', markup)
+        self.assertIn('4 Players', markup)
+        self.assertIn('3 Players', markup)
+        self.assertIn('2 Players', markup)
+        ids = {getattr(node, 'id', None) for node in walk(wrap)}
+        self.assertIn('lineup_size_dropdown', ids)
+        self.assertNotIn('lineup_dropdown_container', ids)
+        control = next(
+            node for node in walk(wrap)
+            if getattr(node, 'id', None) == 'lineup_size_dropdown'
+        )
+        self.assertTrue(getattr(control, 'fullWidth', False))
+
+    def test_lineup_size_four_uses_same_chrome_and_paginates(self):
+        teams = ['Taipei Fubon Braves', 'Formosa Dreamers']
+
+        def split_json(frame):
+            return frame.to_json(orient='split')
+
+        store = json.dumps({
+            '5': {
+                teams[0]: split_json(pd.DataFrame({'Lineup': ['A-B'], 'PTS': [10]})),
+            },
+            '4': {
+                teams[0]: split_json(pd.DataFrame({'Lineup': ['A-B-C-D'], 'PTS': [10]})),
+                teams[1]: split_json(pd.DataFrame({'Lineup': ['E-F-G-H'], 'PTS': [8]})),
+            },
+        })
+        tree = game_page.update_pane_lineup('4', 'tab-lineup', store, None)
+        self.assertNotIn('Last Update', str(tree))
+        self.assertFalse(any(isinstance(node, dmc.Title) for node in walk(tree)))
+        dots = [
+            node.style.get('backgroundColor')
+            for node in walk(tree)
+            if isinstance(node, dmc.Box) and isinstance(getattr(node, 'style', None), dict)
+            and node.style.get('width') == '8px'
+        ]
+        self.assertEqual(dots, ['#00b4d8', '#94a3b8'])
+        grids = find_type(tree, dag.AgGrid)
+        self.assertEqual(len(grids), 2)
+        for grid in grids:
+            opts = grid.dashGridOptions
+            self.assertTrue(opts.get('pagination'))
+            self.assertEqual(opts.get('paginationPageSize'), 20)
+            lineup_col = next(col for col in grid.columnDefs if col.get('field') == 'Lineup')
+            self.assertTrue(lineup_col.get('filter'))
+            self.assertEqual(lineup_col.get('minWidth'), 220)
+            self.assertEqual(lineup_col.get('width'), 230)
+
+        five = game_page.update_pane_lineup('5', 'tab-lineup', store, None)
+        five_grids = find_type(five, dag.AgGrid)
+        self.assertEqual(len(five_grids), 1)
+        self.assertFalse(five_grids[0].dashGridOptions.get('pagination'))
+
+    def test_lineup_missing_size_uses_render_path_not_title(self):
+        teams = ['Home', 'Away']
+
+        def split_json(frame):
+            return frame.to_json(orient='split')
+
+        store = json.dumps({
+            '5': {teams[0]: split_json(pd.DataFrame({'Lineup': ['A'], 'PTS': [1]}))},
+        })
+        custom = {
+            teams[0]: split_json(pd.DataFrame({'Lineup': ['A-B-C-D'], 'PTS': [4]})),
+            teams[1]: split_json(pd.DataFrame({'Lineup': ['E-F-G-H'], 'PTS': [2]})),
+        }
+
+        class FakeReport:
+            def get_lineup_stats_json_dict(self, lineup_size=5):
+                self.size = lineup_size
+                return custom
+
+        fake = FakeReport()
+        with patch.object(game_page, 'get_cached_report', return_value=fake):
+            tree = game_page.update_pane_lineup('4', 'tab-lineup', store, 'g1')
+        self.assertEqual(fake.size, 4)
+        self.assertFalse(any(isinstance(node, dmc.Title) for node in walk(tree)))
+        self.assertNotIn('Last Update', str(tree))
+        dots = [
+            node.style.get('backgroundColor')
+            for node in walk(tree)
+            if isinstance(node, dmc.Box) and isinstance(getattr(node, 'style', None), dict)
+            and node.style.get('width') == '8px'
+        ]
+        self.assertEqual(dots, ['#00b4d8', '#94a3b8'])
+        grids = find_type(tree, dag.AgGrid)
+        self.assertEqual(len(grids), 2)
+        self.assertEqual(grids[0].dashGridOptions.get('paginationPageSize'), 20)
+        lineup_col = next(col for col in grids[0].columnDefs if col.get('field') == 'Lineup')
+        self.assertTrue(lineup_col.get('filter'))
+        self.assertEqual(lineup_col.get('minWidth'), 220)
+
     def test_rotation_run_buttons_use_short_clock_label(self):
         payload = {
             'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],

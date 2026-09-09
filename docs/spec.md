@@ -218,7 +218,8 @@ Note slots start as **empty** `text` blocks.
 
 ## Lineup Stats
 
-- Lineup size is selectable from 5 down to 2.
+- Wrap chrome, top to bottom: `Last Update`, then a quiet size `dmc.SegmentedControl` (no Combination label), then the pane. Options are `5 Players`, `4 Players`, `3 Players`, `2 Players`. Default `5`. The control is `fullWidth` and keeps id `lineup_size_dropdown`.
+- `lineup_store` precomputes size 5 at page load. Sizes 4/3/2 compute on demand in the Lineup tab callback, then render through the same `render_lineup_children` path (home/away section dots, Lineup filter, size-based column widths, pagination). Do not paint a second Title-only table.
 - 5-man lineups are displayed completely without pagination; 2/3/4-man lineups paginate with 20 rows per page.
 - Lineup labels are player **names** from the id table, ordered by jersey shirt number (ascending), joined with hyphens (e.g. `林志傑-張宗憲`). Jersey is the sort key, not the displayed text.
 - On the Game Lineup Stats AG Grid (not Report `dmc.Table`), the Lineup column is pinned left, `fw=700`, centered, no `flex: 1`. Width follows lineup size: 2 → min 140 / width 150; 3 → 180 / 190; 4 → 220 / 230; 5 → 260 / 270. Names wrap inside the cell (`wrapText` + row `autoHeight`); they do not ellipsis. At viewport `max-width: 768px` the pinned Lineup column caps at 160px so Min, `+/-`, and PTS stay on-screen; wrapped names grow the row height.

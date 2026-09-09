@@ -38,6 +38,7 @@ from ui_kit import (
     ERROR_GAME,
     empty_state,
     error_alert,
+    filter_control,
     game_banner,
     icon,
     loading_skeleton,
@@ -148,6 +149,44 @@ def _rotation_wrap(hidden=True):
     )
 
 
+def _lineup_controls():
+    row = filter_control(
+        '',
+        dmc.SegmentedControl(
+            id='lineup_size_dropdown',
+            data=[
+                {'label': '5 Players', 'value': '5'},
+                {'label': '4 Players', 'value': '4'},
+                {'label': '3 Players', 'value': '3'},
+                {'label': '2 Players', 'value': '2'},
+            ],
+            value='5',
+            radius='md',
+            size='xs',
+            fullWidth=True,
+        ),
+    )
+    return dmc.Box(row, mb='sm')
+
+
+def _lineup_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    pane = html.Div(id='pane-lineup', children=loading_skeleton('table'))
+    if os.environ.get('SPLASHBOARD_E2E'):
+        body = pane
+    else:
+        body = dcc.Loading(custom_spinner=loading_skeleton('table'), children=pane)
+    return html.Div(
+        [
+            html.Div(id='lineup-last-update', children=_last_update_span()),
+            _lineup_controls(),
+            body,
+        ],
+        id='wrap-lineup',
+        style=style,
+    )
+
+
 def layout(game_id=None):
     return html.Div([
         html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
@@ -184,39 +223,10 @@ def layout(game_id=None):
             }
         ),
         
-        html.Div([
-            dmc.Group(
-                [
-                    dmc.Text(
-                        "COMBINATION:",
-                        size="xs",
-                        fw=700,
-                        c="dimmed",
-                        style={"letterSpacing": "0.05em"},
-                    ),
-                    dmc.SegmentedControl(
-                        id='lineup_size_dropdown',
-                        data=[
-                            {'label': '5 Players', 'value': '5'},
-                            {'label': '4 Players', 'value': '4'},
-                            {'label': '3 Players', 'value': '3'},
-                            {'label': '2 Players', 'value': '2'},
-                        ],
-                        value='5',
-                        radius="md",
-                        size="xs",
-                    ),
-                ],
-                gap="10px",
-                align="center",
-                mb="sm",
-            )
-        ], id='lineup_dropdown_container', style={'display': 'none'}),
-
         _pane('wrap-bs', 'pane-bs', 'cards'),
         _rotation_wrap(hidden=True),
         _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
-        _pane('wrap-lineup', 'pane-lineup', 'table', hidden=True),
+        _lineup_wrap(hidden=True),
         _pane('wrap-report', 'pane-report', 'table', hidden=True),
         html.Div(id='pbp_table', style={'display': 'block'}),
         
@@ -1451,7 +1461,7 @@ def render_lineup_children(lineup_store, lineup_size=5):
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict:
         return [_empty_view()]
-    children = [_last_update_span()]
+    children = []
     page_size = 20 if size_int < 5 else None
     for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
@@ -1651,6 +1661,17 @@ def update_rotation_last_update(rotation_store, active_tab):
 
 
 @callback(
+    Output('lineup-last-update', 'children'),
+    Input('lineup_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_lineup_last_update(lineup_store, active_tab):
+    if active_tab != 'tab-lineup':
+        return no_update
+    return _last_update_span()
+
+
+@callback(
     Output('pane-pbp', 'children'),
     Input('pbp_store', 'data'),
     Input('tabs', 'value'),
@@ -1681,13 +1702,10 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
             report = get_cached_report(game_id)
             custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
-                children = [_last_update_span()]
-                page_size = 20 if size_int < 5 else None
-                for team_name, l_json in sorted(custom_dict.items()):
-                    children.append(dmc.Title(team_name, order=4, style={"margin": "16px 0 8px"}))
-                    l_df = pd.read_json(io.StringIO(l_json), orient='split')
-                    children.append(_ag_grid_from_df(l_df, page_size=page_size))
-                return children
+                return render_lineup_children(
+                    json.dumps({str(size_int): custom_dict}),
+                    size_int,
+                )
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
     return render_lineup_children(lineup_store, size_int)
@@ -1723,16 +1741,12 @@ clientside_callback(
     function(active_tab) {
         const hide = {display: 'none'};
         const show = {display: 'block'};
-        const dropdown = (active_tab === 'tab-lineup')
-            ? {display: 'block', 'margin-bottom': '10px'}
-            : {display: 'none'};
         return [
             active_tab === 'tab-bs' ? show : hide,
             active_tab === 'tab-rotation' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
             active_tab === 'tab-pbp' ? show : hide,
-            active_tab === 'tab-report' ? show : hide,
-            dropdown
+            active_tab === 'tab-report' ? show : hide
         ];
     }
     """,
@@ -1741,7 +1755,6 @@ clientside_callback(
     Output('wrap-lineup', 'style'),
     Output('wrap-pbp', 'style'),
     Output('wrap-report', 'style'),
-    Output('lineup_dropdown_container', 'style'),
     Input('tabs', 'value'),
 )
 
