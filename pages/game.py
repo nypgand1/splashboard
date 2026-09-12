@@ -19,6 +19,7 @@ from synergy_inbounder.game_status import (
     status_bucket,
 )
 from synergy_reporter.report_components import (
+    apply_page_cmd,
     lineup_tables_for_size,
     render_report_workspace,
 )
@@ -253,6 +254,7 @@ def layout(game_id=None):
             'follow_live': True,
         }),
         dcc.Store(id='match_info_store'),
+        dcc.Store(id='report-pane-ready', data=''),
         
         # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
         html.Div(dag.AgGrid(id="dummy-grid", rowData=[], columnDefs=[]), style={'display': 'none'})
@@ -1714,13 +1716,23 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
 @callback(
     Output('pane-report', 'children'),
     Input('tabs', 'value'),
+    Input('report-pane-ready', 'data'),
     State('bs_store', 'data'),
     State('lineup_store', 'data'),
     State('match_info_store', 'data'),
     State('game_id', 'children'),
 )
-def update_pane_report(active_tab, bs_store, lineup_store, match_info_store, game_id):
+def update_pane_report(
+    active_tab,
+    pane_ready='',
+    bs_store=None,
+    lineup_store=None,
+    match_info_store=None,
+    game_id=None,
+):
     if active_tab != 'tab-report':
+        return no_update
+    if str(pane_ready or '') in ('1', 'true', 'True'):
         return no_update
     try:
         return render_report_children(
@@ -1734,6 +1746,26 @@ def update_pane_report(active_tab, bs_store, lineup_store, match_info_store, gam
         traceback.print_exc()
         print(f"Error rendering report: {exc}")
         return [_error_view({'_ui': 'error', 'message': ERROR_GAME})]
+
+
+@callback(
+    Output('report-papers', 'children'),
+    Output('report-page-list', 'children'),
+    Input('report-page-cmd', 'data'),
+    State('match_info_store', 'data'),
+    prevent_initial_call=True,
+)
+def sync_report_page_shells(cmd, match_info_store):
+    return apply_page_cmd(cmd, safe_loads(match_info_store))
+
+
+@callback(
+    Output('report-dialog', 'opened'),
+    Input('report-dialog-opened', 'data'),
+    prevent_initial_call=True,
+)
+def sync_report_dialog(opened):
+    return bool(opened)
 
 
 clientside_callback(

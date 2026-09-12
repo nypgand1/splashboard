@@ -5,8 +5,34 @@
 
     var IMAGE_MAX_BYTES = 1000000;
     var GRID_COLUMNS = 12;
+    var DESKTOP_MIN_PX = 1280;
+    var GRIDSTACK_CSS = '/assets/gridstack.min.css';
+    var GRIDSTACK_JS = '/assets/gridstack-all.js';
+    var JSPDF_JS = '/assets/jspdf.umd.min.js';
     var REPORT_FONT_NAME = 'NotoSansTC';
     var REPORT_FONT_URL = '/assets/NotoSansTC-Regular.ttf';
+    var TABLE_TITLES = {
+        score_group: 'Score',
+        t_adv_df: 'Pace, PPP & Four Factors',
+        t_df: 'Team Stats',
+        k_df: 'Key Stats',
+        p_df_home: 'Home Player Stats',
+        p_df_away: 'Away Player Stats',
+        lineup_home: 'Home Lineup Stats',
+        lineup_away: 'Away Lineup Stats'
+    };
+    var LOWER_BETTER = { Foul: 1, PF: 1, TO: 1, TOV: 1, 'TOV%': 1 };
+    var COL_GROUPS = [
+        { name: '2PT', keys: ['2M', '2A', '2FG%'], subs: ['M', 'A', '%'] },
+        { name: '3PT', keys: ['3M', '3A', '3FG%'], subs: ['M', 'A', '%'] },
+        { name: 'FT', keys: ['FTM', 'FTA', 'FT%'], subs: ['M', 'A', '%'] },
+        { name: 'REB', keys: ['OR', 'DR', 'REB'], subs: ['O', 'D', 'T'] },
+        { name: 'PIP', keys: ['PIPM', 'PIPA', 'PIP'], subs: ['M', 'A', 'PTS'] },
+        { name: 'SCP', keys: ['SCPM', 'SCPA', 'SCP'], subs: ['M', 'A', 'PTS'] }
+    ];
+    var FF_KEYS = ['eFG%', 'TOV%', 'ORB%', 'FT-R'];
+    var libsPromise = null;
+    var hydrateLocks = {};
     var ALLOWED_IMAGE_MIMES = {
         'image/jpeg': true,
         'image/png': true,
@@ -41,9 +67,23 @@
         }
         var papers = document.querySelectorAll('#report-papers .report-paper');
         var pages = [];
+        var prevById = {};
+        (layout.pages || []).forEach(function (prev) {
+            if (prev && prev.id) {
+                prevById[prev.id] = prev;
+            }
+        });
         papers.forEach(function (paper, pageIndex) {
-            var prevPage = layout.pages[pageIndex] || {};
+            var pid = paperPageId(paper) || ('page-' + (pageIndex + 1));
+            var prevPage = prevById[pid] || {};
             var items = paper.querySelectorAll('.grid-stack-item');
+            if (paper.getAttribute('data-hydrated') !== '1' || !items.length) {
+                pages.push({
+                    id: pid,
+                    blocks: prevPage.blocks || []
+                });
+                return;
+            }
             var blocks = [];
             items.forEach(function (item) {
                 var blockId = item.getAttribute('gs-id') || item.getAttribute('data-gs-id');
@@ -84,6 +124,20 @@
         if (!id || !layout) {
             return layout;
         }
+        var wrap = document.getElementById('wrap-report');
+        if (wrap && wrap.style.display === 'none') {
+            return loadStored() || layout;
+        }
+        var hasDomBlocks = !!document.querySelector('#report-papers .grid-stack-item');
+        var hydrated = document.querySelector('#report-papers .report-paper[data-hydrated="1"]');
+        if (!hydrated || !hasDomBlocks) {
+            var existing = loadStored();
+            if (existing && existing.pages && existing.pages.some(function (page) {
+                return page && page.blocks && page.blocks.length;
+            })) {
+                return existing;
+            }
+        }
         try {
             var data = JSON.stringify(layout);
             localStorage.setItem(storageKey(id), data);
@@ -114,6 +168,379 @@
         return prefix + '-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 10000);
     }
 
+    function loadStyle(href) {
+        if (document.querySelector('link[data-report-lib="' + href + '"]')) {
+            return Promise.resolve();
+        }
+        return new Promise(function (resolve, reject) {
+            var link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            link.setAttribute('data-report-lib', href);
+            link.onload = function () { resolve(); };
+            link.onerror = reject;
+            document.head.appendChild(link);
+        });
+    }
+
+    function loadScript(src) {
+        if (document.querySelector('script[data-report-lib="' + src + '"]')) {
+            return Promise.resolve();
+        }
+        return new Promise(function (resolve, reject) {
+            var el = document.createElement('script');
+            el.src = src;
+            el.async = false;
+            el.setAttribute('data-report-lib', src);
+            el.onload = function () { resolve(); };
+            el.onerror = reject;
+            document.head.appendChild(el);
+        });
+    }
+
+    function ensureReportLibs() {
+        if (window.GridStack && window.jspdf && window.jspdf.jsPDF) {
+            return Promise.resolve();
+        }
+        if (libsPromise) {
+            return libsPromise;
+        }
+        libsPromise = loadStyle(GRIDSTACK_CSS).then(function () {
+            return loadScript(GRIDSTACK_JS);
+        }).then(function () {
+            return loadScript(JSPDF_JS);
+        });
+        return libsPromise;
+    }
+
+    function parseSplit(payload) {
+        if (!payload) {
+            return null;
+        }
+        var obj = payload;
+        if (typeof payload === 'string') {
+            try {
+                obj = JSON.parse(payload);
+            } catch (err) {
+                return null;
+            }
+        }
+        if (!obj || !obj.columns || !obj.data) {
+            return null;
+        }
+        var rows = obj.data.map(function (row) {
+            var rec = {};
+            obj.columns.forEach(function (col, i) {
+                rec[col] = row[i];
+            });
+            return rec;
+        });
+        return { columns: obj.columns.slice(), rows: rows };
+    }
+
+    function tablePayload() {
+        var el = document.getElementById('report-table-data');
+        if (!el || !el.textContent) {
+            return {};
+        }
+        try {
+            return JSON.parse(el.textContent) || {};
+        } catch (err) {
+            return {};
+        }
+    }
+
+    function numVal(v) {
+        if (v === null || v === undefined || v === '') {
+            return null;
+        }
+        var n = parseFloat(String(v).replace('%', ''));
+        return isNaN(n) ? null : n;
+    }
+
+    function isBlankZero(col, val) {
+        if (col === '+/-') {
+            return false;
+        }
+        if (val === 0 || val === '0' || val === '0.0' || val === '0.0%' || val === '0%') {
+            return true;
+        }
+        return false;
+    }
+
+    function formatCell(col, val) {
+        if (val === null || val === undefined || val === '') {
+            return '';
+        }
+        if (col === 'S' && String(val).trim()) {
+            return '○';
+        }
+        if (isBlankZero(col, val)) {
+            return '';
+        }
+        return String(val);
+    }
+
+    function plusMinusStyle(val) {
+        var n = numVal(val);
+        if (n === null) {
+            return { color: '#1e293b', fontWeight: '400' };
+        }
+        if (n > 0) {
+            return { color: '#0077b6', fontWeight: '700' };
+        }
+        if (n < 0) {
+            return { color: '#e63946', fontWeight: '700' };
+        }
+        return { color: '#64748b', fontWeight: '400' };
+    }
+
+    function winnerIndex(rows, columns, tableKey) {
+        if (!rows || rows.length !== 2) {
+            return {};
+        }
+        if (tableKey !== 't_df' && tableKey !== 't_adv_df' && tableKey !== 'k_df' && tableKey !== 'score_group') {
+            return {};
+        }
+        var map = {};
+        columns.forEach(function (col) {
+            if (col === 'Team' || col === 'Min') {
+                return;
+            }
+            var a = numVal(rows[0][col]);
+            var b = numVal(rows[1][col]);
+            if (a === null || b === null || a === b) {
+                return;
+            }
+            var lower = !!LOWER_BETTER[col];
+            map[col] = lower ? (a < b ? 0 : 1) : (a > b ? 0 : 1);
+        });
+        return map;
+    }
+
+    function skipFourFactorsGroup(tableKey) {
+        return tableKey === 'p_df_home' || tableKey === 'p_df_away'
+            || tableKey === 'lineup_home' || tableKey === 'lineup_away';
+    }
+
+    function groupedHeader(columns, tableKey) {
+        var used = {};
+        var top = [];
+        var sub = [];
+        var hasGroup = COL_GROUPS.some(function (g) {
+            return g.keys.some(function (k) { return columns.indexOf(k) !== -1; });
+        });
+        var ff = skipFourFactorsGroup(tableKey)
+            ? []
+            : FF_KEYS.filter(function (k) { return columns.indexOf(k) !== -1; });
+        if (!hasGroup && !ff.length) {
+            return null;
+        }
+        columns.forEach(function (col) {
+            if (used[col]) {
+                return;
+            }
+            var group = COL_GROUPS.filter(function (g) { return g.keys.indexOf(col) !== -1; })[0];
+            if (group) {
+                var present = group.keys.filter(function (k) { return columns.indexOf(k) !== -1; });
+                present.forEach(function (k) { used[k] = 1; });
+                top.push({ text: group.name, span: present.length });
+                present.forEach(function (k) {
+                    sub.push(group.subs[group.keys.indexOf(k)] || k);
+                });
+                return;
+            }
+            if (ff.indexOf(col) !== -1 && !used['__ff']) {
+                used['__ff'] = 1;
+                ff.forEach(function (k) { used[k] = 1; });
+                top.push({ text: '4 FACTORS', span: ff.length });
+                ff.forEach(function (k) { sub.push(k); });
+                return;
+            }
+            if (used[col]) {
+                return;
+            }
+            used[col] = 1;
+            top.push({ text: col, span: 1, rowSpan: 2 });
+        });
+        return { top: top, sub: sub };
+    }
+
+    function maxLineupRows(item) {
+        var h = parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '8', 10);
+        var px = h * 42;
+        return Math.max(1, Math.floor((px - 68) / 18));
+    }
+
+    function paintTable(host, tableKey, item) {
+        if (!host) {
+            return;
+        }
+        var parsed = parseSplit(tablePayload()[tableKey]);
+        host.innerHTML = '';
+        if (!parsed || !parsed.rows.length) {
+            host.textContent = '—';
+            host.className = 'report-table-host';
+            return;
+        }
+        var columns = parsed.columns;
+        var rows = parsed.rows;
+        if (tableKey === 'lineup_home' || tableKey === 'lineup_away') {
+            rows = rows.slice(0, maxLineupRows(item || host));
+        }
+        var winners = winnerIndex(rows, columns, tableKey);
+        var grouped = groupedHeader(columns, tableKey);
+        var table = document.createElement('table');
+        table.className = 'text-nowrap report-js-table';
+        var thead = document.createElement('thead');
+        if (grouped) {
+            var tr1 = document.createElement('tr');
+            grouped.top.forEach(function (cell) {
+                var th = document.createElement('th');
+                th.textContent = cell.text;
+                if (cell.span > 1) {
+                    th.colSpan = cell.span;
+                }
+                if (cell.rowSpan) {
+                    th.rowSpan = cell.rowSpan;
+                }
+                tr1.appendChild(th);
+            });
+            thead.appendChild(tr1);
+            if (grouped.sub.length) {
+                var tr2 = document.createElement('tr');
+                grouped.sub.forEach(function (label) {
+                    var th = document.createElement('th');
+                    th.textContent = label;
+                    tr2.appendChild(th);
+                });
+                thead.appendChild(tr2);
+            }
+        } else {
+            var tr = document.createElement('tr');
+            columns.forEach(function (col) {
+                var th = document.createElement('th');
+                th.textContent = col;
+                tr.appendChild(th);
+            });
+            thead.appendChild(tr);
+        }
+        table.appendChild(thead);
+        var tbody = document.createElement('tbody');
+        rows.forEach(function (row, rIdx) {
+            var tr = document.createElement('tr');
+            var dnp = String(row.Min || '') === 'DNP';
+            columns.forEach(function (col, cIdx) {
+                if (dnp && cIdx > columns.indexOf('Min') && columns.indexOf('Min') !== -1) {
+                    return;
+                }
+                var td = document.createElement('td');
+                var text = formatCell(col, row[col]);
+                td.textContent = text;
+                if (col === 'Player' || col === 'Lineup' || col === 'Lineups') {
+                    td.style.fontWeight = '700';
+                }
+                if (col === '+/-') {
+                    var st = plusMinusStyle(row[col]);
+                    td.style.color = st.color;
+                    td.style.fontWeight = st.fontWeight;
+                }
+                if (winners[col] === rIdx) {
+                    td.style.color = '#0077b6';
+                    td.style.fontWeight = '700';
+                }
+                if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
+                    td.style.borderLeft = rIdx === 0 ? '3.5px solid #0077b6' : '3.5px solid #94a3b8';
+                }
+                if (dnp && col === 'Min') {
+                    td.colSpan = Math.max(1, columns.length - cIdx);
+                    td.style.fontWeight = '700';
+                    td.style.color = '#94a3b8';
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        host.appendChild(table);
+        host.className = 'report-table-host';
+    }
+
+    function tableHeading(tableKey) {
+        var match = (tablePayload().match) || {};
+        var name = '';
+        var kind = '';
+        var side = '';
+        if (tableKey === 'p_df_home' || tableKey === 'lineup_home') {
+            name = match.home_team || 'Home';
+            kind = tableKey === 'p_df_home' ? 'Player Stats' : 'Lineup Stats';
+            side = 'home';
+        } else if (tableKey === 'p_df_away' || tableKey === 'lineup_away') {
+            name = match.away_team || 'Away';
+            kind = tableKey === 'p_df_away' ? 'Player Stats' : 'Lineup Stats';
+            side = 'away';
+        } else {
+            return TABLE_TITLES[tableKey] || '';
+        }
+        return { name: name, kind: kind, side: side };
+    }
+
+    function fillBlockTitle(titleEl, tableKey) {
+        if (!titleEl) {
+            return;
+        }
+        titleEl.textContent = '';
+        var heading = tableHeading(tableKey);
+        if (typeof heading === 'string') {
+            titleEl.textContent = heading;
+            return;
+        }
+        var dot = document.createElement('span');
+        dot.className = 'report-block-title-dot';
+        dot.style.backgroundColor = heading.side === 'home' ? '#00b4d8' : '#94a3b8';
+        titleEl.appendChild(dot);
+        titleEl.appendChild(document.createTextNode(heading.name + ' | ' + heading.kind));
+    }
+
+    function parseLayoutJson(id) {
+        var el = document.getElementById(id);
+        if (!el || !el.textContent) {
+            return null;
+        }
+        try {
+            return JSON.parse(el.textContent);
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function writeLayoutJson(layout) {
+        var el = document.getElementById('report-layout-json');
+        if (el) {
+            el.textContent = JSON.stringify(layout);
+        }
+    }
+
+    function applyReportTabViewport() {
+        var tab = document.getElementById('report-tab');
+        if (!tab) {
+            return;
+        }
+        var desktop = window.innerWidth >= DESKTOP_MIN_PX;
+        tab.classList.toggle('report-tab-narrow', !desktop);
+        if (desktop) {
+            return;
+        }
+        var selected = tab.getAttribute('aria-selected') === 'true' || tab.getAttribute('data-active') === 'true';
+        if (!selected) {
+            return;
+        }
+        var first = document.querySelector('.braves-clean-tabs [role="tab"]');
+        if (first && first !== tab) {
+            first.click();
+        }
+    }
+
     function paperCount() {
         return document.querySelectorAll('#report-papers .report-paper').length;
     }
@@ -142,6 +569,7 @@
             var btnIndex = parseInt(btn.getAttribute('data-page-index'), 10);
             btn.classList.toggle('is-active', btnIndex === index);
         });
+        hydratePage(index);
     }
 
     function activePageIndex() {
@@ -387,76 +815,142 @@
         });
     }
 
-    function initGrids() {
-        if (!window.GridStack) {
-            window.setTimeout(initGrids, 200);
-            return;
+    function initOneGrid(paper) {
+        var el = paper && paper.querySelector('.report-grid');
+        if (!el || !window.GridStack) {
+            return el && el.gridstack;
         }
-        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
-            if (el.dataset.gsInit === '1') {
-                return;
-            }
-            el.querySelectorAll('.grid-stack-item').forEach(function (item) {
-                item.setAttribute('gs-id', item.getAttribute('data-gs-id') || '');
-                item.setAttribute('gs-x', item.getAttribute('data-x') || '0');
-                item.setAttribute('gs-y', item.getAttribute('data-y') || '0');
-                item.setAttribute('gs-w', item.getAttribute('data-w') || '6');
-                item.setAttribute('gs-h', item.getAttribute('data-h') || '3');
-            });
-            try {
-                var grid = GridStack.init({
-                    column: 12,
-                    cellHeight: 36,
-                    float: true,
-                    margin: 6,
-                    handle: '.grid-stack-item-handle',
-                    disableOneColumnMode: true
-                }, el);
-                el.dataset.gsInit = '1';
-                grid.on('dragstop', function () {
-                    persistLocal(readLayoutFromDom());
-                });
-                grid.on('resizestop', function () {
-                    persistLocal(readLayoutFromDom());
-                });
-            } catch (err) {
-                console.warn('GridStack init failed', err);
-            }
+        if (el.dataset.gsInit === '1') {
+            return el.gridstack;
+        }
+        el.querySelectorAll('.grid-stack-item').forEach(function (item) {
+            item.setAttribute('gs-id', item.getAttribute('data-gs-id') || '');
+            item.setAttribute('gs-x', item.getAttribute('data-x') || '0');
+            item.setAttribute('gs-y', item.getAttribute('data-y') || '0');
+            item.setAttribute('gs-w', item.getAttribute('data-w') || '6');
+            item.setAttribute('gs-h', item.getAttribute('data-h') || '3');
         });
-        bindTextBlocks();
-        var workspace = document.getElementById('report-workspace');
-        if (workspace && workspace.dataset.storedApplied !== '1') {
-            workspace.dataset.storedApplied = '1';
-            var stored = loadStored();
-            if (stored && stored.pages && stored.pages.length) {
-                applyStoredLayout(stored);
-            } else {
+        try {
+            var grid = GridStack.init({
+                column: 12,
+                cellHeight: 36,
+                float: true,
+                margin: 6,
+                handle: '.grid-stack-item-handle',
+                disableOneColumnMode: true
+            }, el);
+            el.dataset.gsInit = '1';
+            grid.on('dragstop', function () {
                 persistLocal(readLayoutFromDom());
-                fitAllTableBlocks();
-                compactAllGrids();
+            });
+            grid.on('resizestop', function () {
                 persistLocal(readLayoutFromDom());
-            }
+            });
+            return grid;
+        } catch (err) {
+            console.warn('GridStack init failed', err);
+            return null;
         }
-        initScrollSpy();
     }
 
-    function templateId(block) {
-        if (block.type === 'builtin_table') {
-            return 'report-tpl-item-table-' + block.table_key;
+    function hydratePage(index, opts) {
+        opts = opts || {};
+        var papers = document.querySelectorAll('#report-papers .report-paper');
+        var paper = papers[index];
+        if (!paper) {
+            return Promise.resolve();
         }
-        return 'report-tpl-item-' + block.type;
+        var lockKey = paperPageId(paper) || String(index);
+        if (hydrateLocks[lockKey]) {
+            return hydrateLocks[lockKey];
+        }
+        hydrateLocks[lockKey] = ensureReportLibs().then(function () {
+            if (paper.getAttribute('data-hydrated') === '1') {
+                initOneGrid(paper);
+                return;
+            }
+            var layout = parseLayoutJson('report-layout-json') || { pages: [] };
+            var page = layoutPageForPaper(layout, paper);
+            var grid = initOneGrid(paper);
+            var gridEl = paper.querySelector('.report-grid');
+            if (grid) {
+                grid.removeAll();
+            }
+            (page.blocks || []).forEach(function (block) {
+                var node = widgetFromBlock(block);
+                if (!node) {
+                    return;
+                }
+                if (grid) {
+                    grid.addWidget(node, {
+                        id: block.id,
+                        x: block.x || 0,
+                        y: block.y || 0,
+                        w: block.w || 6,
+                        h: block.h || 3
+                    });
+                } else if (gridEl) {
+                    gridEl.appendChild(node);
+                }
+            });
+            paper.setAttribute('data-hydrated', '1');
+            bindTextBlocks(paper);
+            fitAllTableBlocks();
+            if (opts.compact) {
+                compactGrid(grid);
+            }
+        });
+        return hydrateLocks[lockKey];
+    }
+
+    function restoreVisiblePage() {
+        var wrap = document.getElementById('wrap-report');
+        if (!wrap || wrap.style.display === 'none') {
+            return;
+        }
+        var index = activePageIndex();
+        var paper = paperNodes()[index];
+        if (!paper || paper.querySelector('.grid-stack-item')) {
+            return;
+        }
+        paper.setAttribute('data-hydrated', '0');
+        var gridEl = paper.querySelector('.report-grid');
+        if (gridEl && !gridEl.gridstack) {
+            delete gridEl.dataset.gsInit;
+        }
+        delete hydrateLocks[paperPageId(paper) || String(index)];
+        hydratePage(index);
+    }
+
+    function bootReport() {
+        var workspace = document.getElementById('report-workspace');
+        if (!workspace) {
+            return;
+        }
+        applyReportTabViewport();
+        if (workspace.dataset.booted === '1') {
+            restoreVisiblePage();
+            return;
+        }
+        workspace.dataset.booted = '1';
+        if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
+            window.dash_clientside.set_props('report-pane-ready', { data: '1' });
+        }
+        var stored = loadStored();
+        if (stored && stored.pages && stored.pages.length) {
+            applyStoredLayout(stored);
+        } else {
+            hydratePage(0, { compact: true }).then(function () {
+                persistLocal(readLayoutFromDom());
+                initScrollSpy();
+            });
+        }
     }
 
     function widgetFromBlock(block) {
-        var tpl = document.getElementById(templateId(block));
-        if (!tpl) {
-            return null;
-        }
-        var node = tpl.cloneNode(true);
+        var node = document.createElement('div');
+        node.className = 'grid-stack-item';
         node.id = 'gs-item-' + block.id;
-        node.hidden = false;
-        node.classList.remove('report-item-template');
-        node.removeAttribute('hidden');
         node.setAttribute('data-gs-id', block.id);
         node.setAttribute('gs-id', block.id);
         node.setAttribute('data-block-type', block.type || '');
@@ -465,35 +959,62 @@
         node.setAttribute('data-y', String(block.y || 0));
         node.setAttribute('data-w', String(block.w || 6));
         node.setAttribute('data-h', String(block.h || 3));
-        var removeBtn = node.querySelector('[data-remove-block]');
-        if (removeBtn) {
-            removeBtn.setAttribute('data-remove-block', block.id);
+        var card = document.createElement('div');
+        var isTable = block.type === 'builtin_table';
+        card.className = 'grid-stack-item-content report-block-card' + (isTable ? ' report-block-card-table' : '');
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'report-block-remove no-print';
+        remove.setAttribute('data-remove-block', block.id);
+        remove.textContent = '×';
+        card.appendChild(remove);
+        var handle = document.createElement('div');
+        handle.className = 'grid-stack-item-handle no-print';
+        handle.title = 'Drag';
+        handle.textContent = '⋮⋮';
+        if (isTable) {
+            var row = document.createElement('div');
+            row.className = 'report-block-title-row';
+            var title = document.createElement('div');
+            title.className = 'report-block-title';
+            fillBlockTitle(title, block.table_key);
+            row.appendChild(handle);
+            row.appendChild(title);
+            card.appendChild(row);
+        } else {
+            card.appendChild(handle);
         }
+        var body = document.createElement('div');
+        body.className = 'report-block-body';
         if (block.type === 'text') {
-            var body = node.querySelector('.report-block-body');
-            if (body) {
-                var content = block.content || '';
-                var initialP = content.startsWith('<') ? content : (content ? '<p>' + content + '</p>' : '<p></p>');
-                body.innerHTML = '<div class="report-text-block" data-text-block="' + block.id + '" data-placeholder="Notes" contenteditable="true">' + initialP + '</div>';
-            }
-        }
-        if (block.type === 'builtin_table') {
-            var body = node.querySelector('.report-block-body');
-            var existingTable = document.querySelector('#report-papers .grid-stack-item[data-table-key="' + block.table_key + '"] .report-block-body');
-            if (body && existingTable && existingTable.innerHTML) {
-                body.innerHTML = existingTable.innerHTML;
-            }
-        }
-        if (block.type === 'image') {
-            var body = node.querySelector('.report-block-body');
-            if (body && block.src) {
-                body.innerHTML = '';
+            var content = block.content || '';
+            var initialP = content.indexOf('<') === 0 ? content : (content ? '<p>' + content + '</p>' : '<p></p>');
+            var note = document.createElement('div');
+            note.className = 'report-text-block';
+            note.setAttribute('data-text-block', block.id);
+            note.setAttribute('data-placeholder', 'Notes');
+            note.setAttribute('contenteditable', 'true');
+            note.innerHTML = initialP;
+            body.appendChild(note);
+        } else if (block.type === 'image') {
+            if (block.src) {
                 var img = document.createElement('img');
                 img.className = 'report-image-block';
                 img.setAttribute('src', block.src);
                 body.appendChild(img);
+            } else {
+                body.textContent = 'Drop an image here from Add image';
+                body.className += ' report-image-placeholder';
             }
+        } else if (isTable) {
+            var host = document.createElement('div');
+            host.className = 'report-table-host';
+            host.setAttribute('data-table-host', block.table_key || '');
+            body.appendChild(host);
+            paintTable(host, block.table_key, node);
         }
+        card.appendChild(body);
+        node.appendChild(card);
         return node;
     }
 
@@ -691,18 +1212,6 @@
         return reportFontLoading;
     }
 
-    try {
-        if (typeof window !== 'undefined' && window.requestIdleCallback) {
-            window.requestIdleCallback(function () {
-                loadReportFont().catch(function () {});
-            });
-        } else if (typeof window !== 'undefined') {
-            setTimeout(function () {
-                loadReportFont().catch(function () {});
-            }, 1000);
-        }
-    } catch (e) {}
-
     function registerReportFont(pdf) {
         if (reportFontBinary) {
             pdf.addFileToVFS('NotoSansTC-Regular.ttf', reportFontBinary);
@@ -736,19 +1245,53 @@
         return [Number(m[1]), Number(m[2]), Number(m[3])];
     }
 
+    function paperScale(paperRect) {
+        return {
+            x: paperRect.width ? (297 / paperRect.width) : 1,
+            y: paperRect.height ? (210 / paperRect.height) : 1
+        };
+    }
+
+    function scaleXY(scale) {
+        if (scale && typeof scale === 'object') {
+            return { x: scale.x || 1, y: scale.y || 1 };
+        }
+        var n = Number(scale) || 1;
+        return { x: n, y: n };
+    }
+
     function boxMm(paperRect, el, scale) {
+        var s = scaleXY(scale);
         var r = el.getBoundingClientRect();
         return {
-            x: (r.left - paperRect.left) * scale,
-            y: (r.top - paperRect.top) * scale,
-            w: r.width * scale,
-            h: r.height * scale
+            x: (r.left - paperRect.left) * s.x,
+            y: (r.top - paperRect.top) * s.y,
+            w: r.width * s.x,
+            h: r.height * s.y
         };
     }
 
     function pxToPt(px, scale) {
-        return Math.max(5, px * scale * 72 / 25.4);
+        var s = scaleXY(scale);
+        return Math.max(5, px * ((s.x + s.y) / 2) * 72 / 25.4);
     }
+
+    function fontWeightNum(style) {
+        if (!style || style.fontWeight == null) {
+            return 400;
+        }
+        var w = style.fontWeight;
+        if (w === 'bold' || w === 'bolder') {
+            return 700;
+        }
+        if (w === 'normal' || w === 'lighter') {
+            return 400;
+        }
+        var n = parseInt(w, 10);
+        return isNaN(n) ? 400 : n;
+    }
+
+    var PDF_FAKE_BOLD_MM = 0.15;
 
     function fitText(pdf, text, maxW) {
         if (!text) {
@@ -770,13 +1313,26 @@
 
     function drawPdfText(pdf, text, x, y, opts) {
         var options = opts || {};
+        var bold = !!options.bold;
+        var pdfOpts = {};
+        Object.keys(options).forEach(function (key) {
+            if (key !== 'bold') {
+                pdfOpts[key] = options[key];
+            }
+        });
         pdf.setFont(REPORT_FONT_NAME, 'normal');
-        try {
-            pdf.text(text, x, y, options);
-        } catch (err) {
-            pdf.setFont('helvetica', 'normal');
-            pdf.text(text, x, y, options);
-            pdf.setFont(REPORT_FONT_NAME, 'normal');
+        function paint(dx) {
+            try {
+                pdf.text(text, x + dx, y, pdfOpts);
+            } catch (err) {
+                pdf.setFont('helvetica', 'normal');
+                pdf.text(text, x + dx, y, pdfOpts);
+                pdf.setFont(REPORT_FONT_NAME, 'normal');
+            }
+        }
+        paint(0);
+        if (bold) {
+            paint(PDF_FAKE_BOLD_MM);
         }
     }
 
@@ -796,9 +1352,10 @@
             var color = parseRgb(style.color) || [15, 23, 42];
             pdf.setTextColor(color[0], color[1], color[2]);
             pdf.setFontSize(pxToPt(parseFloat(style.fontSize) || 13, scale));
-            drawPdfText(pdf, text, box.x + box.w / 2, box.y, {
-                baseline: 'top',
-                align: 'center'
+            drawPdfText(pdf, text, box.x + box.w / 2, box.y + box.h / 2, {
+                baseline: 'middle',
+                align: 'center',
+                bold: fontWeightNum(style) >= 600
             });
         });
     }
@@ -838,7 +1395,11 @@
             x = box.x + box.w - pad;
             pdfAlign = 'right';
         }
-        drawPdfText(pdf, fitted, x, box.y + pad, { baseline: 'top', align: pdfAlign });
+        drawPdfText(pdf, fitted, x, box.y + box.h / 2, {
+            baseline: 'middle',
+            align: pdfAlign,
+            bold: fontWeightNum(style) >= 600
+        });
     }
 
     function toRoman(num) {
@@ -859,7 +1420,8 @@
         if (!baseLinePx || isNaN(baseLinePx)) {
             baseLinePx = baseFontPx * 1.45;
         }
-        var lineH = baseLinePx * scale;
+        var sy = scaleXY(scale).y;
+        var lineH = baseLinePx * sy;
         var ptSize = pxToPt(baseFontPx, scale);
         var maxY = Math.min(210, box.y + box.h);
         var cursorY = box.y;
@@ -1183,7 +1745,10 @@
                 // Text styling
                 pdf.setTextColor(span.color[0], span.color[1], span.color[2]);
                 pdf.setFontSize(ptSize);
-                drawPdfText(pdf, span.text, spanX, cursorY, { baseline: 'top' });
+                drawPdfText(pdf, span.text, spanX, cursorY, {
+                    baseline: 'top',
+                    bold: !!span.bold
+                });
 
                 // Underline
                 if (span.underline) {
@@ -1234,12 +1799,12 @@
         if (!paperRect.width) {
             return;
         }
-        var scale = 297 / paperRect.width;
+        var scale = paperScale(paperRect);
         pdf.setFillColor(255, 255, 255);
         pdf.rect(0, 0, 297, 210, 'F');
         drawHeader(pdf, paper, paperRect, scale);
         paper.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            if (item.hidden || item.classList.contains('report-item-template')) {
+            if (item.hidden) {
                 return;
             }
             var title = item.querySelector('.report-block-title');
@@ -1248,10 +1813,13 @@
                 if (titleText) {
                     var tBox = boxMm(paperRect, title, scale);
                     var tStyle = window.getComputedStyle(title);
-                    var tColor = parseRgb(tStyle.color) || [30, 58, 138];
+                    var tColor = parseRgb(tStyle.color) || [15, 23, 42];
                     pdf.setTextColor(tColor[0], tColor[1], tColor[2]);
                     pdf.setFontSize(pxToPt(parseFloat(tStyle.fontSize) || 12, scale));
-                    drawPdfText(pdf, titleText, tBox.x, tBox.y, { baseline: 'top' });
+                    drawPdfText(pdf, titleText, tBox.x, tBox.y + tBox.h / 2, {
+                        baseline: 'middle',
+                        bold: fontWeightNum(tStyle) >= 600
+                    });
                 }
             }
             item.querySelectorAll('th, td').forEach(function (cell) {
@@ -1287,29 +1855,36 @@
             return Promise.resolve();
         }
         var papers = document.querySelectorAll('#report-papers .report-paper');
-        if (!papers.length || !window.jspdf || !window.jspdf.jsPDF) {
+        if (!papers.length) {
             window.print();
             return Promise.resolve();
         }
-        var JsPDF = window.jspdf.jsPDF;
         setPdfBusy(true);
-        return loadReportFont().then(function () {
+        return ensureReportLibs().then(function () {
+            if (!window.jspdf || !window.jspdf.jsPDF) {
+                throw new Error('jspdf missing');
+            }
+            return loadReportFont();
+        }).then(function () {
+            var JsPDF = window.jspdf.jsPDF;
             var pdf = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
             registerReportFont(pdf);
+            var chain = Promise.resolve();
             Array.prototype.forEach.call(papers, function (paper, index) {
-                if (index > 0) {
-                    pdf.addPage('a4', 'landscape');
-                }
-                try {
+                chain = chain.then(function () {
+                    return hydratePage(index);
+                }).then(function () {
+                    if (index > 0) {
+                        pdf.addPage('a4', 'landscape');
+                    }
                     drawPaper(pdf, paper);
-                } catch (drawErr) {
-                    console.warn('PDF page draw failed', index, drawErr);
-                    throw drawErr;
-                }
+                });
             });
-            var nameEl = document.getElementById('report-pdf-filename');
-            var filename = (nameEl && (nameEl.textContent || '').trim()) || 'splashboard-report.pdf';
-            pdf.save(filename);
+            return chain.then(function () {
+                var nameEl = document.getElementById('report-pdf-filename');
+                var filename = (nameEl && (nameEl.textContent || '').trim()) || 'splashboard-report.pdf';
+                pdf.save(filename);
+            });
         }).catch(function (err) {
             console.warn('PDF export failed, using print()', err && (err.message || String(err)));
             window.print();
@@ -1320,10 +1895,110 @@
 
     var dialogResolve = null;
 
+    function setPageIds(ids) {
+        if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
+            window.dash_clientside.set_props('report-page-ids', { data: ids });
+            return true;
+        }
+        return false;
+    }
+
+    function dispatchPageCmd(cmd) {
+        if (!window.dash_clientside || typeof window.dash_clientside.set_props !== 'function') {
+            return false;
+        }
+        cmd = cmd || {};
+        cmd.t = Date.now();
+        if (cmd.ids) {
+            window.dash_clientside.set_props('report-page-ids', { data: cmd.ids });
+        }
+        window.dash_clientside.set_props('report-page-cmd', { data: cmd });
+        return true;
+    }
+
+    function currentPaperIds() {
+        var papers = document.querySelectorAll('#report-papers .report-paper');
+        return Array.prototype.map.call(papers, paperPageId);
+    }
+
+    function paperPageId(paper) {
+        if (!paper) {
+            return '';
+        }
+        var id = paper.getAttribute('id') || '';
+        return id.indexOf('report-paper-') === 0 ? id.slice('report-paper-'.length) : id;
+    }
+
+    function layoutPageForPaper(layout, paper) {
+        var pid = paperPageId(paper);
+        var pages = (layout && layout.pages) || [];
+        var i;
+        for (i = 0; i < pages.length; i++) {
+            if (pages[i] && pages[i].id === pid) {
+                return pages[i];
+            }
+        }
+        return { id: pid, blocks: [] };
+    }
+
+    function paperNodes() {
+        return Array.prototype.slice.call(
+            document.querySelectorAll('#report-papers .report-paper')
+        );
+    }
+
+    function waitForPaperCount(n, timeoutMs) {
+        return new Promise(function (resolve) {
+            var start = Date.now();
+            function check() {
+                if (paperNodes().length === n) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - start > (timeoutMs || 4000)) {
+                    resolve(false);
+                    return;
+                }
+                requestAnimationFrame(check);
+            }
+            check();
+        });
+    }
+
+    function waitForNewPapers(oldNodes, n, timeoutMs) {
+        oldNodes = oldNodes || [];
+        return new Promise(function (resolve) {
+            var start = Date.now();
+            function isReplaced() {
+                var papers = paperNodes();
+                if (papers.length !== n) {
+                    return false;
+                }
+                if (!oldNodes.length) {
+                    return true;
+                }
+                return papers.every(function (paper) {
+                    return oldNodes.indexOf(paper) === -1;
+                });
+            }
+            function check() {
+                if (isReplaced()) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - start > (timeoutMs || 4000)) {
+                    resolve(false);
+                    return;
+                }
+                requestAnimationFrame(check);
+            }
+            check();
+        });
+    }
+
     function closeDialog(result) {
-        var root = document.getElementById('report-dialog');
-        if (root) {
-            root.hidden = true;
+        if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
+            window.dash_clientside.set_props('report-dialog-opened', { data: false });
         }
         var resolve = dialogResolve;
         dialogResolve = null;
@@ -1334,41 +2009,38 @@
 
     function askConfirm(message, okLabel) {
         return new Promise(function (resolve) {
-            var root = document.getElementById('report-dialog');
-            var msg = document.getElementById('report-dialog-message');
-            var ok = document.getElementById('report-dialog-ok');
-            if (!root || !msg || !ok) {
-                resolve(window.confirm(message));
+            if (!window.dash_clientside || typeof window.dash_clientside.set_props !== 'function') {
+                resolve(false);
                 return;
             }
-            msg.textContent = message;
-            ok.textContent = okLabel || 'OK';
             dialogResolve = resolve;
-            root.hidden = false;
+            window.dash_clientside.set_props('report-dialog-opened', { data: true });
+            window.setTimeout(function () {
+                var msg = document.getElementById('report-dialog-message');
+                var ok = document.getElementById('report-dialog-ok');
+                if (msg) {
+                    msg.textContent = message;
+                }
+                if (ok) {
+                    ok.textContent = okLabel || 'OK';
+                }
+            }, 0);
         });
     }
 
     function addEmptyPaper() {
-        var host = document.getElementById('report-papers');
-        var first = host && host.querySelector('.report-paper');
-        if (!host || !first) {
-            return null;
+        var ids = currentPaperIds();
+        var newId = uniqueId('page');
+        ids.push(newId);
+        if (!dispatchPageCmd({ op: 'add', id: newId, ids: ids })) {
+            return Promise.resolve(null);
         }
-        var paper = document.createElement('div');
-        paper.className = 'report-paper';
-        paper.id = 'report-paper-' + uniqueId('page');
-        paper.appendChild(makePageDeleteButton(paperCount()));
-        var header = first.querySelector('.report-header');
-        if (header) {
-            paper.appendChild(header.cloneNode(true));
-        }
-        var grid = document.createElement('div');
-        grid.className = 'grid-stack report-grid';
-        grid.id = 'report-grid-' + uniqueId('grid');
-        paper.appendChild(grid);
-        host.appendChild(paper);
-        spyObservedCount = -1;
-        return paper;
+        return waitForPaperCount(ids.length).then(function () {
+            spyObservedCount = -1;
+            hydrateLocks = {};
+            refreshPageChrome();
+            return document.querySelector('#report-papers .report-paper:last-child');
+        });
     }
 
     function refreshPageChrome() {
@@ -1376,179 +2048,165 @@
         var n = papers.length;
         papers.forEach(function (paper, index) {
             paper.setAttribute('data-page-index', String(index));
-            var del = paper.querySelector('.report-page-delete');
-            if (!del) {
-                del = makePageDeleteButton(index);
-                paper.insertBefore(del, paper.firstChild);
-            }
-            del.setAttribute('data-delete-page', String(index));
-            del.classList.toggle('is-disabled', n <= 1);
-            del.disabled = n <= 1;
-            var num = paper.querySelector('.report-page-number');
-            if (num) {
-                num.remove();
+            var del = paper.querySelector('[data-delete-page], .report-page-delete');
+            if (del) {
+                del.setAttribute('data-delete-page', String(index));
+                del.classList.toggle('is-disabled', n <= 1);
             }
         });
-        var list = document.getElementById('report-page-list');
-        if (!list) {
-            setCurrentPage(currentPageIndex);
-            return;
-        }
-        var addBtn = document.getElementById('report-add-page');
-        var active = clampPageIndex(currentPageIndex);
-        Array.prototype.slice.call(list.querySelectorAll('.report-page-btn[data-page-index]')).forEach(function (btn) {
-            btn.remove();
-        });
-        Array.prototype.slice.call(list.querySelectorAll('.report-page-remove')).forEach(function (btn) {
-            btn.remove();
-        });
-        for (var i = 0; i < n; i++) {
-            var btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'report-page-btn' + (i === active ? ' is-active' : '');
-            btn.setAttribute('data-page-index', String(i));
-            btn.textContent = String(i + 1);
-            list.insertBefore(btn, addBtn);
-        }
-        setCurrentPage(active);
+        setCurrentPage(clampPageIndex(currentPageIndex));
     }
 
     function applyStoredLayout(stored, compact) {
-        var host = document.getElementById('report-papers');
-        if (!host || !stored.pages.length) {
-            return;
+        if (!stored || !stored.pages || !stored.pages.length) {
+            return Promise.resolve();
         }
-        while (document.querySelectorAll('#report-papers .report-paper').length < stored.pages.length) {
-            addEmptyPaper();
-        }
-        while (document.querySelectorAll('#report-papers .report-paper').length > stored.pages.length) {
-            var last = host.querySelector('.report-paper:last-child');
-            var lastGrid = last && last.querySelector('.report-grid');
-            if (lastGrid && lastGrid.gridstack) {
-                lastGrid.gridstack.destroy(false);
-            }
-            if (last) {
-                last.remove();
-            }
-        }
-        spyObservedCount = -1;
-        initGrids();
-        stored.pages.forEach(function (page, index) {
-            var paper = document.querySelectorAll('#report-papers .report-paper')[index];
-            var gridEl = paper && paper.querySelector('.report-grid');
-            var grid = gridEl && gridEl.gridstack;
-            if (!grid) {
-                return;
-            }
-            grid.removeAll();
-            (page.blocks || []).forEach(function (block) {
-                var node = widgetFromBlock(block);
-                if (node) {
-                    grid.addWidget(node, {
-                        id: block.id,
-                        x: block.x || 0,
-                        y: block.y || 0,
-                        w: block.w || 6,
-                        h: block.h || 3
-                    });
+        writeLayoutJson(stored);
+        var ids = stored.pages.map(function (page, index) {
+            return page.id || ('page-' + (index + 1));
+        });
+        var oldPapers = paperNodes();
+        dispatchPageCmd({ op: 'reset', ids: ids });
+        return waitForNewPapers(oldPapers, ids.length).then(function () {
+            hydrateLocks = {};
+            document.querySelectorAll('#report-papers .report-paper').forEach(function (paper) {
+                paper.setAttribute('data-hydrated', '0');
+                var gridEl = paper.querySelector('.report-grid');
+                if (gridEl && gridEl.gridstack) {
+                    gridEl.gridstack.removeAll();
                 }
             });
+            spyObservedCount = -1;
+            var workspace = document.getElementById('report-workspace');
+            if (workspace) {
+                workspace.dataset.booted = '1';
+                workspace.dataset.storedApplied = '1';
+            }
+            return hydratePage(activePageIndex(), { compact: !!compact }).then(function () {
+                refreshPageChrome();
+                initScrollSpy();
+                persistLocal(readLayoutFromDom());
+            });
         });
-        refreshPageChrome();
-        bindTextBlocks();
-        fitAllTableBlocks();
-        if (compact) {
-            compactAllGrids();
-        }
-        initScrollSpy();
-        persistLocal(readLayoutFromDom());
     }
 
     function addWidgetToActive(block) {
-        var node = widgetFromBlock(block);
-        var grid = activeGrid();
-        if (!grid || !node) {
-            return;
-        }
-        var w = block.w || 6;
-        var h = measureBlockH(block, grid, node);
-        var slot = findFit(grid, w, h, paperMaxRows(grid));
-        if (!slot) {
-            addEmptyPaper();
-            initGrids();
-            var papers = document.querySelectorAll('#report-papers .report-paper');
-            setCurrentPage(papers.length - 1);
-            refreshPageChrome();
-            initScrollSpy();
-            grid = activeGrid();
-            if (!grid) {
+        var index = activePageIndex();
+        hydratePage(index).then(function () {
+            var node = widgetFromBlock(block);
+            var grid = activeGrid();
+            if (!grid || !node) {
                 return;
             }
-            slot = findFit(grid, w, h, paperMaxRows(grid)) || { x: 0, y: 0 };
-            if (papers[papers.length - 1]) {
-                papers[papers.length - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+            var w = block.w || 6;
+            var h = measureBlockH(block, grid, node);
+            var slot = findFit(grid, w, h, paperMaxRows(grid));
+            if (!slot) {
+                persistLocal(readLayoutFromDom());
+                return addEmptyPaper().then(function (paper) {
+                    var papers = document.querySelectorAll('#report-papers .report-paper');
+                    setCurrentPage(papers.length - 1);
+                    initScrollSpy();
+                    return hydratePage(papers.length - 1).then(function () {
+                        grid = activeGrid();
+                        if (!grid) {
+                            return;
+                        }
+                        slot = findFit(grid, w, h, paperMaxRows(grid)) || { x: 0, y: 0 };
+                        grid.addWidget(node, {
+                            id: block.id,
+                            x: slot.x,
+                            y: slot.y,
+                            w: w,
+                            h: h
+                        });
+                        bindTextBlocks(node);
+                        persistLocal(readLayoutFromDom());
+                        if (paper) {
+                            paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
+                    });
+                });
             }
-        }
-        grid.addWidget(node, {
-            id: block.id,
-            x: slot.x,
-            y: slot.y,
-            w: w,
-            h: h
+            grid.addWidget(node, {
+                id: block.id,
+                x: slot.x,
+                y: slot.y,
+                w: w,
+                h: h
+            });
+            bindTextBlocks(node);
+            persistLocal(readLayoutFromDom());
         });
-        bindTextBlocks(node);
-        persistLocal(readLayoutFromDom());
     }
 
     window.splashboardReport = {
+        skipFourFactorsGroup: skipFourFactorsGroup,
+        groupedHeader: groupedHeader,
+        paperScale: paperScale,
         loadStored: loadStored,
         readLayoutFromDom: readLayoutFromDom,
         persist: persistLocal,
         addPage: function () {
-            var paper = addEmptyPaper();
-            initGrids();
-            var papers = document.querySelectorAll('#report-papers .report-paper');
-            setCurrentPage(papers.length - 1);
-            refreshPageChrome();
-            initScrollSpy();
-            persistLocal(readLayoutFromDom());
-            if (paper) {
-                paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-            return readLayoutFromDom();
-        },
-        removePage: function (index) {
-            var host = document.getElementById('report-papers');
-            var papers = host ? host.querySelectorAll('.report-paper') : [];
-            if (papers.length <= 1) {
+            return addEmptyPaper().then(function (paper) {
+                var papers = document.querySelectorAll('#report-papers .report-paper');
+                setCurrentPage(papers.length - 1);
+                initScrollSpy();
+                persistLocal(readLayoutFromDom());
+                if (paper) {
+                    paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
                 return readLayoutFromDom();
+            });
+        },
+        removePage: function (index, pageId) {
+            var ids = currentPaperIds();
+            if (ids.length <= 1) {
+                return readLayoutFromDom();
+            }
+            if (pageId) {
+                var found = ids.indexOf(pageId);
+                if (found !== -1) {
+                    index = found;
+                }
             }
             if (typeof index !== 'number' || isNaN(index)) {
                 index = currentPageIndex;
             }
-            if (index < 0 || index >= papers.length) {
+            if (index < 0 || index >= ids.length) {
                 return readLayoutFromDom();
             }
-            var paper = papers[index];
-            var gridEl = paper.querySelector('.report-grid');
-            if (gridEl && gridEl.gridstack) {
-                gridEl.gridstack.destroy(false);
-            }
-            paper.remove();
-            spyObservedCount = -1;
-            if (currentPageIndex === index) {
-                setCurrentPage(index > 0 ? index - 1 : 0);
-            } else if (currentPageIndex > index) {
-                setCurrentPage(currentPageIndex - 1);
-            }
-            refreshPageChrome();
-            initScrollSpy();
+            var removedId = ids[index];
             persistLocal(readLayoutFromDom());
-            var remaining = document.querySelectorAll('#report-papers .report-paper')[currentPageIndex];
-            if (remaining) {
-                remaining.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            ids.splice(index, 1);
+            if (currentPageIndex === index) {
+                currentPageIndex = index > 0 ? index - 1 : 0;
+            } else if (currentPageIndex > index) {
+                currentPageIndex = currentPageIndex - 1;
             }
-            return readLayoutFromDom();
+            dispatchPageCmd({ op: 'delete', id: removedId, index: index, ids: ids });
+            return waitForPaperCount(ids.length).then(function () {
+                spyObservedCount = -1;
+                hydrateLocks = {};
+                document.querySelectorAll('#report-papers .report-paper').forEach(function (paper) {
+                    if (paper.getAttribute('data-hydrated') !== '1') {
+                        var gridEl = paper.querySelector('.report-grid');
+                        if (gridEl) {
+                            delete gridEl.dataset.gsInit;
+                        }
+                    }
+                });
+                initScrollSpy();
+                return hydratePage(currentPageIndex).then(function () {
+                    refreshPageChrome();
+                    persistLocal(readLayoutFromDom());
+                    var remaining = document.querySelectorAll('#report-papers .report-paper')[currentPageIndex];
+                    if (remaining) {
+                        remaining.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                    return readLayoutFromDom();
+                });
+            });
         },
         addText: function () {
             addWidgetToActive({
@@ -1642,11 +2300,7 @@
             return;
         }
         if (event.target.closest('#report-add-table')) {
-            toggleTableMenu();
             return;
-        }
-        if (!event.target.closest('.report-table-picker')) {
-            closeTableMenu();
         }
         if (event.target.closest('#report-add-text')) {
             window.splashboardReport.addText();
@@ -1709,12 +2363,18 @@
             });
             return;
         }
-        var deletePage = event.target.closest('[data-delete-page]');
+        var deletePage = event.target.closest('.report-page-delete, [data-delete-page]');
         if (deletePage && !deletePage.disabled && !deletePage.classList.contains('is-disabled')) {
-            var deleteIndex = parseInt(deletePage.getAttribute('data-delete-page'), 10);
+            var paper = deletePage.closest('#report-papers .report-paper');
+            var papers = document.querySelectorAll('#report-papers .report-paper');
+            var deleteIndex = paper ? Array.prototype.indexOf.call(papers, paper) : -1;
+            if (deleteIndex < 0 || papers.length <= 1) {
+                return;
+            }
+            var deleteId = paperPageId(paper);
             askConfirm('Delete this page?', 'Delete').then(function (ok) {
                 if (ok) {
-                    window.splashboardReport.removePage(deleteIndex);
+                    window.splashboardReport.removePage(deleteIndex, deleteId);
                 }
             });
             return;
@@ -1766,212 +2426,60 @@
         }
     });
 
-    var observer = new MutationObserver(function () {
-        initGrids();
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initGrids);
-    } else {
-        initGrids();
+    function attachReportObserver() {
+        applyReportTabViewport();
+        var host = document.getElementById('wrap-report') || document.getElementById('pane-report');
+        if (!host) {
+            return false;
+        }
+        if (host.dataset.reportObs === '1') {
+            if (document.getElementById('report-workspace')) {
+                bootReport();
+            }
+            return true;
+        }
+        host.dataset.reportObs = '1';
+        var observer = new MutationObserver(function () {
+            applyReportTabViewport();
+            if (document.getElementById('report-workspace')) {
+                bootReport();
+            }
+        });
+        observer.observe(host, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['style']
+        });
+        var tab = document.getElementById('report-tab');
+        if (tab) {
+            observer.observe(tab, { attributes: true, attributeFilter: ['style', 'class'] });
+        }
+        if (document.getElementById('report-workspace')) {
+            bootReport();
+        }
+        return true;
     }
+    if (!attachReportObserver()) {
+        var wait = new MutationObserver(function () {
+            if (attachReportObserver()) {
+                wait.disconnect();
+            }
+        });
+        wait.observe(document.documentElement, { childList: true, subtree: true });
+    }
+    window.addEventListener('resize', applyReportTabViewport);
+    applyReportTabViewport();
+    window.setInterval(function () {
+        applyReportTabViewport();
+        var workspace = document.getElementById('report-workspace');
+        if (!workspace) {
+            return;
+        }
+        if (workspace.dataset.booted === '1') {
+            restoreVisiblePage();
+            return;
+        }
+        bootReport();
+    }, 400);
 })();
-
-// AG-Grid custom cell renderers for Dash AG-Grid
-var dagFuncs = window.dashAgGridFunctions = window.dashAgGridFunctions || {};
-var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
-
-dagComponentFuncs.PlusMinusCell = function (props) {
-    var val = props.value;
-    if (val === null || val === undefined || val === '') {
-        return React.createElement('span', null, '');
-    }
-    var num = parseFloat(val);
-    if (isNaN(num)) {
-        return React.createElement('span', null, String(val));
-    }
-    var intVal = Math.round(num);
-    var style = {
-        textAlign: 'center',
-        display: 'inline-block',
-        width: '100%'
-    };
-    if (intVal > 0) {
-        style.color = '#0077b6';
-        style.fontWeight = '700';
-    } else if (intVal < 0) {
-        style.color = '#e63946';
-        style.fontWeight = '700';
-    } else {
-        style.color = '#64748b';
-        style.fontWeight = '400';
-    }
-    return React.createElement('span', { style: style }, String(intVal));
-};
-
-dagComponentFuncs.StarterCell = function (props) {
-    var val = (props.value || '').trim();
-    if (!val) {
-        return React.createElement('span', null, '');
-    }
-    var style = {
-        textAlign: 'center',
-        display: 'inline-block',
-        width: '100%',
-        color: '#1e293b',
-        fontWeight: '900',
-        fontSize: '16px',
-        lineHeight: '1',
-    };
-    return React.createElement('span', { style: style }, '○');
-};
-
-// Global AG Grid sort column cell background updater for B.LEAGUE sorting
-(function () {
-    function updateSortedColHighlight(gridWrap) {
-        if (!gridWrap) return;
-        var sortedHeaders = gridWrap.querySelectorAll(
-            '.ag-header-cell[aria-sort="ascending"], .ag-header-cell[aria-sort="descending"], .ag-header-cell.ag-header-cell-sorted-asc, .ag-header-cell.ag-header-cell-sorted-desc'
-        );
-        var activeColIds = Array.from(sortedHeaders).map(function (h) {
-            return h.getAttribute('col-id');
-        }).filter(Boolean);
-
-        var allCells = gridWrap.querySelectorAll('.ag-cell');
-        allCells.forEach(function (cell) {
-            var colId = cell.getAttribute('col-id');
-            if (colId && activeColIds.indexOf(colId) !== -1) {
-                cell.classList.add('ag-sorted-col-bg');
-            } else {
-                cell.classList.remove('ag-sorted-col-bg');
-            }
-        });
-    }
-
-    document.addEventListener('click', function (e) {
-        var header = e.target.closest('.ag-header-cell');
-        if (header) {
-            var gridWrap = header.closest('.braves-grid-wrap, .ag-theme-alpine');
-            setTimeout(function () {
-                updateSortedColHighlight(gridWrap);
-            }, 30);
-            setTimeout(function () {
-                updateSortedColHighlight(gridWrap);
-            }, 120);
-        }
-    }, true);
-})();
-
-(function bindTablePan() {
-    var MOVE_PX = 4;
-
-    function scrollerFor(host) {
-        if (host.classList.contains('braves-table-scroll')) {
-            return host;
-        }
-        return host.querySelector('.ag-center-cols-viewport');
-    }
-
-    function updateScrollable(host, scroller) {
-        if (!host || !scroller) {
-            return;
-        }
-        var on = scroller.scrollWidth > scroller.clientWidth + 1;
-        host.classList.toggle('is-scrollable', on);
-        scroller.classList.toggle('is-scrollable', on);
-    }
-
-    function bindHost(host) {
-        if (!host || host.closest('.report-paper, .report-workspace')) {
-            return;
-        }
-        var scroller = scrollerFor(host);
-        if (!scroller) {
-            return;
-        }
-        if (host.dataset.tablePanBound === '1') {
-            updateScrollable(host, scroller);
-            return;
-        }
-        host.dataset.tablePanBound = '1';
-        var dragging = false;
-        var moved = false;
-        var startX = 0;
-        var startScroll = 0;
-        updateScrollable(host, scroller);
-
-        host.addEventListener('mousedown', function (event) {
-            if (event.button !== 0) {
-                return;
-            }
-            if (!host.classList.contains('is-scrollable')) {
-                return;
-            }
-            if (event.target.closest('.ag-header, .ag-header-cell-resize, button, input, textarea, [contenteditable="true"]')) {
-                return;
-            }
-            dragging = true;
-            moved = false;
-            startX = event.clientX;
-            startScroll = scroller.scrollLeft;
-            host.classList.add('is-dragging');
-            scroller.classList.add('is-dragging');
-            event.preventDefault();
-        });
-
-        window.addEventListener('mousemove', function (event) {
-            if (!dragging) {
-                return;
-            }
-            var dx = event.clientX - startX;
-            if (Math.abs(dx) >= MOVE_PX) {
-                moved = true;
-            }
-            scroller.scrollLeft = startScroll - dx;
-            if (moved) {
-                event.preventDefault();
-            }
-        });
-
-        window.addEventListener('mouseup', function () {
-            if (!dragging) {
-                return;
-            }
-            dragging = false;
-            host.classList.remove('is-dragging');
-            scroller.classList.remove('is-dragging');
-            if (moved) {
-                host.dataset.panMoved = '1';
-            }
-        });
-
-        host.addEventListener('click', function (event) {
-            if (host.dataset.panMoved === '1') {
-                event.preventDefault();
-                event.stopPropagation();
-                host.dataset.panMoved = '';
-            }
-        }, true);
-    }
-
-    function scan() {
-        document.querySelectorAll('.braves-table-scroll').forEach(bindHost);
-        document.querySelectorAll('.ag-theme-alpine.braves-clean-ag-grid').forEach(bindHost);
-    }
-
-    var observer = new MutationObserver(scan);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    var resizeTimer = null;
-    window.addEventListener('resize', function () {
-        if (resizeTimer) {
-            clearTimeout(resizeTimer);
-        }
-        resizeTimer = setTimeout(scan, 200);
-    });
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', scan);
-    } else {
-        scan();
-    }
-})();
-

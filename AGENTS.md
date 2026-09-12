@@ -2,8 +2,7 @@
 
 Read the matching spec before changing behavior or fixing a bug.
 
-- Product behavior (pages, tabs, finished vs live, Rotation, English UI, Report canvas): `docs/spec.md`
-- Report canvas decisions (GridStack, `dmc.Table`, localStorage, glass chrome, JS paint): `docs/adr/0001-report-canvas.md`
+- Product behavior (pages, tabs, finished vs live, Rotation, English UI, Report canvas including GridStack / JS tables / DMC chrome / localStorage): `docs/spec.md`
 - Synergy hosts, official vs `/live`, token, roster, periodId, rate limits: `docs/synergy.md`
 - Local run, tests, deploy, environment variables: `README.md`
 
@@ -25,9 +24,8 @@ Read the matching spec before changing behavior or fixing a bug.
 ## Verification cadence
 
 1. After every code change, run the full unit suite (`python3 -m unittest discover -s tests -v`).
-2. Run Playwright smoke (`python3 -m pytest tests/e2e -q`) before `git commit`, or when the user says the UI work is done, whichever comes first. Skip a second smoke if this round already ran one. Non-UI changes (parser, cache, status helpers with no layout change) skip browser smoke.
-3. `scripts/cdp_verify_report.py` only when Report canvas or PDF changes. Do not fold Report/GridStack/Tiptap/PDF into the Playwright smoke.
-4. Repair failures in this same session. Use the pytest short traceback and assertion message. Do not dump the page accessibility tree, inner HTML, or a screenshot into the transcript. Screenshots may be written under `scratch/` and left unread.
+2. Run Playwright (`python3 -m pytest tests/e2e -q`) before `git commit`, or when the user says the UI work is done, whichever comes first. Skip a second run if this round already ran one. Non-UI changes (parser, cache, status helpers with no layout change) skip browser tests. Report first-paint, delete page, notes, PDF, and sticky live in `tests/e2e` with Home and Game.
+3. Repair failures in this same session. Use the pytest short traceback and assertion message. Do not dump the page accessibility tree, inner HTML, or a screenshot into the transcript. Screenshots may be written under `scratch/` and left unread.
 
 Acceptance for browser checks is the Playwright process exit code. Interactive browser-protocol stepping (page snapshots, per-click dumps, live `evaluate` in the session) is not the acceptance path.
 
@@ -36,6 +34,6 @@ Acceptance for browser checks is the Playwright process exit code. Interactive b
 - **Skill & Spec Reference**: When designing a new page/tab or performing major layout refactoring, read `.agents/skills/dash-dmc-design/SKILL.md` and `dash-dmc-ui/SKILL.md`. For specific color tokens (日式簡約 Braves 青空藍), typography, badge mappings, and page layouts, strictly follow `docs/spec.md`.
 - **DMC Primitives & No DBC**: Use `dash_mantine_components as dmc` exclusively (`dmc.AppShell`, `dmc.Stack` for vertical rhythm, `dmc.Group` for inline actions, `dmc.SimpleGrid` for cards). Never import or use Dash Bootstrap Components (DBC), raw HTML container soup, or React hook patterns (`@mantine/*`).
 - **Four States for Every View**: Every data view must explicitly handle: `Loading` (`dmc.Skeleton`), `Empty` (English copy + next step), `Error` (`dmc.Alert`, recoverable, no traceback), and `Success`.
-- **Custom Cell Rendering**: Custom cell formatting and dynamic styles must use `window.dashAgGridComponentFunctions` in `assets/report_canvas.js` (never uncompiled inline Python JS strings).
+- **Custom Cell Rendering**: Custom AG-Grid cell formatters and renderers reside in `assets/ag_grid_cells.js` via `window.dashAgGridComponentFunctions` (never uncompiled inline Python JS strings).
 - **Unit Test Contracts**: Unit tests cover Python contracts: per-column center alignment on `headerClass` / `cellClass` / `textAlign`, DMC component types (`AppShell`, `Skeleton`, `Alert`), Python `style` colors (winner cells, team stripe, player dots), empty/error copy, and fixture-status buckets (`synergy_inbounder/game_status.py`).
-- **Playwright Smoke Contracts**: Playwright smoke covers Home hero/filters/row links, Game non-Report tabs, Rotation Paper width, 375px and 1280px Home, and table-pan hosts (hidden scrollbar; overflow when the host has layout). Sampled AG Grid paint (`+/-` color, starter marker, `text-align`) is asserted in-test when those cells mount; Python contracts stay in the unit suite.
+- **Playwright Contracts**: `tests/e2e` covers Home hero/filters/row links, Game tabs including Report visibility at 1280px and hide under 1280px, Report first-paint table, leave Report and return with tables still on the first paper, delete page (remaining papers keep tables; page list is one stack), toolbar width ≤ paper width, 36px toolbar icons, Report thead without a 2px brand rule, notes, PDF, sticky toolbar, Rotation Paper width, 375px and 1280px Home, and table-pan hosts. Sampled AG Grid paint (`+/-` color, starter marker, `text-align`) is asserted in-test when those cells mount; Python contracts stay in the unit suite.

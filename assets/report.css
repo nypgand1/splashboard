@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Scheme A: Braves Japanese Clean & Modern (Light Mode)
+   Braves Japanese Clean & Modern (Light Mode)
    Design Tokens & Global Styles
    ========================================================================== */
 
@@ -29,7 +29,7 @@ body {
     padding: 0;
 }
 
-/* AppShell is the Scheme A device frame */
+/* AppShell is the Braves device frame */
 .app-shell {
     --app-shell-header-offset: 0px !important;
     width: calc(100% - 48px) !important;
@@ -39,7 +39,7 @@ body {
     border-radius: 14px;
     border: 1px solid var(--border);
     box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15);
-    overflow: hidden;
+    overflow: visible;
     min-height: calc(100vh - 48px);
     box-sizing: border-box;
 }
@@ -59,6 +59,7 @@ body {
     -webkit-backdrop-filter: blur(16px);
     border-bottom: 2px solid var(--navbar-border);
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
 }
 
 .app-main-content {
@@ -67,6 +68,8 @@ body {
     padding-top: 18px !important;
     min-height: calc(100vh - 104px);
     box-sizing: border-box;
+    border-bottom-left-radius: 14px;
+    border-bottom-right-radius: 14px;
 }
 
 /* ==========================================================================
@@ -85,6 +88,10 @@ body {
         border-top-right-radius: 12px;
     }
     .app-main-content {
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+    }
+    .app-main-content {
         padding: 16px;
     }
 }
@@ -99,6 +106,10 @@ body {
         box-shadow: none !important;
         max-width: 100% !important;
         min-height: 100vh;
+    }
+    .app-main-content {
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
     }
     .app-navbar {
         border-radius: 0 !important;
@@ -127,25 +138,11 @@ body {
     }
 }
 
-/* Report v2: liquid-glass chrome + opaque A4 landscape paper */
+/* Report: Braves chrome rails + opaque A4 landscape paper */
 .report-workspace {
-    --glass-bg: rgba(255, 255, 255, 0.75);
-    --glass-border: #e2e8f0;
-    --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
-    background:
-        radial-gradient(1200px 600px at 15% 0%, rgba(0, 180, 216, 0.08), transparent 55%),
-        radial-gradient(900px 500px at 85% 20%, rgba(0, 119, 182, 0.06), transparent 50%),
-        #f8fafc;
-    padding: 20px 16px 40px;
+    background: var(--bg);
+    padding: 20px 8px 40px;
     min-height: 70vh;
-}
-
-.report-glass {
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
 }
 
 .report-toolbar {
@@ -156,33 +153,35 @@ body {
     padding: 10px 14px;
     margin: 0 0 16px;
     width: 100%;
+    max-width: 297mm;
     box-sizing: border-box;
-    border-radius: 16px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
+    border-radius: 10px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-bottom: 2px solid #00b4d8;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
     position: sticky;
-    top: 118px;
+    top: 8px;
     z-index: 40;
     overflow: visible;
 }
 
-.report-chrome-btn {
-    border: 1px solid #cbd5e1;
+.report-chrome-btn,
+.report-toolbar .mantine-ActionIcon-root {
+    border: 1px solid #e2e8f0;
     background: #ffffff;
     color: #1e293b;
-    border-radius: 999px;
+    border-radius: 8px;
     padding: 6px 12px;
     font-size: 13px;
     cursor: pointer;
     transition: all 0.15s ease;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    box-shadow: none;
 }
 
-.report-chrome-btn:hover {
-    background: #f1f5f9;
+.report-chrome-btn:hover,
+.report-toolbar .mantine-ActionIcon-root:hover {
+    background: #e0f2fe;
     border-color: #00b4d8;
     color: #0077b6;
 }
@@ -199,10 +198,12 @@ body {
     border: 0 !important;
 }
 
-.report-chrome-btn-icon {
-    width: 36px;
-    height: 36px;
-    padding: 0;
+.report-chrome-btn-icon,
+.report-toolbar .mantine-ActionIcon-root {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    padding: 0 !important;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -210,9 +211,13 @@ body {
     position: relative;
 }
 
-.report-chrome-btn:hover,
+.report-toolbar .mantine-ActionIcon-root svg {
+    width: 18px;
+    height: 18px;
+}
+
 .report-image-upload:hover {
-    background: rgba(255, 255, 255, 0.55);
+    background: #e0f2fe;
 }
 
 .report-toolbar-end {
@@ -224,6 +229,10 @@ body {
 
 .report-chrome-btn-pdf {
     font-weight: 700;
+    height: 36px !important;
+    background: #0077b6 !important;
+    color: #ffffff !important;
+    border: none !important;
 }
 
 .report-table-picker {
@@ -231,25 +240,12 @@ body {
 }
 
 .report-table-menu {
-    display: none;
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 50;
     min-width: 220px;
     padding: 6px;
-    border-radius: 12px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    flex-direction: column;
-    gap: 2px;
-}
-
-.report-table-picker.is-open .report-table-menu {
-    display: flex;
+    border-radius: 10px;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
 }
 
 .report-table-menu-item {
@@ -262,10 +258,11 @@ body {
     font-size: 13px;
     cursor: pointer;
     white-space: nowrap;
+    width: 100%;
 }
 
 .report-table-menu-item:hover {
-    background: rgba(255, 255, 255, 0.55);
+    background: #e0f2fe;
 }
 
 #report-image-upload {
@@ -309,13 +306,15 @@ body {
 .report-workspace-row {
     display: flex;
     justify-content: center;
-    gap: 16px;
+    gap: 8px;
     align-items: flex-start;
+    max-width: 100%;
 }
 
 .report-main {
     width: 297mm;
-    flex: 0 0 297mm;
+    max-width: calc(100% - 56px);
+    flex: 0 1 297mm;
     display: flex;
     flex-direction: column;
 }
@@ -330,14 +329,15 @@ body {
     position: relative;
     display: flex;
     flex-direction: column;
-    width: 297mm;
+    width: 100%;
+    max-width: 297mm;
     height: 210mm;
     background: #ffffff;
     color: #0f172a;
     padding: 6mm;
     box-sizing: border-box;
     overflow: hidden;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .report-header {
@@ -375,18 +375,18 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    background: rgba(255, 255, 255, 0.42);
-    backdrop-filter: blur(16px) saturate(180%);
-    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #f1f5f9;
     color: #0f172a;
     cursor: pointer;
     font-size: 12px;
 }
 
 .report-page-delete:hover {
-    background: rgba(255, 255, 255, 0.7);
+    background: #e0f2fe;
+    border-color: #00b4d8;
+    color: #0077b6;
 }
 
 .report-page-delete.is-disabled,
@@ -468,16 +468,26 @@ body {
 
 .report-block-title,
 .report-table-caption {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 12px;
-    font-weight: 700;
-    color: #1e3a8a;
+    font-weight: 800;
+    color: #0f172a;
     margin-bottom: 4px;
+}
+
+.report-block-title-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 8px;
 }
 
 .report-toolbar-divider {
     width: 1px;
     height: 24px;
-    background: rgba(255, 255, 255, 0.55);
+    background: #e2e8f0;
     margin: 0 4px;
 }
 
@@ -495,8 +505,8 @@ body {
 }
 
 .report-rte-btn.is-active {
-    background: rgba(255, 255, 255, 0.9) !important;
-    color: #1e3a8a !important;
+    background: #e0f2fe !important;
+    color: #0077b6 !important;
     font-weight: bold;
 }
 
@@ -679,91 +689,108 @@ body {
     padding: 16px;
 }
 
-.report-page-list {
+#report-page-list.report-page-list {
     position: sticky;
-    top: 118px;
+    top: 8px;
     z-index: 30;
     display: flex;
     flex-direction: column;
     gap: 8px;
     padding: 10px 8px;
-    border-radius: 16px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
+    border-radius: 10px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-left: 2px solid #00b4d8;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
-.report-page-btn {
+#report-page-list .report-page-list {
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    background: transparent;
+}
+
+.report-page-btn,
+.report-page-list .mantine-Button-root,
+.report-page-list .mantine-ActionIcon-root {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
-    border: 1px solid rgba(0, 180, 216, 0.25);
-    background: rgba(0, 180, 216, 0.08);
-    color: #f1f5f9;
+    min-width: 36px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    color: #0f172a;
     cursor: pointer;
     font-weight: 600;
     transition: all 0.15s ease;
+    box-shadow: none;
 }
 
 .report-page-btn:hover,
-.report-page-btn.is-active {
-    background: rgba(0, 180, 216, 0.3);
-    border-color: rgba(0, 180, 216, 0.6);
-    color: #ffffff;
-    box-shadow: 0 0 12px rgba(0, 180, 216, 0.35);
+.report-page-list .mantine-Button-root:hover,
+.report-page-list .mantine-ActionIcon-root:hover {
+    background: #e0f2fe;
+    border-color: #00b4d8;
+    color: #0077b6;
 }
 
-.report-dmc-table {
+.report-page-btn.is-active,
+.report-page-list .mantine-Button-root.is-active {
+    background: linear-gradient(135deg, #0077b6, #00b4d8);
+    border-color: #0077b6;
+    color: #ffffff;
+}
+
+@media (max-width: 1279px) {
+    #report-tab {
+        display: none !important;
+    }
+}
+
+#report-tab.report-tab-narrow {
+    display: none !important;
+}
+
+.report-table-host {
+    width: 100%;
+    overflow: hidden;
+}
+
+.report-js-table {
+    width: 100%;
     font-size: 11px;
     margin-bottom: 0;
     color: #0f172a;
     background-color: #ffffff;
-    border-color: #dee2e6;
+    border-collapse: collapse;
+    border: 1px solid #dee2e6;
 }
 
-.report-dmc-table th,
-.report-dmc-table td {
-    padding: 3px 6px !important;
+.report-js-table th,
+.report-js-table td {
+    padding: 3px 6px;
     vertical-align: middle;
+    text-align: center;
     border: 1px solid #e2e8f0;
     color: #0f172a;
+    white-space: nowrap;
 }
 
-.report-dmc-table tbody tr:nth-of-type(odd) {
+.report-js-table thead th {
+    font-weight: 700;
+    background-color: var(--thead-bg);
+    color: var(--thead-text);
+    border-bottom: 1px solid var(--border);
+}
+
+.report-js-table tbody tr:nth-of-type(odd) {
     background-color: var(--row-alt);
 }
 
-.report-dialog {
-    position: fixed;
-    inset: 0;
-    z-index: 80;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(15, 23, 42, 0.35);
-}
-
-.report-dialog[hidden] {
-    display: none !important;
-}
-
-.report-dialog-card {
-    min-width: 280px;
-    max-width: 420px;
-    padding: 16px 18px;
-    border-radius: 16px;
-    background: var(--glass-bg);
-    backdrop-filter: blur(22px) saturate(180%);
-    -webkit-backdrop-filter: blur(22px) saturate(180%);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    color: #0f172a;
-}
-
 .report-dialog-message {
-    margin: 0 0 14px;
+    margin: 0;
     font-size: 14px;
 }
 
@@ -777,12 +804,8 @@ body {
     font-weight: 700;
 }
 
-.report-item-template {
-    display: none !important;
-}
-
 /* ==========================================================================
-   Scheme A: Tabs Styling
+   Tabs
    ========================================================================== */
 
 .braves-clean-tabs .mantine-Tabs-list {
@@ -818,7 +841,7 @@ body {
 }
 
 /* ==========================================================================
-   Scheme A: Summary Tables & Cards
+   Summary Tables & Cards
    ========================================================================== */
 
 .braves-card-wrapper {
@@ -888,7 +911,7 @@ body {
 }
 
 /* ==========================================================================
-   Scheme A: AG-Grid Light Theme Customizations
+   AG-Grid Light Theme Customizations
    ========================================================================== */
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-center-cols-viewport,

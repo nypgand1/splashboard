@@ -12,6 +12,7 @@ IMAGE_MAX_BYTES = 1_000_000
 ALLOWED_IMAGE_MIMES = frozenset({'image/jpeg', 'image/png', 'image/webp'})
 PDF_FILENAME_FALLBACK = 'splashboard-report.pdf'
 REPORT_TAB_STATUSES = frozenset({'FINISHED', 'CONFIRMED'})
+REPORT_DESKTOP_MIN_PX = 1280
 
 
 def report_tab_is_visible(status):
@@ -83,6 +84,12 @@ def pdf_export_spec():
         'visual': 'approximate',
         'font': 'Noto Sans TC',
         'font_url': '/assets/NotoSansTC-Regular.ttf',
+        'font_styles': ('normal',),
+        'scale': 'axis_separate',
+        'cell_text_baseline': 'middle',
+        'bold': 'offset_duplicate',
+        'bold_offset_mm': 0.15,
+        'bold_min_weight': 600,
         'table_style': 'as_on_screen',
         'rich_text_notes': True,
         'nested_lists_support': True,
@@ -99,9 +106,19 @@ def pdf_export_spec():
     }
 
 
+def report_header_groups_spec():
+    return {
+        'shot_groups': ('2PT', '3PT', 'FT', 'REB'),
+        'four_factors_label': '4 FACTORS',
+        'four_factors_keys': ('eFG%', 'TOV%', 'ORB%', 'FT-R'),
+        'four_factors_tables': ('t_adv_df',),
+        'no_four_factors_tables': ('p_df_home', 'p_df_away', 'lineup_home', 'lineup_away'),
+    }
+
+
 def report_table_engine():
     return {
-        'report': 'dmc.Table',
+        'report': 'html_table_js',
         'play_by_play': 'ag_grid',
         'box_score_summary': 'dmc.Table',
         'player_stats': 'ag_grid',
@@ -126,6 +143,9 @@ def chrome_spec():
         'add_image_label': 'Add image',
         'add_table_label': 'Add table',
         'add_table_control': 'icon_menu',
+        'editor_chrome': 'dmc',
+        'dialog': 'dmc.Modal',
+        'sticky_top_px': 8,
         'reset_icon': 'tabler:restore',
         'reset_label': 'Reset layout',
         'reset_confirm': 'Reset to the default layout? This cannot be undone.',
@@ -143,7 +163,7 @@ def chrome_spec():
         'page_number': False,
         'notes_default_h': 2,
         'notes_resize': 'content',
-        'notes_editor': 'tiptap_js',
+        'notes_editor': 'execCommand',
         'notes_placeholder': 'Notes',
         'notes_content_format': 'html',
         'notes_toolbar_location': 'report_toolbar',
@@ -160,11 +180,16 @@ def chrome_spec():
         'notes_custom_color_picker': True,
         'notes_nested_lists': True,
         'notes_old_plain_text': 'forward_compatible',
-        'notes_dynamic_mount': 'tiptap_js',
+        'notes_dynamic_mount': 'execCommand',
         'header_size': 'compact',
         'header_line_gap': 'loose',
         'sticky_selectors': ['report-toolbar', 'report-page-list'],
         'table_menu_order': ALLOWED_TABLE_KEYS,
+        'rail_bg': '#f1f5f9',
+        'rail_button_bg': '#ffffff',
+        'rail_blur': False,
+        'rail_accent': '#00b4d8',
+        'rail_shadow': '0 8px 24px rgba(15, 23, 42, 0.12)',
     }
 
 
@@ -183,12 +208,20 @@ def header_spec():
 
 def paint_spec():
     return {
-        'python_inputs': ('tabs',),
-        'python_states': ('bs_store', 'lineup_store', 'match_info_store', 'game_id'),
+        'python_inputs': ('tabs', 'report-pane-ready'),
+        'python_states': (
+            'bs_store',
+            'lineup_store',
+            'match_info_store',
+            'game_id',
+        ),
+        'pane_rebuild': 'first_open_or_empty',
         'lineup_precompute': 'game_id_trigger_size5',
         'layout_store_rebuilds_pane': False,
-        'layout_mutations': 'clientside',
-        'add_table': 'clone_template',
+        'layout_mutations': 'split',
+        'page_shells': 'python_cmd_patch',
+        'page_list_output': 'buttons_only',
+        'add_table': 'js_from_store',
         'add_target': 'current_page',
         'current_page': 'scroll_spy',
         'place': 'auto',
@@ -198,7 +231,12 @@ def paint_spec():
         'table_block_height': 'fit_content_with_handle',
         'fit_batch': 'read_then_write',
         'compact': 'first_paint_and_reset',
-        'report_tab': 'finished_only',
+        'hydrate': 'active_page',
+        'python_paint': 'shell',
+        'hidden_table_templates': False,
+        'lineup_rows': 'fit_block',
+        'report_tab': 'finished_and_desktop',
+        'desktop_min_px': REPORT_DESKTOP_MIN_PX,
         'player_stats_sort': '+/-_desc',
         'new_page_blocks': (),
         'image_validate': 'clientside',
@@ -250,23 +288,29 @@ def default_layout(match_info=None):
             {
                 'id': 'page-3',
                 'blocks': [
-                    _table('p3-home', 'p_df_home', 0, 0, GRID_COLUMNS, 5),
-                    _table('p3-away', 'p_df_away', 0, 5, GRID_COLUMNS, 5),
-                    _text('p3-notes', 0, 10, GRID_COLUMNS, 2),
+                    _table('p3-home', 'p_df_home', 0, 0, GRID_COLUMNS, 8),
+                    _text('p3-notes', 0, 8, GRID_COLUMNS, 2),
                 ],
             },
             {
                 'id': 'page-4',
                 'blocks': [
-                    _table('p4-home', 'lineup_home', 0, 0, GRID_COLUMNS, 5),
-                    _text('p4-notes', 0, 5, GRID_COLUMNS, 2),
+                    _table('p4-away', 'p_df_away', 0, 0, GRID_COLUMNS, 8),
+                    _text('p4-notes', 0, 8, GRID_COLUMNS, 2),
                 ],
             },
             {
                 'id': 'page-5',
                 'blocks': [
-                    _table('p5-away', 'lineup_away', 0, 0, GRID_COLUMNS, 5),
-                    _text('p5-notes', 0, 5, GRID_COLUMNS, 2),
+                    _table('p5-home', 'lineup_home', 0, 0, GRID_COLUMNS, 8),
+                    _text('p5-notes', 0, 8, GRID_COLUMNS, 2),
+                ],
+            },
+            {
+                'id': 'page-6',
+                'blocks': [
+                    _table('p6-away', 'lineup_away', 0, 0, GRID_COLUMNS, 8),
+                    _text('p6-notes', 0, 8, GRID_COLUMNS, 2),
                 ],
             },
         ],

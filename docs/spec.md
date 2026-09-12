@@ -16,8 +16,8 @@ This file is the source of truth for product behavior. Tests and later feature w
   - `--row-hover`: `#e0f2fe` (gentle cyan hover highlight)
   - `--card-bg`: `#ffffff` (white card containers with 10px radius & `#e2e8f0` border)
 - Tabs: Top radius 10px, active tab filled with `linear-gradient(135deg, #0077b6, #00b4d8)` and pure white text.
-- Page chrome is `dmc.AppShell` with `AppShellHeader` (navbar) and `AppShellMain` (pages). Theme tokens apply on the AppShell, not a separate Bootstrap frame. Navbar and main share one card: same width, fused corners. The header is **in document flow** (not `position: sticky` / `fixed`) so it never overlays the game banner or other content. Main padding is content padding only; do not rely on an AppShell header offset.
-- Icons use `DashIconify` (Tabler). Bootstrap Icons is not loaded. Report page-delete buttons created in JS use an inline SVG.
+- Page chrome is `dmc.AppShell` with `AppShellHeader` (navbar) and `AppShellMain` (pages). Theme tokens apply on the AppShell, not a separate Bootstrap frame. Navbar and main share one card: same width, fused corners. The header is **in document flow** (not `position: sticky` / `fixed`) so it never overlays the game banner or other content. Main padding is content padding only; do not rely on an AppShell header offset. `.app-shell` does not use `overflow: hidden` (that would become the sticky containing block and pin Report chrome inside the card instead of the viewport). Clip the card radius on the header (top) and `.app-main-content` (bottom) instead.
+- Icons use `DashIconify` (Tabler). Bootstrap Icons is not loaded. Report page-delete is a DMC control on the paper shell Python renders, not a JS-inserted SVG.
 - Tables & Alignment Rules (strictly unified across `dmc.Table` and `dag.AgGrid`):
   - Every header cell and data cell is **center-aligned**, including `Time`, `Player`, `Lineup`, `Lineups`, `Team`, and all numeric / time statistics.
   - Header cells and data cells must share the identical alignment for every column.
@@ -69,12 +69,12 @@ Top tabs, left to right, rendered via `dmc.Tabs` with theme chrome (top radius 1
 2. Rotation (tab_id: `tab-rotation`)
 3. Lineup Stats (tab_id: `tab-lineup`)
 4. Play-By-Play (tab_id: `tab-pbp`)
-5. Report (tab_id: `tab-report`) — **finished games only** (`FINISHED`, `CONFIRMED`). Every other status hides the Report tab (`display: none`). If Report is active while the status is not finished, switch to Box Score.
+5. Report (tab_id: `tab-report`) — **finished games only** (`FINISHED`, `CONFIRMED`) **and desktop** (`viewport >= 1280px`). Every other status, and any viewport under 1280px, hides the Report tab (`display: none`). If Report is active while hidden, switch to Box Score.
 
-Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab render callbacks gate on `Input('tabs', 'value')`, return `no_update`, and do not rebuild children.
+Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab render callbacks gate on `Input('tabs', 'value')`, return `no_update`, and do not rebuild children. Report also returns `no_update` on later Report tab selects while `report-pane-ready` is `1` (empty/error may rebuild).
 - Quarter tables (points, fouls, timeouts) and team summary tables (four factors, advanced stats, key stats) are rendered via DMC `dmc.Table` (with `dmc.SimpleGrid` for responsive quarter stats layout).
 - Player Stats and Lineup Stats tables use `dag.AgGrid` with `domLayout="autoHeight"` and sortable/filterable columns for interactive exploration.
-- Report canvas tables strictly use `dmc.Table` (per ADR 0001) for stable A4 rendering and PDF export. No `dbc.Table`, `dbc.Row`, or `dbc.Col` is used anywhere in the codebase.
+- Report canvas tables are native HTML `<table>` painted in JS from `bs_store` / `lineup_store` (per ADR 0001). Box Score quarter and team summary tables stay `dmc.Table`. No `dbc.Table`, `dbc.Row`, or `dbc.Col` is used anywhere in the codebase. Do not put AG Grid inside Report blocks.
 - Box Score quarter and team summary tables use `dmc.TableThead` / `dmc.TableTh` / `dmc.TableTd` (not raw `html.Th`).
 - Loading uses `dmc.Skeleton`. Empty copy is `No data available.` Next step: `Open another game from Home.` Error uses `dmc.Alert` with `Failed to load this view. Please try again later.` (no traceback).
 - The game banner date is ISO `YYYY-MM-DD`. It uses the same two-line `game_banner` composition as Home (score line, then `date | time | venue` plus badge `size="md"`). The banner status badge uses the same bucket colors and raw `status` label as Home (not `● LIVE`).
@@ -97,14 +97,10 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 - Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play and Rotation share that cadence.
 - Unplayed and void use official routes and do not poll.
 
-## Deferred (later discussion)
-
-- Report canvas DMC-ification beyond toolbar icons (`html.Th` / GridStack cloneNode).
-
 ## Background warmup and prefetch
 
 - **Game page Tab warmup**: For finished games (`FINISHED`, `CONFIRMED`), after `game_id` load, a background daemon thread precomputes Lineup `(4, 3, 2)` combinations and Rotation payload into `PostGameReport` memoized caches so tab switching is instantaneous.
-- **Font prefetch**: In Game pages, `NotoSansTC-Regular.ttf` (2.2MB) is preloaded asynchronously via JS upon initial render, eliminating download latency when clicking PDF export.
+- **Font load**: `NotoSansTC-Regular.ttf` (2.2MB) loads when the user exports PDF, not on every Game page render.
 - **Home page 2-game prefetch**: Upon loading the Home schedule list, a background sequential worker pre-fetches and memoizes `PostGameReport` for up to the latest 2 games (safely limited to avoid live API rate limits). Any direct user page request preempts background warmup.
 
 ## Rotation
@@ -141,32 +137,32 @@ Chart:
 
 ## Report
 
-Decisions: `docs/adr/0001-report-canvas.md`. Tests: `tests/test_report_layout.py`.
+Tests: `tests/test_report_layout.py` (Python contracts). Browser: `tests/e2e` (Home, Game tabs, Report first-paint, leave/return, delete page, notes, PDF, sticky). One Playwright path; do not keep a second Report-only tree.
 
-Throw away the previous Report canvas (Sortable, `window.print()` as the primary PDF path, match-info as a draggable block). Keep `PostGameReport` as the data source. Box Score, Rotation, Play-By-Play, and Lineup Stats stay as they are.
+The Report tab is a multi-page A4 landscape canvas. Keep `PostGameReport` as the data source. Box Score, Rotation, Play-By-Play, and Lineup Stats stay as they are. Desktop only: hide the tab when `viewport < 1280px`. Portrait paper was rejected so a table and notes can sit side by side.
 
 ### Paper and chrome
 
-- Paper is A4 **landscape** (297mm × 210mm). Opaque white. No glass, no blur.
-- Editor chrome (toolbar, page list, add-block palette, block handles, page-delete) uses Liquid glass. Other tabs and the navbar use the Japanese Clean & Modern theme inside `dmc.AppShell`.
-- Toolbar has no "Report" title. Add note, Add image, Add table, and Reset layout are `DashIconify` Tabler icons (`tabler:notebook`, `tabler:photo`, `tabler:table`, `tabler:restore`) with `aria-label` `Add note` / `Add image` / `Add table` / `Reset layout`. Add table opens a Liquid-glass menu of builtin tables (Player Stats before Lineup Stats). PDF stays a text button.
+- Paper is A4 **landscape** (297mm × 210mm). Opaque white. No glass, no blur. Paper shadow is close to AppShell (`0 8px 24px rgba(15, 23, 42, 0.12)`), not a heavy drop shadow.
+- Editor chrome (toolbar, page list, add-table menu, dialogs, page-delete) uses the same **Braves Japanese Clean & Modern** tokens as Home and Box Score. It is DMC (`dmc.ActionIcon`, `dmc.Button`, `dmc.Menu`, `dmc.Modal`). The A4 sheet stays print-white. There is no second “liquid glass” theme and no “Scheme A” name. Toolbar and page-list **rails** are solid `--thead-bg` `#f1f5f9` (no blur, no translucent white) with paper-matching shadow `0 8px 24px rgba(15, 23, 42, 0.12)`. Toolbar has a 2px `#00b4d8` bottom edge; page list has a 2px `#00b4d8` left edge. Quiet controls are white `#ffffff` with `#e2e8f0` border and `#1e293b` icons. Page-list idle buttons are that same white, not `#f1f5f9`.
+- Report workspace background is `--bg` `#f8fafc` only (no radial wash).
+- Toolbar has no "Report" title. Add note, Add image, Add table, and Reset layout are `DashIconify` Tabler icons (`tabler:notebook`, `tabler:photo`, `tabler:table`, `tabler:restore`) with `aria-label` `Add note` / `Add image` / `Add table` / `Reset layout`. Controls are 8px radius (same as the navbar Menu button), not pills. Add table opens a `dmc.Menu` of builtin tables (Player Stats before Lineup Stats). **PDF is the only filled primary** (`#0077b6`, white label). Hover on quiet controls: `#e0f2fe` / border `#00b4d8` / text `#0077b6`.
 - The toolbar is the same width as one A4 paper (297mm) and left-aligned with the papers. The page list sits to the right of that column; do not center the toolbar independently of the paper.
-- Reset layout asks `Reset to the default layout? This cannot be undone.` with `Cancel` / `Reset`. Confirming replaces the canvas with `default_layout` and writes that JSON to `localStorage`. Stored layouts are not auto-discarded.
-- Icons across the app use `DashIconify` (Tabler). The Report page-delete control that JS inserts uses an inline SVG. Bootstrap Icons is not loaded.
-- Toolbar and page list are `position: sticky` so they stay visible while the papers scroll. The Add table menu stacks above the paper (`z-index`).
+- Reset layout asks `Reset to the default layout? This cannot be undone.` with `Cancel` / `Reset` in `dmc.Modal`. Confirming restores `default_layout` (paper shells may remount; this action is destructive) and writes that JSON to `localStorage`. Stored layouts are not auto-discarded. Do not bump `LAYOUT_VERSION` to wipe them.
+- Toolbar and page list are `position: sticky; top: 8px` so they stay on the **viewport** while the papers scroll. Navbar and game tabs stay in document flow and scroll away. Do not reserve a ~118px offset for a sticky header. The Add table menu stacks above the paper (`z-index`).
+- Page list buttons match tabs: idle `#0f172a` on white `#ffffff` / `#e2e8f0`; current page `linear-gradient(135deg, #0077b6, #00b4d8)` and white text. No neon glow. `+` uses the same language.
 - Every page has a **header template** that is not a block and cannot be dragged. The header is compact (small type, little padding) so the grid gets the rest of the 210mm:
   1. Away name, away score, `@`, home score, home name
   2. Date, time, and venue on **one** line (venue after time), with a slightly larger gap under the score line
 - There is no page-number footer.
-- Page list: add and switch only. There is **no** minus control on the page list. Delete a page with × at that paper's top-right, after `Delete this page?` (`Cancel` / `Delete`). The last remaining page cannot be deleted (`min_pages` = 1). Default is **5 pages**. Users may add more.
-- The current page is the paper with the highest intersection in the scroll viewport (scroll-spy). Add note, Add image, and Add table insert onto that current page: auto-place into empty grid cells that fit the block's `w`×`h` **inside the full paper grid** (the grid is stretched to the leftover paper height, not shrunk to existing widgets). If that paper has no such slot, add a **blank** page and place there.
+- Page list: add and switch only. There is **no** minus control on the page list. Delete a page with × at that paper's top-right: the × belongs to that A4 sheet, so that sheet is the one removed (not the scroll-spy page). Confirm with `dmc.Modal` (`keepMounted`) `Delete this page?` (`Cancel` / `Delete`). Do not use `window.confirm`. The last remaining page cannot be deleted (`min_pages` = 1). Default is **6 pages**. Users may add more.
+- The current page is the paper with the highest intersection in the scroll viewport (scroll-spy). Add note, Add image, and Add table insert onto that current page: auto-place into empty grid cells that fit the block's `w`×`h` **inside the full paper grid** (the grid is stretched to the leftover paper height, not shrunk to existing widgets). If that paper has no such slot, request a **blank** page through the page-id store, then place there.
 - New pages from the page-list `+` are also blank (no default notes block).
 - Layout engine: GridStack (12 columns). Blocks drag and resize. Table drag handles sit to the left of the block title (in the same row, sized to max height). Note/image handles stay overlaid at the top-left and do not consume a grid row. Default layout is compacted on first paint and after Reset; later user moves are left alone. Stored layouts are kept as saved (no auto-replace).
-- Block bodies do not scroll. `overflow` is `hidden`. Builtin table blocks size their grid `h` to the title row (title and drag handle on the same row) plus the table. Note blocks use a JS-side Tiptap editor (`contenteditable` div with Tiptap mounted in JS): empty placeholder `Notes`, default 2 grid rows, grow or shrink with content (Enter grows, deleting lines shrinks, minimum 2). Rows that still do not fit the A4 sheet are clipped by the paper. The sheet stays 210mm.
-- Note text-formatting toolbar lives in the **Report toolbar area** (not inside each Note block). It appears when a Note is focused and controls Bold, Italic, Underline, Strikethrough, Bullet List, Ordered List, Text Color, and Highlight. Text Color and Highlight are button menus: clicking opens a dropdown popup containing a single row of 8 Flat Design preset colors with tight spacing (Red `#e74c3c`, Orange `#e67e22`, Yellow `#f1c40f`, Green `#2ecc71`, Blue `#3498db`, Purple `#9b59b6`, White `#ffffff`, Reset Black `#000000`) plus a custom color picker input. The toolbar is hidden when no Note is focused.
+- Block bodies do not scroll. `overflow` is `hidden`. Builtin table blocks size their grid `h` to the title row (title and drag handle on the same row) plus the table. Note blocks use `contenteditable` with `document.execCommand` (not Tiptap): empty placeholder `Notes`, default 2 grid rows, grow or shrink with content (Enter grows, deleting lines shrinks, minimum 2). Lineup tables paint only the rows that fit the block; full combinations live on the Lineup Stats tab. The sheet stays 210mm.
+- Note text-formatting toolbar lives in the **Report toolbar area** (not inside each Note block). It appears when a Note is focused and controls Bold, Italic, Underline, Strikethrough, Bullet List, Ordered List, Text Color, and Highlight. Active format buttons use `#0077b6`, not indigo. Text Color and Highlight are button menus: clicking opens a dropdown popup containing a single row of 8 Flat Design preset colors with tight spacing (Red `#e74c3c`, Orange `#e67e22`, Yellow `#f1c40f`, Green `#2ecc71`, Blue `#3498db`, Purple `#9b59b6`, White `#ffffff`, Reset Black `#000000`) plus a custom color picker input. Those eight colors are annotation, not brand tokens. The toolbar is hidden when no Note is focused.
 - Bullet List and Ordered List support multi-level nested lists. Pressing `Tab` indents the current item into a sub-list; pressing `Shift + Tab` outdents back to the parent list. Bullet List markers cascade as `disc` (Level 1) → `circle` (Level 2) → `square` (Level 3+). Ordered List numbers cascade as `decimal` (1, 2, 3) → `lower-alpha` (a, b, c) → `lower-roman` (i, ii, iii).
-- Note `content` is stored as **HTML** (Tiptap native output). Old plain-text content from previous versions is forward-compatible: Tiptap renders plain text as a `<p>` paragraph.
-- Tiptap and its extensions load via CDN `<script>` tags. Python renders `contenteditable` divs; JS mounts Tiptap editors on them after GridStack init. This avoids React component lifecycle conflicts with GridStack `cloneNode`. All Notes—including those added dynamically via JS—get a Tiptap editor mounted in JS.
+- Note `content` is stored as **HTML**. Old plain-text content from previous versions is wrapped in `<p>` when painted.
 - There is no `spacer` on any page.
 
 ### Block types
@@ -185,13 +181,14 @@ Out of v1: Shot Chart, play-type tables, manual cell fill/bold, auto red/green t
 
 ### Default layout
 
-Note slots start as **empty** `text` blocks.
+Note slots start as **empty** `text` blocks. Home tables come before away.
 
 1. Header + Score + empty text + Four Factors. No spacer.
-2. Header + Team Stats + Key Stats + empty text. Leftover paper stays **whitespace**. Do not stretch those tables (or the notes) to fill the sheet. Lineup is not on this page.
-3. Header + home Player Stats + away Player Stats + empty text
-4. Header + home Lineup Stats + empty text
-5. Header + away Lineup Stats + empty text
+2. Header + Team Stats + Key Stats + empty text. Leftover paper stays **whitespace**. Do not stretch those tables (or the notes) to fill the sheet.
+3. Header + home Player Stats + empty text
+4. Header + away Player Stats + empty text
+5. Header + home Lineup Stats + empty text
+6. Header + away Lineup Stats + empty text
 
 ### Persistence and images
 
@@ -201,22 +198,29 @@ Note slots start as **empty** `text` blocks.
 
 ### Paint ownership
 
-- `lineup_store` (size 5 only) is precomputed at page load (triggered by `game_id`, not by tab switch). Report only uses 5-player lineups; the Lineup tab computes other sizes (4/3/2) on demand via its own callback.
-- Python paints the Report pane **once** when the tab opens. `lineup_store` is a `State` (not an `Input`), so updating it does **not** rebuild `pane-report`. It does **not** rebuild `pane-report` when `report_layout_store` changes either.
-- After that single paint, add note, add page, remove page, remove block, add table, and add image mutate GridStack in JS and write `localStorage` only.
-- Add note, Add image, and Add table insert onto the current page (scroll-spy), auto-placed; a full page adds a new page first.
-- Add table clones a hidden `dmc.Table` template for that `table_key`. Do not mount a new AG Grid.
-- `fitAllTableBlocks` batches DOM measurements: all `scrollHeight` reads run first, then all `grid.update` writes run, to avoid interleaved layout reflows.
-- Reset layout is clientside (default JSON kept in the pane; no Python rebuild).
+Ownership is split so each layer does what the other cannot. This is not leftover JS.
+
+- **Python / DMC** owns editor chrome and **paper shells**: toolbar, page list, dialogs, page-delete, each paper’s header + empty grid host. JS `document.createElement('button')` cannot mount DMC. `lineup_store` (size 5 only) is precomputed at page load (triggered by `game_id`, not by tab switch). Report only uses 5-player lineups; the Lineup tab computes other sizes (4/3/2) on demand via its own callback.
+- **JS** owns **paper interiors**: GridStack, native HTML tables, notes, images, PDF, `localStorage` block layout. Hydrate **the current page only**, looking up blocks by **page id** (not array index). Scroll or page-list click hydrates the next paper. Unhydrated papers keep 210mm height and header only.
+- `Output('pane-report', 'children')` runs on the **first** Report open for this game, and when `report-pane-ready` is not `1` (empty/error, so a later-ready store can paint). It does not run on later tab returns while that store is `1`, nor on drag, note edits, add block, add image, add page, or delete page. Replacing that tree remounts React: GridStack dies, notes lose focus, scroll resets, papers unhydrate. That is a remount, not a CSS flicker. DMC does not cause it; writing `pane-report` children does. Stored-layout boot waits for **new** paper nodes after `op: reset`, not the pre-reset count. `persistLocal` does not run while Report is `display: none`, and does not overwrite a non-empty `localStorage` layout when the DOM has no grid items. Showing Report again rehydrates the current paper if GridStack items were dropped while the pane was hidden, or if the workspace remounted.
+- Page add/delete go through a `report-page-cmd` store (`add` / `delete` / `reset`). Add Patch-appends one shell. Delete Patch-removes one index. Reset may replace shells. The page-list Output is **button children only**, never a nested `dmc.Stack`. JS does not `createElement` paper shells or page buttons.
+- Add note, Add image, and Add table stay JS: insert onto the current page (scroll-spy), auto-placed. If that paper has no slot, JS requests one new page through the page-id store, then places the block after the new shell exists. Add table paints from store JSON; there are no hidden table templates.
+- Do not mount AG Grid in Report blocks. Do not clone Player / Lineup tab grids. Do not put `dmc.Table` inside GridStack. Do not DMC the toolbar and leave the page list as JS HTML.
+- `fitAllTableBlocks` batches DOM measurements on the hydrated page: all `scrollHeight` reads run first, then all `grid.update` writes run.
+- Reset may remount paper shells (user confirmed destructive). It restores `default_layout` and writes `localStorage`. Stored layouts are not auto-replaced.
+- GridStack and jsPDF load when Report hydrates, not on Home. AG Grid cell renderers live in `assets/ag_grid_cells.js`.
+- There is no Fly volume; machines auto-stop. Layout and images live in `localStorage` as JSON + data URLs. PDF is jsPDF selectable text (not a whole-page html2canvas raster). Noto Sans TC loads on export.
+
+**Rejected (do not revive):** portrait paper; Sortable instead of GridStack; AG Grid or `dmc.Table` inside GridStack; Tabulator; cloning Player/Lineup AG Grid; Tiptap CDN or `dmc.RichTextEditor` for notes; a second liquid-glass editor theme; `Output('pane-report', 'children')` on layout mutations; JS-created page buttons or paper shells; Python owning GridStack / table cells / notes.
 
 ### PDF
 
-- Primary: jsPDF walks each paper's DOM (header, `dmc.Table` cells, notes, images) and writes **selectable text**, one PDF page per canvas page, landscape A4. Layout is close to the screen, not pixel-identical. Notes are parsed via a Rich Text DOM Walker:
+- Primary: jsPDF walks each paper's DOM (header, table cells, notes, images) and writes **selectable text**, one PDF page per canvas page, landscape A4. Export hydrates one paper at a time, draws it, then continues. Layout is close to the screen, not pixel-identical. Notes are parsed via a Rich Text DOM Walker:
   - Paragraphs and multi-level lists (`<ul>`, `<ol>`) maintain hierarchical indentation (approx. 5mm per level).
   - List markers are drawn according to hierarchy: Bullet lists render `disc`, `circle`, `square`; Ordered lists render formatted numbers (`1.`, `a.`, `i.`).
   - Formatting spans parse `color` (`<font color="...">` or CSS `color`), highlight background (`style="background-color: ..."` filled via `pdf.rect`), bold/italic font styles, and draw underlines or strikethrough lines.
   - Text segments are automatically word-wrapped and respect block boundaries (`maxY` clipping at paper bottom).
-- CJK uses Noto Sans TC bundled at `/assets/NotoSansTC-Regular.ttf` (same-origin, no CDN). ASCII can share that font or Helvetica. Uploaded images are embedded as PNG.
+- CJK uses Noto Sans TC bundled at `/assets/NotoSansTC-Regular.ttf` (same-origin, no CDN). ASCII can share that font or Helvetica. Uploaded images are embedded as PNG. There is no Bold file: cells and titles with `font-weight >= 600` are drawn twice, offset 0.15mm. PDF maps the paper with separate `scaleX = 297/width` and `scaleY = 210/height`; table text is vertically centered in the cell (`baseline: middle`).
 - Filename is `{YYYYMMDD}.pdf` from the game date. If the date is missing, `splashboard-report.pdf`.
 - Tables keep the on-screen look (striped, bordered, 11px, `text-nowrap`). Do not restyle tables for a separate print theme.
 - Do not rasterize the whole paper with html2canvas. Browser print is the fallback if the font or jsPDF fails.
@@ -225,9 +229,12 @@ Note slots start as **empty** `text` blocks.
 
 ### Tables in Report
 
-- Report builtin tables are `dmc.Table` (`className="text-nowrap report-dmc-table"`): striped, bordered, `text-nowrap`, read-only.
+- Report builtin tables are native HTML `<table>` (`className="text-nowrap report-js-table"`): striped, bordered, `text-nowrap`, read-only. Python does not emit per-cell Dash components.
+- Semantic paint matches the other Game tabs at A4 density: grouped 2PT / 3PT / FT / REB headers. **4 FACTORS** grouped header is only on the team Four Factors table (`t_adv_df`). Player Stats and Lineup Stats paint `eFG%` as a standalone column (no 4 FACTORS band). Team winner cells bold `#0077b6`; team stripe on the name column; `+/-` positive `#0077b6`, negative `#e63946`, zero `#64748b`; **`PM` is a `12-10` string and is not color-coded** (Box Score already colors only `+/-`); starter `S` paints `○`; DNP `Min` spans remaining columns; player and lineup names `fw=700`; zero stats blank as on Box Score / Lineup. No pinned columns, sort, or filter on the paper.
+- Report table `thead` uses `--thead-bg` `#f1f5f9` and the same 1px `#e2e8f0` border as body cells. Do not paint a 2px brand underline on paper tables. Box Score `dmc.Table` / AG Grid keep the 2px `#00b4d8` header edge. Cell padding and type stay A4-dense (11px / 3px).
+- Captioned blocks (`p_df_home`, `p_df_away`, `lineup_home`, `lineup_away`) title as `[8px dot] {team} | Player Stats` or `| Lineup Stats`. Home dot `#00b4d8`, away `#94a3b8` (same as Box Score). Title color `#0f172a`, `fw=800`. Other tables keep generic titles (`Score`, `Team Stats`, …). The Add table menu still lists `Home Player Stats` / `Away Player Stats` / lineup labels.
 - Play-By-Play keeps AG Grid. Do not put AG Grid inside Report blocks.
-- Tighter font and padding than Box Score so a table can sit in an A4 block. Overflowing rows are clipped by the paper, not scrolled inside the block.
+- Tighter font and padding than Box Score so a table can sit in an A4 block. Lineup rows that do not fit the block are not painted (full list is on the Lineup Stats tab). The paper does not scroll inside a block.
 - Team Stats and Player Stats `Min` values are `M:SS` (e.g. `8:21`, `0:06`). Box Score uses the same values.
 - Box Score, Report canvas, and PDF Player Stats share one sort: `+/-` descending, then PTS descending, then jersey `#` ascending. DNP rows last. The starter `S` marker stays on the row and does not pin starters to the top.
 
@@ -237,7 +244,7 @@ Note slots start as **empty** `text` blocks.
 - `lineup_store` precomputes size 5 at page load. Sizes 4/3/2 compute on demand in the Lineup tab callback, then render through the same `render_lineup_children` path (home/away section dots, Lineup filter, size-based column widths, pagination). Do not paint a second Title-only table.
 - 5-man lineups are displayed completely without pagination; 2/3/4-man lineups paginate with 20 rows per page.
 - Lineup labels are player **names** from the id table, ordered by jersey shirt number (ascending), joined with hyphens (e.g. `林志傑-張宗憲`). Jersey is the sort key, not the displayed text.
-- On the Game Lineup Stats AG Grid (not Report `dmc.Table`), the Lineup column is pinned left, `fw=700`, centered, no `flex: 1`. Width follows lineup size: 2 → min 140 / width 150; 3 → 180 / 190; 4 → 220 / 230; 5 → 260 / 270. Names wrap inside the cell (`wrapText` + row `autoHeight`); they do not ellipsis. At viewport `max-width: 768px` the pinned Lineup column caps at 160px so Min, `+/-`, and PTS stay on-screen; wrapped names grow the row height.
+- On the Game Lineup Stats AG Grid (not Report JS tables), the Lineup column is pinned left, `fw=700`, centered, no `flex: 1`. Width follows lineup size: 2 → min 140 / width 150; 3 → 180 / 190; 4 → 220 / 230; 5 → 260 / 270. Names wrap inside the cell (`wrapText` + row `autoHeight`); they do not ellipsis. At viewport `max-width: 768px` the pinned Lineup column caps at 160px so Min, `+/-`, and PTS stay on-screen; wrapped names grow the row height.
 - Lineup table columns: `Lineup`, `Min`, `+/-`, `2M`, `2A`, `2FG%`, `3M`, `3A`, `3FG%`, `FTM`, `FTA`, `FT%`, `OR`, `DR`, `REB`, `AST`, `TO`, `ST`, `BL`, `PF`, `FD`, `PTS`, `eFG%`, `PM`.
 - Zero-value noise reduction: Except for `+/-` (which shows neutral gray `0`), all 0 statistics are rendered blank `''`. `eFG%` is calculated for lineups and displays `''` when `FGA == 0` or `0.0%` when `FGA > 0` with 0 made.
 

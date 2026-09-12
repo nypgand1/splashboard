@@ -125,7 +125,7 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
 
     tabs = page.locator('[role="tab"]')
     labels = [tabs.nth(i).inner_text().strip() for i in range(tabs.count())]
-    assert labels[:4] == ['Box Score', 'Rotation', 'Lineup Stats', 'Play-By-Play']
+    assert labels[:5] == ['Box Score', 'Rotation', 'Lineup Stats', 'Play-By-Play', 'Report']
 
     for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
@@ -277,6 +277,37 @@ def test_rotation_playhead_follows_click_time(page, e2e_server):
     )
     on_empty = _playhead_t(page)
     assert abs(on_empty - 20) < 4
+
+
+def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    page.wait_for_timeout(600)
+    assert page.locator('#report-tab').is_visible() is False
+
+
+def test_report_first_paint_on_desktop(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
+    report_tab = page.locator('#report-tab')
+    report_tab.wait_for(state='visible', timeout=20000)
+    assert report_tab.is_visible() is True
+    _select_tab(page, 'Report')
+    for _ in range(4):
+        if page.locator('#wrap-report').is_visible():
+            break
+        _select_tab(page, 'Report')
+        time.sleep(0.4)
+    page.locator('#report-workspace').wait_for(state='attached', timeout=20000)
+    page.locator('#wrap-report').wait_for(state='visible', timeout=20000)
+    page.locator('#report-papers .report-js-table').first.wait_for(state='attached', timeout=30000)
+    assert page.locator('#report-page-list .report-page-btn[data-page-index]').count() == 6
+    table = page.locator('#report-papers .report-js-table').first
+    assert table.locator('th').count() >= 1
+    assert table.locator('td').count() >= 1
 
 
 def test_box_score_paint_and_table_pan(page, e2e_server):

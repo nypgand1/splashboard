@@ -37,10 +37,10 @@ def _occupied_rows(blocks):
 
 
 class DefaultLayoutTests(unittest.TestCase):
-    def test_version_and_five_pages(self):
+    def test_version_and_six_pages(self):
         layout = _layout()
         self.assertEqual(layout['version'], 1)
-        self.assertEqual(len(layout['pages']), 5)
+        self.assertEqual(len(layout['pages']), 6)
 
     def test_header_is_not_a_block(self):
         layout = _layout()
@@ -71,7 +71,7 @@ class DefaultLayoutTests(unittest.TestCase):
             for block in page['blocks']:
                 self.assertNotEqual(block.get('type'), 'shot_chart')
                 self.assertNotEqual(block.get('table_key'), 'play_type')
-        self.assertEqual(len(layout['pages']), 5)
+        self.assertEqual(len(layout['pages']), 6)
 
     def test_builtin_keys_are_allowlisted(self):
         layout = _layout()
@@ -102,21 +102,27 @@ class DefaultLayoutTests(unittest.TestCase):
             {'t_df', 'k_df'},
         )
 
-    def test_page_three_player_boxes(self):
+    def test_page_three_home_player(self):
         self.assertEqual(
             set(_table_keys(_blocks(_layout(), 2))),
-            {'p_df_home', 'p_df_away'},
+            {'p_df_home'},
         )
 
-    def test_page_four_lineup_home(self):
+    def test_page_four_away_player(self):
         self.assertEqual(
             set(_table_keys(_blocks(_layout(), 3))),
+            {'p_df_away'},
+        )
+
+    def test_page_five_lineup_home(self):
+        self.assertEqual(
+            set(_table_keys(_blocks(_layout(), 4))),
             {'lineup_home'},
         )
 
-    def test_page_five_lineup_away(self):
+    def test_page_six_lineup_away(self):
         self.assertEqual(
-            set(_table_keys(_blocks(_layout(), 4))),
+            set(_table_keys(_blocks(_layout(), 5))),
             {'lineup_away'},
         )
 
@@ -219,6 +225,12 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertTrue(spec['font_url'].startswith('/assets/'))
         self.assertTrue(spec['font_url'].endswith('.ttf'))
         self.assertNotIn('jsdelivr', spec['font_url'])
+        self.assertEqual(spec['font_styles'], ('normal',))
+        self.assertEqual(spec['scale'], 'axis_separate')
+        self.assertEqual(spec['cell_text_baseline'], 'middle')
+        self.assertEqual(spec['bold'], 'offset_duplicate')
+        self.assertEqual(spec['bold_offset_mm'], 0.15)
+        self.assertEqual(spec['bold_min_weight'], 600)
         self.assertEqual(spec['table_style'], 'as_on_screen')
         self.assertTrue(spec['rich_text_notes'])
         self.assertTrue(spec['nested_lists_support'])
@@ -241,12 +253,65 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(report_layout.pdf_filename({}), 'splashboard-report.pdf')
         self.assertEqual(report_layout.pdf_filename(None), 'splashboard-report.pdf')
 
+    def test_player_and_lineup_skip_four_factors_header_group(self):
+        if report_layout is None:
+            raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
+        spec = report_layout.report_header_groups_spec()
+        self.assertEqual(spec['four_factors_label'], '4 FACTORS')
+        self.assertEqual(spec['four_factors_tables'], ('t_adv_df',))
+        self.assertEqual(
+            spec['no_four_factors_tables'],
+            ('p_df_home', 'p_df_away', 'lineup_home', 'lineup_away'),
+        )
+        import os
+        js_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'assets',
+            'report_canvas.js',
+        )
+        with open(js_path, 'r') as f:
+            js = f.read()
+        self.assertIn('function skipFourFactorsGroup', js)
+        self.assertIn("tableKey === 'p_df_home'", js)
+        self.assertIn("tableKey === 'lineup_away'", js)
+        self.assertIn("groupedHeader(columns, tableKey)", js)
+        skip_fn = js.split('function skipFourFactorsGroup')[1].split('function groupedHeader')[0]
+        self.assertNotIn('t_adv_df', skip_fn)
+
+    def test_pdf_draw_uses_separate_scale_middle_baseline_and_fake_bold(self):
+        import os
+        js_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'assets',
+            'report_canvas.js',
+        )
+        with open(js_path, 'r') as f:
+            js = f.read()
+        self.assertIn('function paperScale', js)
+        self.assertIn('297 / paperRect.width', js)
+        self.assertIn('210 / paperRect.height', js)
+        self.assertIn("baseline: 'middle'", js)
+        self.assertIn('PDF_FAKE_BOLD_MM = 0.15', js)
+        self.assertIn('fontWeightNum', js)
+        self.assertIn('bold: fontWeightNum(style) >= 600', js)
+        self.assertNotIn("pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'bold')", js)
+
 
 class ReportTableComponentTests(unittest.TestCase):
-    def test_report_helper_is_dmc_not_ag_grid(self):
+    def test_report_helper_is_not_ag_grid(self):
         from synergy_reporter import report_components
         self.assertFalse(hasattr(report_components, 'create_ag_grid'))
-        self.assertTrue(hasattr(report_components, 'create_report_table'))
+        self.assertFalse(hasattr(report_components, 'create_report_table'))
+        host = report_components.render_builtin_table('k_df', {}, {}, {}, 't1')
+        self.assertEqual(host.className, 'report-table-host')
+
+    def test_workspace_is_shell_without_hidden_table_templates(self):
+        from synergy_reporter.report_components import render_report_workspace
+        markup = str(render_report_workspace(None, {}, {}, {}, 'gid'))
+        self.assertIn('report-table-data', markup)
+        self.assertIn('report-workspace', markup)
+        self.assertNotIn('report-tpl-item-table', markup)
+        self.assertNotIn('report-templates', markup)
 
     def test_header_renders_two_lines_with_venue_after_time(self):
         from synergy_reporter.report_components import render_header
@@ -272,9 +337,18 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('2026年04月11日', meta)
         self.assertNotIn('Arena', title)
 
+    def test_captioned_title_uses_team_pipe_and_kind(self):
+        from synergy_reporter.report_components import _table_heading
+        heading = _table_heading('p_df_home', {'home_team': 'Braves'})
+        self.assertEqual(heading, 'Braves | Player Stats')
+        heading = _table_heading('lineup_away', {'away_team': 'Lions'})
+        self.assertEqual(heading, 'Lions | Lineup Stats')
+
     def test_toolbar_add_table_is_icon_menu(self):
         from synergy_reporter.report_components import render_toolbar
+        import dash_mantine_components as dmc
         toolbar = render_toolbar()
+        self.assertEqual(type(toolbar).__name__, type(dmc.Group()).__name__)
         markup = str(toolbar)
         self.assertIn('tabler:table', markup)
         self.assertIn('Add table', markup)
@@ -297,6 +371,35 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertNotIn('report-remove-page', markup)
         self.assertNotIn('report-page-remove', markup)
 
+    def test_page_list_callback_children_are_buttons_not_a_stack(self):
+        from synergy_reporter.report_components import page_list_buttons, render_page_list
+        buttons = page_list_buttons(3)
+        self.assertEqual(len(buttons), 4)
+        self.assertNotEqual(type(buttons).__name__, 'Stack')
+        stack = render_page_list(3)
+        self.assertEqual(stack.id, 'report-page-list')
+        self.assertEqual(len(stack.children), 4)
+
+    def test_apply_page_cmd_add_and_delete_use_patch(self):
+        from dash import Patch
+        from synergy_reporter.report_components import apply_page_cmd
+        added, add_btns = apply_page_cmd(
+            {'op': 'add', 'id': 'page-x', 'ids': ['page-1', 'page-x']},
+            {},
+        )
+        self.assertIsInstance(added, Patch)
+        self.assertEqual(len(add_btns), 3)
+        deleted, del_btns = apply_page_cmd(
+            {'op': 'delete', 'index': 0, 'ids': ['page-2']},
+            {},
+        )
+        self.assertIsInstance(deleted, Patch)
+        self.assertEqual(len(del_btns), 2)
+        from dash import no_update
+        empty, empty_btns = apply_page_cmd(None, {})
+        self.assertIs(empty, no_update)
+        self.assertIs(empty_btns, no_update)
+
     def test_empty_page_has_no_blocks(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
@@ -311,6 +414,23 @@ class ReportTableComponentTests(unittest.TestCase):
         )
         markup = str(paper)
         self.assertNotIn('report-page-number', markup)
+
+    def test_report_modal_stays_mounted(self):
+        from synergy_reporter.report_components import render_dialog
+        dialog = render_dialog()
+        self.assertTrue(getattr(dialog, 'keepMounted', False))
+
+    def test_report_workspace_mounted_helper(self):
+        from dash import html
+        from synergy_reporter.report_components import report_workspace_mounted
+        self.assertFalse(report_workspace_mounted(None))
+        self.assertFalse(report_workspace_mounted([]))
+        self.assertFalse(report_workspace_mounted([html.Div(id='other')]))
+        self.assertTrue(report_workspace_mounted([html.Span(), html.Div(id='report-workspace')]))
+        self.assertTrue(report_workspace_mounted([{'props': {'id': 'report-workspace'}}]))
+        self.assertTrue(report_workspace_mounted({
+            'props': {'children': [{'props': {'id': 'report-workspace'}}]},
+        }))
 
     def test_paper_has_corner_delete(self):
         from synergy_reporter.report_components import render_paper
@@ -337,20 +457,20 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertEqual(row.children[0].className, 'grid-stack-item-handle no-print')
         self.assertEqual(row.children[1].className, 'report-block-title')
 
-    def test_note_block_uses_tiptap_js_with_placeholder(self):
+    def test_note_block_uses_execcommand_with_placeholder(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         chrome = report_layout.chrome_spec()
-        self.assertEqual(chrome['notes_editor'], 'tiptap_js')
+        self.assertEqual(chrome['notes_editor'], 'execCommand')
         self.assertEqual(chrome['notes_placeholder'], 'Notes')
 
 
 class TableEngineAndChromeContractTests(unittest.TestCase):
-    def test_report_uses_dmc_table_pbp_keeps_ag_grid(self):
+    def test_report_uses_js_html_table_pbp_keeps_ag_grid(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         engine = report_layout.report_table_engine()
-        self.assertEqual(engine['report'], 'dmc.Table')
+        self.assertEqual(engine['report'], 'html_table_js')
         self.assertEqual(engine['play_by_play'], 'ag_grid')
         self.assertEqual(engine['box_score_summary'], 'dmc.Table')
         self.assertEqual(engine['player_stats'], 'ag_grid')
@@ -398,7 +518,7 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertFalse(chrome['page_number'])
         self.assertEqual(chrome['notes_default_h'], 2)
         self.assertEqual(chrome['notes_resize'], 'content')
-        self.assertEqual(chrome['notes_editor'], 'tiptap_js')
+        self.assertEqual(chrome['notes_editor'], 'execCommand')
         self.assertEqual(chrome['notes_placeholder'], 'Notes')
         self.assertEqual(chrome['notes_content_format'], 'html')
         self.assertEqual(chrome['notes_toolbar_location'], 'report_toolbar')
@@ -424,13 +544,21 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertTrue(chrome['notes_custom_color_picker'])
         self.assertTrue(chrome['notes_nested_lists'])
         self.assertEqual(chrome['notes_old_plain_text'], 'forward_compatible')
-        self.assertEqual(chrome['notes_dynamic_mount'], 'tiptap_js')
+        self.assertEqual(chrome['notes_dynamic_mount'], 'execCommand')
         self.assertNotIn('mantine_provider_scope', chrome)
         self.assertEqual(chrome['header_size'], 'compact')
         self.assertEqual(chrome['header_line_gap'], 'loose')
         self.assertEqual(chrome['table_menu_order'], ALLOWED_TABLE_KEYS)
         self.assertIn('report-toolbar', chrome['sticky_selectors'])
         self.assertIn('report-page-list', chrome['sticky_selectors'])
+        self.assertEqual(chrome['rail_bg'], '#f1f5f9')
+        self.assertEqual(chrome['rail_button_bg'], '#ffffff')
+        self.assertFalse(chrome['rail_blur'])
+        self.assertEqual(chrome['rail_accent'], '#00b4d8')
+        self.assertEqual(chrome['rail_shadow'], '0 8px 24px rgba(15, 23, 42, 0.12)')
+        self.assertEqual(chrome['editor_chrome'], 'dmc')
+        self.assertEqual(chrome['dialog'], 'dmc.Modal')
+        self.assertEqual(chrome['sticky_top_px'], 8)
         titles = list(report_layout.TABLE_TITLES.values())
         self.assertEqual(report_layout.TABLE_TITLES['p_df_home'], 'Home Player Stats')
         self.assertEqual(report_layout.TABLE_TITLES['p_df_away'], 'Away Player Stats')
@@ -440,15 +568,18 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         paint = report_layout.paint_spec()
-        self.assertEqual(paint['python_inputs'], ('tabs',))
+        self.assertEqual(paint['python_inputs'], ('tabs', 'report-pane-ready'))
         self.assertEqual(
             paint['python_states'],
             ('bs_store', 'lineup_store', 'match_info_store', 'game_id'),
         )
+        self.assertEqual(paint['pane_rebuild'], 'first_open_or_empty')
         self.assertEqual(paint['lineup_precompute'], 'game_id_trigger_size5')
         self.assertFalse(paint['layout_store_rebuilds_pane'])
-        self.assertEqual(paint['layout_mutations'], 'clientside')
-        self.assertEqual(paint['add_table'], 'clone_template')
+        self.assertEqual(paint['layout_mutations'], 'split')
+        self.assertEqual(paint['page_shells'], 'python_cmd_patch')
+        self.assertEqual(paint['page_list_output'], 'buttons_only')
+        self.assertEqual(paint['add_table'], 'js_from_store')
         self.assertEqual(paint['add_target'], 'current_page')
         self.assertEqual(paint['current_page'], 'scroll_spy')
         self.assertEqual(paint['place'], 'auto')
@@ -459,7 +590,12 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(paint['table_block_height'], 'fit_content_with_handle')
         self.assertEqual(paint['fit_batch'], 'read_then_write')
         self.assertEqual(paint['compact'], 'first_paint_and_reset')
-        self.assertEqual(paint['report_tab'], 'finished_only')
+        self.assertEqual(paint['hydrate'], 'active_page')
+        self.assertEqual(paint['python_paint'], 'shell')
+        self.assertFalse(paint['hidden_table_templates'])
+        self.assertEqual(paint['lineup_rows'], 'fit_block')
+        self.assertEqual(paint['report_tab'], 'finished_and_desktop')
+        self.assertEqual(paint['desktop_min_px'], 1280)
         self.assertEqual(paint['player_stats_sort'], '+/-_desc')
         self.assertEqual(paint['image_validate'], 'clientside')
         self.assertNotIn('report_layout_store', paint['python_inputs'])
@@ -492,6 +628,7 @@ class ReportTabAndPlayerSortTests(unittest.TestCase):
         self.assertFalse(report_layout.report_tab_is_visible('PENDING'))
         self.assertFalse(report_layout.report_tab_is_visible(''))
         self.assertFalse(report_layout.report_tab_is_visible(None))
+        self.assertEqual(report_layout.REPORT_DESKTOP_MIN_PX, 1280)
 
     def test_report_player_stats_sort_by_plus_minus_desc(self):
         import pandas as pd
@@ -639,6 +776,14 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         self.assertIn('position: relative !important', css)
         self.assertIn('.braves-table-scroll', css)
         self.assertIn('position: sticky', css)
+        self.assertIn('top: 8px', css)
+        self.assertNotIn('top: 118px', css)
+        self.assertIn('.report-js-table thead th', css)
+        thead_block = css.split('.report-js-table thead th')[1].split('}')[0]
+        self.assertIn('1px solid', thead_block)
+        self.assertNotIn('2px solid var(--navbar-border)', thead_block)
+        workspace = css.split('.report-workspace {')[1].split('}', 1)[0]
+        self.assertNotIn('overflow-x: auto', workspace)
         self.assertIn('cursor: grab', css)
         self.assertIn('cursor: grabbing', css)
         self.assertIn('.is-scrollable', css)

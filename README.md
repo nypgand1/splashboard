@@ -38,7 +38,7 @@ python3 -m playwright install chromium
 python3 -m pytest tests/e2e -q
 ```
 
-Smoke drives a local app with fixtures. It does not call live Synergy.
+Smoke drives a local app with fixtures. It does not call live Synergy. `tests/e2e` covers Home, Game, and Report (first-paint, delete page, notes, PDF, sticky).
 
 ## Environment variables
 
@@ -61,4 +61,4 @@ fly deploy
 
 Set secrets before the first deploy that no longer bakes credentials into the image. Later `fly deploy` runs keep the existing secrets.
 
-Product behavior: `docs/spec.md`. Report canvas ADR: `docs/adr/0001-report-canvas.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.
+Product behavior: `docs/spec.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.

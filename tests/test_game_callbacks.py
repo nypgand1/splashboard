@@ -37,7 +37,18 @@ class HiddenTabTests(unittest.TestCase):
         )
         self.assertIs(game_page.update_pane_pbp('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_lineup(5, 'tab-bs', '{}', None), no_update)
-        self.assertIs(game_page.update_pane_report('tab-bs', '{}', '{}', '{}', None), no_update)
+        self.assertIs(
+            game_page.update_pane_report('tab-bs', '', '{}', '{}', '{}', None),
+            no_update,
+        )
+
+    def test_report_tab_does_not_rebuild_mounted_workspace(self):
+        self.assertIs(
+            game_page.update_pane_report(
+                'tab-report', '1', '{}', '{}', '{}', 'g1',
+            ),
+            no_update,
+        )
 
     def test_report_tab_hidden_for_live_and_shown_when_finished(self):
         live_style, live_tab = game_page.toggle_report_tab(

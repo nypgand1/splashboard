@@ -743,7 +743,7 @@ class PageDeleteSvgTests(unittest.TestCase):
         self.assertNotIn('ScheduleScoreLink', js)
 
     def test_table_pan_is_bound_without_visible_scrollbar_contract(self):
-        js_path = os.path.join(REPO, 'assets', 'report_canvas.js')
+        js_path = os.path.join(REPO, 'assets', 'ag_grid_cells.js')
         css_path = os.path.join(REPO, 'assets', 'report.css')
         with open(js_path, 'r', encoding='utf-8') as handle:
             js = handle.read()
