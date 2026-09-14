@@ -138,7 +138,7 @@ body {
     }
 }
 
-/* Report: Braves chrome rails + opaque A4 landscape paper */
+/* Report: Braves chrome rails + opaque A4 portrait paper */
 .report-workspace {
     background: var(--bg);
     padding: 20px 8px 40px;
@@ -153,7 +153,7 @@ body {
     padding: 10px 14px;
     margin: 0 0 16px;
     width: 100%;
-    max-width: 297mm;
+    max-width: 210mm;
     box-sizing: border-box;
     border-radius: 10px;
     background: #f1f5f9;
@@ -312,9 +312,9 @@ body {
 }
 
 .report-main {
-    width: 297mm;
+    width: 210mm;
     max-width: calc(100% - 56px);
-    flex: 0 1 297mm;
+    flex: 0 1 210mm;
     display: flex;
     flex-direction: column;
 }
@@ -330,14 +330,18 @@ body {
     display: flex;
     flex-direction: column;
     width: 100%;
-    max-width: 297mm;
-    height: 210mm;
+    max-width: 210mm;
+    height: 297mm;
     background: #ffffff;
     color: #0f172a;
     padding: 6mm;
     box-sizing: border-box;
     overflow: hidden;
     box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.report-paper.is-overflowing {
+    box-shadow: 0 0 0 2px #e63946, 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
 .report-header {
@@ -475,6 +479,10 @@ body {
     font-weight: 800;
     color: #0f172a;
     margin-bottom: 4px;
+}
+
+.report-block-title-row .report-block-title {
+    margin-bottom: 0;
 }
 
 .report-block-title-dot {
@@ -743,6 +751,19 @@ body {
     color: #ffffff;
 }
 
+.report-page-btn.is-overflowing,
+.report-page-list .mantine-Button-root.is-overflowing {
+    border-width: 2px;
+    border-color: #e63946;
+}
+
+.report-page-btn.is-active.is-overflowing,
+.report-page-list .mantine-Button-root.is-active.is-overflowing {
+    background: linear-gradient(135deg, #0077b6, #00b4d8);
+    border-color: #e63946;
+    color: #ffffff;
+}
+
 @media (max-width: 1279px) {
     #report-tab {
         display: none !important;
@@ -760,7 +781,7 @@ body {
 
 .report-js-table {
     width: 100%;
-    font-size: 11px;
+    font-size: 9px;
     margin-bottom: 0;
     color: #0f172a;
     background-color: #ffffff;
@@ -770,7 +791,7 @@ body {
 
 .report-js-table th,
 .report-js-table td {
-    padding: 3px 6px;
+    padding: 2px 3px;
     vertical-align: middle;
     text-align: center;
     border: 1px solid #e2e8f0;
@@ -1254,7 +1275,7 @@ a.home-schedule-row {
         background: #ffffff !important;
         margin: 0 !important;
         padding: 0 !important;
-        width: 297mm !important;
+        width: 210mm !important;
         height: auto !important;
     }
     .no-print,
@@ -1271,18 +1292,22 @@ a.home-schedule-row {
         padding: 0 !important;
         margin: 0 !important;
         min-height: 0 !important;
-        width: 297mm !important;
+        width: 210mm !important;
+    }
+    .report-paper.is-overflowing {
+        box-shadow: none !important;
+        outline: none !important;
     }
     .report-workspace-row {
         display: block !important;
         margin: 0 !important;
         padding: 0 !important;
-        width: 297mm !important;
+        width: 210mm !important;
     }
     .report-main,
     .report-papers {
         display: block !important;
-        width: 297mm !important;
+        width: 210mm !important;
         margin: 0 !important;
         padding: 0 !important;
         gap: 0 !important;
@@ -1290,9 +1315,9 @@ a.home-schedule-row {
     .report-paper {
         display: flex !important;
         flex-direction: column !important;
-        width: 297mm !important;
-        height: 210mm !important;
-        max-height: 210mm !important;
+        width: 210mm !important;
+        height: 297mm !important;
+        max-height: 297mm !important;
         box-shadow: none !important;
         page-break-after: always !important;
         break-after: page !important;
@@ -1310,7 +1335,7 @@ a.home-schedule-row {
         position: absolute !important;
     }
     @page {
-        size: A4 landscape;
+        size: A4 portrait;
         margin: 0;
     }
 }

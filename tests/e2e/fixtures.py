@@ -177,9 +177,20 @@ class FakeReport:
         return pd.DataFrame({'Team': [HOME, AWAY], 'PIP': [20, 18]})
 
     def get_player_stats_json_dict(self):
+        away = _player_frame('Chen', True, -3)
+        away.loc[0, '2M'] = ''
+        away.loc[0, '2A'] = 4
+        away.loc[0, '2FG%'] = '0.0%'
+        away.loc[0, '3M'] = ''
+        away.loc[0, '3A'] = 2
+        away.loc[0, '3FG%'] = '0.0%'
+        away.loc[0, 'FTM'] = ''
+        away.loc[0, 'FTA'] = 1
+        away.loc[0, 'FT%'] = '0.0%'
+        away.loc[0, 'eFG%'] = '0.0%'
         return {
             HOME: _split(_player_frame('Lin', True, 5)),
-            AWAY: _split(_player_frame('Chen', True, -3)),
+            AWAY: _split(away),
         }
 
     def get_player_box_score_summary_json_dict(self):
@@ -202,12 +213,13 @@ class FakeReport:
         ])
 
     def get_all_lineup_stats_json_dict(self, sizes=(5,)):
-        lineup = pd.DataFrame({'Lineup': ['Lin-A'], 'PTS': [10], 'Min': ['8:21']})
+        home_rows = [{'Lineup': f'Lin-{i}', 'PTS': 10 - i, 'Min': '8:21'} for i in range(8)]
+        away_rows = [{'Lineup': f'Chen-{i}', 'PTS': 8 - i, 'Min': '7:10'} for i in range(8)]
         payload = {}
         for size in sizes:
             payload[str(size)] = {
-                HOME: _split(lineup),
-                AWAY: _split(pd.DataFrame({'Lineup': ['Chen-B'], 'PTS': [8], 'Min': ['7:10']})),
+                HOME: _split(pd.DataFrame(home_rows)),
+                AWAY: _split(pd.DataFrame(away_rows)),
             }
         return payload
 

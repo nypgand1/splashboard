@@ -288,13 +288,21 @@ def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
 
 
 def test_report_first_paint_on_desktop(page, e2e_server):
-    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.set_viewport_size({'width': 1400, 'height': 900})
     page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
     report_tab = page.locator('#report-tab')
     report_tab.wait_for(state='visible', timeout=20000)
-    assert report_tab.is_visible() is True
+    page.wait_for_function(
+        '''() => {
+            const t = document.querySelector('#report-tab');
+            if (!t) return false;
+            const s = getComputedStyle(t);
+            return s.display !== 'none' && t.getClientRects().length > 0;
+        }''',
+        timeout=10000,
+    )
     _select_tab(page, 'Report')
     for _ in range(4):
         if page.locator('#wrap-report').is_visible():
@@ -304,7 +312,7 @@ def test_report_first_paint_on_desktop(page, e2e_server):
     page.locator('#report-workspace').wait_for(state='attached', timeout=20000)
     page.locator('#wrap-report').wait_for(state='visible', timeout=20000)
     page.locator('#report-papers .report-js-table').first.wait_for(state='attached', timeout=30000)
-    assert page.locator('#report-page-list .report-page-btn[data-page-index]').count() == 6
+    assert page.locator('#report-page-list .report-page-btn[data-page-index]').count() == 4
     table = page.locator('#report-papers .report-js-table').first
     assert table.locator('th').count() >= 1
     assert table.locator('td').count() >= 1

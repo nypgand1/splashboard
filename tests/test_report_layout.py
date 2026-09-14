@@ -37,10 +37,10 @@ def _occupied_rows(blocks):
 
 
 class DefaultLayoutTests(unittest.TestCase):
-    def test_version_and_six_pages(self):
+    def test_version_and_four_pages(self):
         layout = _layout()
         self.assertEqual(layout['version'], 1)
-        self.assertEqual(len(layout['pages']), 6)
+        self.assertEqual(len(layout['pages']), 4)
 
     def test_header_is_not_a_block(self):
         layout = _layout()
@@ -50,14 +50,22 @@ class DefaultLayoutTests(unittest.TestCase):
             for block in page['blocks']:
                 self.assertNotEqual(block.get('role'), 'header')
 
-    def test_each_page_has_empty_text(self):
+    def test_notes_only_on_pages_one_and_two(self):
         layout = _layout()
-        for page in layout['pages']:
-            texts = [b for b in page['blocks'] if b.get('type') == 'text']
-            self.assertTrue(texts)
-            self.assertTrue(any((b.get('content') or '') == '' for b in texts))
-            for text in texts:
-                self.assertEqual(text.get('h'), 2)
+        p1_notes = [b for b in _blocks(layout, 0) if b.get('type') == 'text']
+        p2_notes = [b for b in _blocks(layout, 1) if b.get('type') == 'text']
+        self.assertEqual(len(p1_notes), 1)
+        self.assertEqual(p1_notes[0].get('content'), '')
+        self.assertEqual(p1_notes[0].get('x'), 6)
+        self.assertEqual(p1_notes[0].get('w'), 6)
+        self.assertEqual(p1_notes[0].get('y'), 0)
+        self.assertEqual(p1_notes[0].get('h'), 6)
+        self.assertEqual(len(p2_notes), 1)
+        self.assertEqual(p2_notes[0].get('content'), '')
+        self.assertEqual(p2_notes[0].get('h'), 2)
+        for index in (2, 3):
+            texts = [b for b in _blocks(layout, index) if b.get('type') == 'text']
+            self.assertEqual(texts, [])
 
     def test_default_has_no_spacer(self):
         layout = _layout()
@@ -71,7 +79,7 @@ class DefaultLayoutTests(unittest.TestCase):
             for block in page['blocks']:
                 self.assertNotEqual(block.get('type'), 'shot_chart')
                 self.assertNotEqual(block.get('table_key'), 'play_type')
-        self.assertEqual(len(layout['pages']), 6)
+        self.assertEqual(len(layout['pages']), 4)
 
     def test_builtin_keys_are_allowlisted(self):
         layout = _layout()
@@ -89,12 +97,24 @@ class DefaultLayoutTests(unittest.TestCase):
                     self.assertNotEqual(block['table_key'], 'lineup_dict')
 
     def test_page_one_score_and_four_factors(self):
+        page1 = _blocks(_layout(), 0)
         self.assertEqual(
-            set(_table_keys(_blocks(_layout(), 0))),
+            set(_table_keys(page1)),
             {'score_group', 't_adv_df'},
         )
-        texts = [b for b in _blocks(_layout(), 0) if b.get('type') == 'text']
+        texts = [b for b in page1 if b.get('type') == 'text']
         self.assertEqual(len(texts), 1)
+        self.assertEqual(texts[0].get('x'), 6)
+        self.assertEqual(texts[0].get('w'), 6)
+        self.assertEqual(texts[0].get('y'), 0)
+        score = [b for b in page1 if b.get('table_key') == 'score_group'][0]
+        four = [b for b in page1 if b.get('table_key') == 't_adv_df'][0]
+        self.assertEqual(score.get('x'), 0)
+        self.assertEqual(score.get('w'), 6)
+        self.assertEqual(four.get('x'), 0)
+        self.assertEqual(four.get('w'), 6)
+        self.assertEqual(four.get('y'), score.get('y') + score.get('h'))
+        self.assertEqual(texts[0].get('h'), score.get('h') + four.get('h'))
 
     def test_page_two_team_and_key_only(self):
         self.assertEqual(
@@ -102,29 +122,29 @@ class DefaultLayoutTests(unittest.TestCase):
             {'t_df', 'k_df'},
         )
 
-    def test_page_three_home_player(self):
+    def test_page_three_both_player_tables(self):
+        blocks = _blocks(_layout(), 2)
         self.assertEqual(
-            set(_table_keys(_blocks(_layout(), 2))),
-            {'p_df_home'},
+            set(_table_keys(blocks)),
+            {'p_df_home', 'p_df_away'},
         )
+        home = [b for b in blocks if b.get('table_key') == 'p_df_home'][0]
+        away = [b for b in blocks if b.get('table_key') == 'p_df_away'][0]
+        self.assertEqual(home.get('w'), 12)
+        self.assertEqual(away.get('w'), 12)
+        self.assertLess(home.get('y'), away.get('y'))
 
-    def test_page_four_away_player(self):
+    def test_page_four_both_lineup_tables(self):
+        blocks = _blocks(_layout(), 3)
         self.assertEqual(
-            set(_table_keys(_blocks(_layout(), 3))),
-            {'p_df_away'},
+            set(_table_keys(blocks)),
+            {'lineup_home', 'lineup_away'},
         )
-
-    def test_page_five_lineup_home(self):
-        self.assertEqual(
-            set(_table_keys(_blocks(_layout(), 4))),
-            {'lineup_home'},
-        )
-
-    def test_page_six_lineup_away(self):
-        self.assertEqual(
-            set(_table_keys(_blocks(_layout(), 5))),
-            {'lineup_away'},
-        )
+        home = [b for b in blocks if b.get('table_key') == 'lineup_home'][0]
+        away = [b for b in blocks if b.get('table_key') == 'lineup_away'][0]
+        self.assertEqual(home.get('w'), 12)
+        self.assertEqual(away.get('w'), 12)
+        self.assertLess(home.get('y'), away.get('y'))
 
     def test_page_two_leaves_whitespace(self):
         layout = _layout()
@@ -135,13 +155,25 @@ class DefaultLayoutTests(unittest.TestCase):
 
 
 class PaperAndStorageTests(unittest.TestCase):
-    def test_a4_landscape_not_portrait(self):
+    def test_a4_portrait_not_landscape(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
-        self.assertEqual(report_layout.A4_WIDTH_MM, 297)
-        self.assertEqual(report_layout.A4_HEIGHT_MM, 210)
-        self.assertGreater(report_layout.A4_WIDTH_MM, report_layout.A4_HEIGHT_MM)
+        self.assertEqual(report_layout.A4_WIDTH_MM, 210)
+        self.assertEqual(report_layout.A4_HEIGHT_MM, 297)
+        self.assertGreater(report_layout.A4_HEIGHT_MM, report_layout.A4_WIDTH_MM)
         self.assertEqual(report_layout.GRID_COLUMNS, 12)
+        import os
+        css_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'assets',
+            'report.css',
+        )
+        with open(css_path, 'r', encoding='utf-8') as handle:
+            css = handle.read()
+        self.assertIn('max-width: 210mm', css)
+        self.assertIn('height: 297mm', css)
+        self.assertIn('size: A4 portrait', css)
+        self.assertNotIn('size: A4 landscape', css)
 
     def test_storage_key_includes_game_id(self):
         if report_layout is None:
@@ -203,13 +235,15 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertFalse(hasattr(report_layout, 'set_cell_bold'))
         self.assertFalse(hasattr(report_layout, 'set_cell_background'))
 
-    def test_pdf_export_is_landscape_a4_in_page_order(self):
+    def test_pdf_export_is_portrait_a4_in_page_order(self):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         spec = report_layout.pdf_export_spec()
-        self.assertEqual(spec['orientation'], 'landscape')
+        self.assertEqual(spec['orientation'], 'portrait')
         self.assertEqual(spec['page_format'], 'a4')
         self.assertEqual(spec['page_order'], 'layout_pages')
+        self.assertEqual(spec['title_dot'], 'filled_circle')
+        self.assertEqual(spec['starter_s'], 'stroked_circle')
         self.assertIn('report-toolbar', spec['no_print_selectors'])
         self.assertIn('report-page-list', spec['no_print_selectors'])
         self.assertIn('grid-stack-item-handle', spec['no_print_selectors'])
@@ -288,12 +322,19 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         with open(js_path, 'r') as f:
             js = f.read()
         self.assertIn('function paperScale', js)
-        self.assertIn('297 / paperRect.width', js)
-        self.assertIn('210 / paperRect.height', js)
+        self.assertIn('A4_WIDTH_MM = 210', js)
+        self.assertIn('A4_HEIGHT_MM = 297', js)
+        self.assertIn('A4_WIDTH_MM / paperRect.width', js)
+        self.assertIn('A4_HEIGHT_MM / paperRect.height', js)
+        self.assertIn("orientation: 'portrait'", js)
         self.assertIn("baseline: 'middle'", js)
         self.assertIn('PDF_FAKE_BOLD_MM = 0.15', js)
         self.assertIn('fontWeightNum', js)
         self.assertIn('bold: fontWeightNum(style) >= 600', js)
+        self.assertIn('function drawTitleDot', js)
+        self.assertIn('function drawStarterCircle', js)
+        self.assertIn("pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'F')", js)
+        self.assertIn("pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'S')", js)
         self.assertNotIn("pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'bold')", js)
 
 
@@ -343,6 +384,40 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertEqual(heading, 'Braves | Player Stats')
         heading = _table_heading('lineup_away', {'away_team': 'Lions'})
         self.assertEqual(heading, 'Lions | Lineup Stats')
+
+    def test_report_canvas_drops_lineup_slice_and_keeps_se_handle(self):
+        import os
+        js_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'assets', 'report_canvas.js'
+        )
+        with open(js_path, 'r', encoding='utf-8') as handle:
+            js = handle.read()
+        self.assertNotIn('function maxLineupRows', js)
+        self.assertNotIn('rows.slice(0, maxLineupRows', js)
+        self.assertIn('snapImageAspect', js)
+        self.assertIn('syncPageListSticky', js)
+        self.assertIn('markPaperOverflow', js)
+        self.assertIn('function clampItemToPaper', js)
+        self.assertIn("event.key === 'Enter'", js)
+        self.assertIn('naturalWidth', js)
+        self.assertIn('This export will crop content that sits outside A4.', js)
+        self.assertIn('data-aspect', js)
+        self.assertNotIn('src: src,\n                w: 6,\n                h: 5', js)
+        self.assertIn('Math.max(1, Math.ceil((contentHeight + 12) / cell))', js)
+        self.assertIn('w: currentW', js)
+        self.assertIn("val.indexOf('%') !== -1", js)
+        self.assertNotIn("val === '0.0%'", js)
+        self.assertNotIn('measureContentPx(item) + 3', js)
+        self.assertIn('function syncPageOneSideNote', js)
+        self.assertNotIn('clone.className = card.className', js)
+        self.assertIn("clone.className = measureClass", js)
+        self.assertIn("clone.style.inset = 'auto'", js)
+        measure_fn = js.split('function measureContentPx', 1)[1].split('function measureBlockH', 1)[0]
+        self.assertNotIn('grid-stack-item-content', measure_fn)
+        self.assertIn('report-block-card-table', measure_fn)
+        draw_note = js.split('function drawNote', 1)[1].split('function drawImageBlock', 1)[0]
+        self.assertNotIn('lineH * 0.4 > maxY', draw_note)
+        self.assertIn('if (cursorY >= maxY)', draw_note)
 
     def test_toolbar_add_table_is_icon_menu(self):
         from synergy_reporter.report_components import render_toolbar
@@ -512,12 +587,37 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['page_delete_icon'], 'tabler:x')
         self.assertFalse(chrome['page_list_has_delete'])
         self.assertEqual(chrome['min_pages'], 1)
+        self.assertEqual(chrome['default_pages'], 4)
         self.assertEqual(chrome['toolbar_align'], 'paper')
         self.assertEqual(chrome['drag_handle'], 'title_left')
         self.assertEqual(chrome['note_drag_handle'], 'overlay')
         self.assertFalse(chrome['page_number'])
         self.assertEqual(chrome['notes_default_h'], 2)
+        self.assertEqual(chrome['notes_min_h'], 1)
+        self.assertEqual(chrome['page_list_align'], 'paper_top')
+        self.assertEqual(chrome['page_list_sticky'], 'toolbar_plus_gap')
+        self.assertEqual(chrome['overflow_chrome'], 'paper_ring')
+        self.assertEqual(chrome['overflow_color'], '#e63946')
+        self.assertEqual(chrome['overflow_ring_px'], 2)
+        self.assertEqual(chrome['overflow_detect'], 'item_box_vs_paper')
+        self.assertEqual(chrome['pdf_overflow'], 'confirm_modal')
+        self.assertEqual(
+            chrome['pdf_overflow_confirm'],
+            'This export will crop content that sits outside A4.',
+        )
+        self.assertEqual(chrome['pdf_overflow_ok'], 'Export')
+        self.assertEqual(chrome['resize_handles'], 'se')
+        self.assertEqual(chrome['image_place'], 'natural_or_max_remaining')
+        self.assertEqual(chrome['image_aspect'], 'lock')
+        self.assertEqual(chrome['table_min_size'], 'max_content')
+        self.assertEqual(chrome['block_place'], 'clamp_to_paper')
+        self.assertEqual(chrome['oversized_drag'], 'x_only_y0')
+        self.assertEqual(chrome['notes_enter_overflow'], 'reject')
+        self.assertEqual(chrome['notes_edit_overflow'], 'reject')
+        self.assertEqual(chrome['pdf_text_test'], 'marker_pdf_text')
+        self.assertEqual(chrome['resize_max'], 'remaining_paper')
         self.assertEqual(chrome['notes_resize'], 'content')
+        self.assertTrue(chrome['notes_preserve_w'])
         self.assertEqual(chrome['notes_editor'], 'execCommand')
         self.assertEqual(chrome['notes_placeholder'], 'Notes')
         self.assertEqual(chrome['notes_content_format'], 'html')
@@ -593,7 +693,7 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(paint['hydrate'], 'active_page')
         self.assertEqual(paint['python_paint'], 'shell')
         self.assertFalse(paint['hidden_table_templates'])
-        self.assertEqual(paint['lineup_rows'], 'fit_block')
+        self.assertEqual(paint['lineup_rows'], 'paint_all')
         self.assertEqual(paint['report_tab'], 'finished_and_desktop')
         self.assertEqual(paint['desktop_min_px'], 1280)
         self.assertEqual(paint['player_stats_sort'], '+/-_desc')
@@ -777,6 +877,9 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         self.assertIn('.braves-table-scroll', css)
         self.assertIn('position: sticky', css)
         self.assertIn('top: 8px', css)
+        self.assertIn('.report-paper.is-overflowing', css)
+        self.assertIn('.report-page-btn.is-overflowing', css)
+        self.assertIn('#e63946', css)
         self.assertNotIn('top: 118px', css)
         self.assertIn('.report-js-table thead th', css)
         thead_block = css.split('.report-js-table thead th')[1].split('}')[0]

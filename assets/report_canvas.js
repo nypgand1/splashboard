@@ -6,6 +6,8 @@
     var IMAGE_MAX_BYTES = 1000000;
     var GRID_COLUMNS = 12;
     var DESKTOP_MIN_PX = 1280;
+    var A4_WIDTH_MM = 210;
+    var A4_HEIGHT_MM = 297;
     var GRIDSTACK_CSS = '/assets/gridstack.min.css';
     var GRIDSTACK_JS = '/assets/gridstack-all.js';
     var JSPDF_JS = '/assets/jspdf.umd.min.js';
@@ -42,6 +44,8 @@
     var spyObserver = null;
     var spyObservedCount = -1;
     var spyRatios = {};
+    var hydrating = false;
+    var lastStickyKey = '';
 
     function gameId() {
         var el = document.getElementById('report-game-id') || document.getElementById('game_id');
@@ -98,7 +102,7 @@
                     table_key: item.getAttribute('data-table-key') || prev.table_key,
                     x: parseInt(item.getAttribute('gs-x') || item.getAttribute('data-x') || '0', 10),
                     y: parseInt(item.getAttribute('gs-y') || item.getAttribute('data-y') || '0', 10),
-                    w: parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || '6', 10),
+                    w: parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || prev.w || '6', 10),
                     h: parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10)
                 };
                 if (block.type === 'text') {
@@ -262,7 +266,10 @@
         if (col === '+/-') {
             return false;
         }
-        if (val === 0 || val === '0' || val === '0.0' || val === '0.0%' || val === '0%') {
+        if (typeof val === 'string' && val.indexOf('%') !== -1) {
+            return false;
+        }
+        if (val === 0 || val === '0' || val === '0.0') {
             return true;
         }
         return false;
@@ -366,12 +373,6 @@
         return { top: top, sub: sub };
     }
 
-    function maxLineupRows(item) {
-        var h = parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '8', 10);
-        var px = h * 42;
-        return Math.max(1, Math.floor((px - 68) / 18));
-    }
-
     function paintTable(host, tableKey, item) {
         if (!host) {
             return;
@@ -385,9 +386,6 @@
         }
         var columns = parsed.columns;
         var rows = parsed.rows;
-        if (tableKey === 'lineup_home' || tableKey === 'lineup_away') {
-            rows = rows.slice(0, maxLineupRows(item || host));
-        }
         var winners = winnerIndex(rows, columns, tableKey);
         var grouped = groupedHeader(columns, tableKey);
         var table = document.createElement('table');
@@ -614,6 +612,7 @@
         if (tb) {
             tb.style.display = show ? 'flex' : 'none';
         }
+        window.setTimeout(syncPageListSticky, 0);
     }
 
     function toggleColorMenu(mode, open) {
@@ -683,7 +682,10 @@
         } else if (cmd === 'orderedList') {
             document.execCommand('insertOrderedList', false, null);
         }
-        resizeNote(activeNoteEl);
+        if (!resizeNote(activeNoteEl)) {
+            document.execCommand('undo', false, null);
+            return;
+        }
         persistLocal(readLayoutFromDom());
     }
 
@@ -692,10 +694,11 @@
         var gridEl = note.closest('.report-grid');
         var grid = gridEl && gridEl.gridstack;
         if (!item || !grid) {
-            return;
+            return false;
         }
         var node = item.gridstackNode || {};
         var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '2', 10);
+        var currentW = node.w || parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || '6', 10);
 
         var clone = note.cloneNode(true);
         var targetW = note.offsetWidth || item.offsetWidth || 300;
@@ -705,14 +708,39 @@
         document.body.removeChild(clone);
 
         var cell = cellPx(grid);
-        var needed = Math.max(2, Math.ceil((contentHeight + 12) / cell));
-        var maxH = Math.max(2, paperMaxRows(grid) - (node.y || 0));
-        var h = Math.min(needed, maxH);
-        if (currentH !== h) {
-            grid.update(item, { h: h });
-            item.setAttribute('gs-h', String(h));
-            item.setAttribute('data-h', String(h));
+        var needed = Math.max(1, Math.ceil((contentHeight + 12) / cell));
+        var maxH = Math.max(1, paperMaxRows(grid) - (node.y || 0));
+        if (needed > maxH) {
+            return false;
         }
+        item.setAttribute('data-min-h', String(needed));
+        item.setAttribute('gs-w', String(currentW));
+        item.setAttribute('data-w', String(currentW));
+        if (currentH !== needed) {
+            grid.update(item, {
+                h: needed,
+                minH: needed,
+                maxH: maxH,
+                w: currentW
+            });
+            item.setAttribute('gs-h', String(needed));
+            item.setAttribute('data-h', String(needed));
+            item.setAttribute('gs-w', String(currentW));
+            item.setAttribute('data-w', String(currentW));
+        }
+        markPaperOverflow();
+        return true;
+    }
+
+    function notePaperMaxH(note) {
+        var item = note.closest('.grid-stack-item');
+        var gridEl = note.closest('.report-grid');
+        var grid = gridEl && gridEl.gridstack;
+        if (!item || !grid) {
+            return 1;
+        }
+        var node = item.gridstackNode || {};
+        return Math.max(1, paperMaxRows(grid) - (node.y || 0));
     }
 
     function bindTextBlocks(root) {
@@ -734,6 +762,24 @@
             });
 
             note.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    var item = note.closest('.grid-stack-item');
+                    var gridEl = note.closest('.report-grid');
+                    var grid = gridEl && gridEl.gridstack;
+                    if (item && grid && resizeNote(note) === false) {
+                        event.preventDefault();
+                        return;
+                    }
+                    if (item && grid) {
+                        var node = item.gridstackNode || {};
+                        var needed = parseInt(item.getAttribute('data-min-h') || '1', 10);
+                        var maxH = Math.max(1, paperMaxRows(grid) - (node.y || 0));
+                        if (needed >= maxH) {
+                            event.preventDefault();
+                            return;
+                        }
+                    }
+                }
                 if (event.key === 'Tab') {
                     event.preventDefault();
                     if (event.shiftKey) {
@@ -741,13 +787,24 @@
                     } else {
                         document.execCommand('indent', false, null);
                     }
-                    resizeNote(note);
+                    if (!resizeNote(note)) {
+                        document.execCommand('undo', false, null);
+                        return;
+                    }
                     persistLocal(readLayoutFromDom());
                 }
             });
 
+            note.addEventListener('beforeinput', function () {
+                note.dataset.savedHtml = note.innerHTML;
+            });
+
             note.addEventListener('input', function () {
-                resizeNote(note);
+                if (!resizeNote(note)) {
+                    note.innerHTML = note.dataset.savedHtml || '';
+                    resizeNote(note);
+                    return;
+                }
             });
             note.addEventListener('blur', function () {
                 resizeNote(note);
@@ -840,11 +897,29 @@
                 disableOneColumnMode: true
             }, el);
             el.dataset.gsInit = '1';
-            grid.on('dragstop', function () {
+            grid.on('dragstop', function (event, itemEl) {
+                var item = itemEl && itemEl.getAttribute ? itemEl : null;
+                if (item) {
+                    clampItemToPaper(grid, item);
+                } else {
+                    clampGridToPaper(grid);
+                }
                 persistLocal(readLayoutFromDom());
+                window.setTimeout(markPaperOverflow, 0);
             });
-            grid.on('resizestop', function () {
+            grid.on('resizestop', function (event, itemEl) {
+                var gs = el.gridstack;
+                var item = itemEl && itemEl.getAttribute ? itemEl : null;
+                if (item && item.getAttribute('data-block-type') === 'image' && gs) {
+                    snapImageAspect(gs, item);
+                }
+                if (item) {
+                    clampItemToPaper(grid, item);
+                } else {
+                    clampGridToPaper(grid);
+                }
                 persistLocal(readLayoutFromDom());
+                window.setTimeout(markPaperOverflow, 0);
             });
             return grid;
         } catch (err) {
@@ -869,6 +944,8 @@
                 initOneGrid(paper);
                 return;
             }
+            hydrating = true;
+            try {
             var layout = parseLayoutJson('report-layout-json') || { pages: [] };
             var page = layoutPageForPaper(layout, paper);
             var grid = initOneGrid(paper);
@@ -896,9 +973,18 @@
             paper.setAttribute('data-hydrated', '1');
             bindTextBlocks(paper);
             fitAllTableBlocks();
-            if (opts.compact) {
+            if (opts.compact && grid) {
                 compactGrid(grid);
+                syncPageOneSideNote(grid);
             }
+            } finally {
+                hydrating = false;
+            }
+            window.setTimeout(function () {
+                clampGridToPaper(grid);
+                markPaperOverflow();
+                syncPageListSticky();
+            }, 300);
         });
         return hydrateLocks[lockKey];
     }
@@ -911,6 +997,9 @@
         var index = activePageIndex();
         var paper = paperNodes()[index];
         if (!paper || paper.querySelector('.grid-stack-item')) {
+            return;
+        }
+        if (hydrating) {
             return;
         }
         paper.setAttribute('data-hydrated', '0');
@@ -943,6 +1032,10 @@
             hydratePage(0, { compact: true }).then(function () {
                 persistLocal(readLayoutFromDom());
                 initScrollSpy();
+                window.setTimeout(function () {
+                    markPaperOverflow();
+                    syncPageListSticky();
+                }, 300);
             });
         }
     }
@@ -955,6 +1048,9 @@
         node.setAttribute('gs-id', block.id);
         node.setAttribute('data-block-type', block.type || '');
         node.setAttribute('data-table-key', block.table_key || '');
+        if (block.aspect) {
+            node.setAttribute('data-aspect', String(block.aspect));
+        }
         node.setAttribute('data-x', String(block.x || 0));
         node.setAttribute('data-y', String(block.y || 0));
         node.setAttribute('data-w', String(block.w || 6));
@@ -1044,14 +1140,99 @@
         return Math.max(1, Math.floor(height / cellPx(grid)));
     }
 
+    function itemMinH(item, h) {
+        var stored = parseInt(item.getAttribute('data-min-h') || '', 10);
+        if (stored >= 1) {
+            return stored;
+        }
+        var type = item.getAttribute('data-block-type');
+        if (type === 'text' || type === 'image') {
+            return 1;
+        }
+        return Math.max(1, h);
+    }
+
+    function itemMinW(item) {
+        var stored = parseInt(item.getAttribute('data-min-w') || '', 10);
+        if (stored >= 1) {
+            return stored;
+        }
+        return 1;
+    }
+
+    function clampItemToPaper(grid, item) {
+        if (!grid || !item || !item.gridstackNode || hydrating) {
+            return;
+        }
+        var node = item.gridstackNode;
+        var maxRows = paperMaxRows(grid);
+        var w = Math.max(1, node.w || 1);
+        var h = Math.max(1, node.h || 1);
+        var x = node.x || 0;
+        var y = node.y || 0;
+        var minH = itemMinH(item, h);
+        var minW = itemMinW(item);
+        var oversized = minH > maxRows || h > maxRows;
+        if (oversized) {
+            x = Math.min(Math.max(0, x), Math.max(0, GRID_COLUMNS - w));
+            y = 0;
+            h = Math.max(h, minH);
+            w = Math.min(Math.max(minW, w), GRID_COLUMNS);
+            grid.update(item, {
+                x: x,
+                y: y,
+                w: w,
+                h: h,
+                minW: minW,
+                minH: minH,
+                maxW: GRID_COLUMNS - x,
+                maxH: h
+            });
+            return;
+        }
+        w = Math.min(Math.max(minW, w), GRID_COLUMNS);
+        h = Math.min(Math.max(minH, h), maxRows);
+        x = Math.min(Math.max(0, x), GRID_COLUMNS - w);
+        y = Math.min(Math.max(0, y), maxRows - h);
+        grid.update(item, {
+            x: x,
+            y: y,
+            w: w,
+            h: h,
+            minW: minW,
+            minH: minH,
+            maxW: GRID_COLUMNS - x,
+            maxH: maxRows - y
+        });
+    }
+
+    function clampGridToPaper(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
+        grid.el.querySelectorAll('.grid-stack-item').forEach(function (item) {
+            if (item.getAttribute('data-block-type') === 'builtin_table' && item.gridstackNode) {
+                item.setAttribute('data-min-h', String(item.gridstackNode.h || 1));
+            }
+            clampItemToPaper(grid, item);
+        });
+    }
+
     function measureContentPx(el) {
         var card = el.querySelector('.report-block-card') || el;
         var clone = card.cloneNode(true);
-        clone.className = 'report-block-card';
+        var measureClass = 'report-block-card';
+        if (card.classList && card.classList.contains('report-block-card-table')) {
+            measureClass += ' report-block-card-table';
+        }
+        clone.className = measureClass;
         clone.style.cssText = '';
         clone.style.position = 'absolute';
+        clone.style.inset = 'auto';
         clone.style.left = '-10000px';
         clone.style.top = '0';
+        clone.style.right = 'auto';
+        clone.style.bottom = 'auto';
         clone.style.visibility = 'hidden';
         clone.style.height = 'auto';
         clone.style.maxHeight = 'none';
@@ -1083,7 +1264,7 @@
         node.style.top = '0';
         node.style.width = host.clientWidth + 'px';
         host.appendChild(node);
-        var h = Math.max(1, Math.ceil((measureContentPx(node) + 3) / cellPx(grid)));
+        var h = Math.max(1, Math.ceil(measureContentPx(node) / cellPx(grid)));
         host.removeChild(node);
         node.style.position = '';
         node.style.visibility = '';
@@ -1132,7 +1313,7 @@
             el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
                 var node = item.gridstackNode || {};
                 var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
-                var h = Math.max(1, Math.ceil((measureContentPx(item) + 3) / cell));
+                var h = Math.max(1, Math.ceil(measureContentPx(item) / cell));
                 if (h !== currentH) {
                     updates.push({ grid: grid, item: item, h: h });
                 }
@@ -1169,11 +1350,258 @@
         });
     }
 
+    function syncPageOneSideNote(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
+        var noteItem = null;
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="text"]').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            if ((node.x || 0) >= GRID_COLUMNS / 2) {
+                noteItem = item;
+            }
+        });
+        if (!noteItem) {
+            return;
+        }
+        var noteNode = noteItem.gridstackNode || {};
+        var leftBottom = 0;
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            if ((node.x || 0) !== 0) {
+                return;
+            }
+            leftBottom = Math.max(leftBottom, (node.y || 0) + (node.h || 1));
+        });
+        var noteY = noteNode.y || 0;
+        var noteW = noteNode.w || parseInt(noteItem.getAttribute('gs-w') || '6', 10);
+        var targetH = Math.max(1, leftBottom - noteY);
+        if (!leftBottom) {
+            return;
+        }
+        if ((noteNode.h || 0) !== targetH) {
+            grid.update(noteItem, { h: targetH, w: noteW, y: 0, x: noteNode.x || GRID_COLUMNS / 2 });
+        }
+        noteItem.setAttribute('gs-w', String(noteW));
+        noteItem.setAttribute('data-w', String(noteW));
+        noteItem.setAttribute('gs-h', String(targetH));
+        noteItem.setAttribute('data-h', String(targetH));
+    }
+
     function compactAllGrids() {
         document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
             if (el.gridstack) {
                 compactGrid(el.gridstack);
             }
+        });
+    }
+
+    function columnPx(grid) {
+        var el = grid && grid.el;
+        var width = el ? el.clientWidth : 0;
+        return (width || 1) / GRID_COLUMNS;
+    }
+
+    function measureTableMaxContentWidth(item) {
+        var table = item.querySelector('.report-js-table');
+        if (!table) {
+            return 0;
+        }
+        var clone = table.cloneNode(true);
+        clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:auto;max-width:none;table-layout:auto;visibility:hidden;';
+        document.body.appendChild(clone);
+        var width = clone.scrollWidth || clone.offsetWidth || 0;
+        document.body.removeChild(clone);
+        return width;
+    }
+
+    function contentFloor(grid, item) {
+        var type = item.getAttribute('data-block-type');
+        var cell = cellPx(grid);
+        var col = columnPx(grid);
+        var minH = 1;
+        var minW = 1;
+        if (type === 'builtin_table') {
+            minH = Math.max(1, Math.ceil(measureContentPx(item) / cell));
+            var nodeX = (item.gridstackNode && item.gridstackNode.x) || 0;
+            minW = Math.max(1, Math.min(
+                GRID_COLUMNS - nodeX,
+                GRID_COLUMNS,
+                Math.ceil(measureTableMaxContentWidth(item) / Math.max(col, 1))
+            ));
+        } else if (type === 'text') {
+            minH = Math.max(1, Math.ceil((measureContentPx(item) + 12) / cell));
+            minW = 1;
+        } else if (type === 'image') {
+            minH = 1;
+            minW = 1;
+        }
+        return { minW: minW, minH: minH };
+    }
+
+    function applyContentFloors(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
+        grid.el.querySelectorAll('.grid-stack-item').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            var type = item.getAttribute('data-block-type');
+            var minH = node.h || 1;
+            var minW = node.w || 1;
+            if (type === 'text') {
+                minH = Math.max(1, minH);
+                minW = 1;
+            } else if (type === 'image') {
+                minH = 1;
+                minW = 1;
+            } else if (type === 'builtin_table') {
+                minH = Math.max(1, node.h || 1);
+                minW = Math.max(1, node.w || 1);
+            }
+            grid.update(item, { minW: minW, minH: minH });
+        });
+    }
+
+    function paperHasOverflow(paper) {
+        if (!paper || paper.getAttribute('data-hydrated') !== '1') {
+            return false;
+        }
+        var pr = paper.getBoundingClientRect();
+        if (pr.width < 2 || pr.height < 2) {
+            return false;
+        }
+        var items = paper.querySelectorAll('.grid-stack-item');
+        for (var i = 0; i < items.length; i++) {
+            var r = items[i].getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) {
+                continue;
+            }
+            if (r.left < pr.left - 4 || r.right > pr.right + 4 || r.top < pr.top - 4 || r.bottom > pr.bottom + 4) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function markPaperOverflow() {
+        document.querySelectorAll('#report-papers .report-paper').forEach(function (paper, index) {
+            var overflow = paperHasOverflow(paper);
+            paper.classList.toggle('is-overflowing', overflow);
+            var btn = document.querySelector('#report-page-list .report-page-btn[data-page-index="' + index + '"]');
+            if (btn) {
+                btn.classList.toggle('is-overflowing', overflow);
+            }
+        });
+    }
+
+    function anyPaperOverflowing() {
+        markPaperOverflow();
+        return !!document.querySelector('#report-papers .report-paper.is-overflowing');
+    }
+
+    function syncPageListSticky() {
+        var toolbar = document.getElementById('report-toolbar');
+        var list = document.getElementById('report-page-list');
+        if (!toolbar || !list) {
+            return;
+        }
+        var height = toolbar.offsetHeight || 0;
+        if (height < 8) {
+            return;
+        }
+        var mb = parseFloat(window.getComputedStyle(toolbar).marginBottom);
+        var gap = isNaN(mb) ? 16 : mb;
+        var offset = height + gap;
+        var key = String(Math.round(offset));
+        if (key === lastStickyKey) {
+            return;
+        }
+        lastStickyKey = key;
+        list.style.marginTop = offset + 'px';
+        list.style.top = (8 + offset) + 'px';
+    }
+
+    function bindPageListSticky() {
+        var toolbar = document.getElementById('report-toolbar');
+        var workspace = document.getElementById('report-workspace');
+        if (!toolbar || !workspace) {
+            return;
+        }
+        workspace.dataset.stickyBound = '1';
+        syncPageListSticky();
+    }
+
+    function imageAspect(item) {
+        var raw = parseFloat(item.getAttribute('data-aspect') || '');
+        if (raw && isFinite(raw) && raw > 0) {
+            return raw;
+        }
+        var img = item.querySelector('img.report-image-block');
+        if (img && img.naturalWidth && img.naturalHeight) {
+            return img.naturalWidth / img.naturalHeight;
+        }
+        return 1;
+    }
+
+    var imageSnapLock = false;
+
+    function snapImageAspect(grid, item) {
+        if (!grid || !item || imageSnapLock) {
+            return;
+        }
+        var node = item.gridstackNode || {};
+        var w = node.w || parseInt(item.getAttribute('gs-w') || '1', 10);
+        var h = node.h || parseInt(item.getAttribute('gs-h') || '1', 10);
+        var aspect = imageAspect(item);
+        var col = columnPx(grid);
+        var cell = cellPx(grid);
+        var fromW = Math.max(1, Math.round((w * col) / aspect / cell));
+        imageSnapLock = true;
+        if (fromW !== h) {
+            grid.update(item, { h: fromW });
+        }
+        imageSnapLock = false;
+    }
+
+    function sizeImageForGrid(grid, natW, natH, maxRows) {
+        var col = columnPx(grid);
+        var cell = cellPx(grid);
+        var aspect = natW / Math.max(1, natH);
+        function fits(w, h) {
+            if (h > maxRows || w > GRID_COLUMNS) {
+                return false;
+            }
+            var slot = findFit(grid, w, h, maxRows);
+            return !!(slot && !slot.clip);
+        }
+        var origW = Math.min(GRID_COLUMNS, Math.max(1, Math.round(natW / col)));
+        var origH = Math.max(1, Math.round((origW * col) / aspect / cell));
+        if (fits(origW, origH)) {
+            return { w: origW, h: origH };
+        }
+        var w;
+        for (w = GRID_COLUMNS; w >= 1; w--) {
+            var h = Math.max(1, Math.round((w * col) / aspect / cell));
+            if (fits(w, h)) {
+                return { w: w, h: h };
+            }
+        }
+        return null;
+    }
+
+    function loadImageNaturalSize(src) {
+        return new Promise(function (resolve) {
+            var img = new Image();
+            img.onload = function () {
+                resolve({
+                    w: Math.max(1, img.naturalWidth || 1),
+                    h: Math.max(1, img.naturalHeight || 1)
+                });
+            };
+            img.onerror = function () {
+                resolve({ w: 1, h: 1 });
+            };
+            img.src = src;
         });
     }
 
@@ -1212,11 +1640,24 @@
         return reportFontLoading;
     }
 
+    var pdfFontOk = false;
+
     function registerReportFont(pdf) {
-        if (reportFontBinary) {
-            pdf.addFileToVFS('NotoSansTC-Regular.ttf', reportFontBinary);
-            pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'normal');
+        pdfFontOk = false;
+        if (!reportFontBinary) {
+            pdf.setFont('helvetica', 'normal');
+            return;
+        }
+        pdf.addFileToVFS('NotoSansTC-Regular.ttf', reportFontBinary);
+        pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'normal');
+        try {
             pdf.setFont(REPORT_FONT_NAME, 'normal');
+            pdfFontOk = pdf.getTextWidth('Score') > 0;
+        } catch (err) {
+            pdfFontOk = false;
+        }
+        if (!pdfFontOk) {
+            pdf.setFont('helvetica', 'normal');
         }
     }
 
@@ -1247,9 +1688,13 @@
 
     function paperScale(paperRect) {
         return {
-            x: paperRect.width ? (297 / paperRect.width) : 1,
-            y: paperRect.height ? (210 / paperRect.height) : 1
+            x: paperRect.width ? (A4_WIDTH_MM / paperRect.width) : 1,
+            y: paperRect.height ? (A4_HEIGHT_MM / paperRect.height) : 1
         };
+    }
+
+    function paperOffsheet(box) {
+        return box.y >= A4_HEIGHT_MM || box.x >= A4_WIDTH_MM || box.w <= 0 || box.h <= 0;
     }
 
     function scaleXY(scale) {
@@ -1320,14 +1765,17 @@
                 pdfOpts[key] = options[key];
             }
         });
-        pdf.setFont(REPORT_FONT_NAME, 'normal');
+        try {
+            pdf.setFont(pdfFontOk ? REPORT_FONT_NAME : 'helvetica', 'normal');
+        } catch (err) {
+            pdf.setFont('helvetica', 'normal');
+        }
         function paint(dx) {
             try {
                 pdf.text(text, x + dx, y, pdfOpts);
             } catch (err) {
                 pdf.setFont('helvetica', 'normal');
                 pdf.text(text, x + dx, y, pdfOpts);
-                pdf.setFont(REPORT_FONT_NAME, 'normal');
             }
         }
         paint(0);
@@ -1360,9 +1808,40 @@
         });
     }
 
+    function drawFilledCircle(pdf, box, rgb) {
+        var radius = Math.min(box.w, box.h) / 2;
+        if (radius <= 0) {
+            return;
+        }
+        pdf.setFillColor(rgb[0], rgb[1], rgb[2]);
+        pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'F');
+    }
+
+    function drawStarterCircle(pdf, box, rgb) {
+        var radius = Math.min(box.w, box.h) * 0.22;
+        radius = Math.max(0.35, Math.min(radius, 1.1));
+        pdf.setDrawColor(rgb[0], rgb[1], rgb[2]);
+        pdf.setLineWidth(0.28);
+        pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'S');
+    }
+
+    function isStarterMark(text) {
+        return text === '\u25CB' || text === '○';
+    }
+
+    function drawTitleDot(pdf, dot, paperRect, scale) {
+        var box = boxMm(paperRect, dot, scale);
+        if (paperOffsheet(box)) {
+            return;
+        }
+        var style = window.getComputedStyle(dot);
+        var fill = parseRgb(style.backgroundColor) || [0, 180, 216];
+        drawFilledCircle(pdf, box, fill);
+    }
+
     function drawTableCell(pdf, cell, paperRect, scale) {
         var box = boxMm(paperRect, cell, scale);
-        if (box.y >= 210 || box.x >= 297 || box.w <= 0 || box.h <= 0) {
+        if (paperOffsheet(box)) {
             return;
         }
         var style = window.getComputedStyle(cell);
@@ -1380,11 +1859,18 @@
             return;
         }
         var color = parseRgb(style.color) || [15, 23, 42];
+        if (isStarterMark(text)) {
+            drawStarterCircle(pdf, box, color);
+            return;
+        }
         pdf.setTextColor(color[0], color[1], color[2]);
-        pdf.setFontSize(pxToPt(parseFloat(style.fontSize) || 11, scale));
-        var pad = 0.5;
+        pdf.setFontSize(pxToPt(parseFloat(style.fontSize) || 9, scale));
+        var pad = 0.4;
         var maxW = Math.max(0.4, box.w - pad * 2);
         var fitted = fitText(pdf, text, maxW);
+        if (!fitted) {
+            return;
+        }
         var align = style.textAlign;
         var x = box.x + pad;
         var pdfAlign = 'left';
@@ -1423,7 +1909,7 @@
         var sy = scaleXY(scale).y;
         var lineH = baseLinePx * sy;
         var ptSize = pxToPt(baseFontPx, scale);
-        var maxY = Math.min(210, box.y + box.h);
+        var maxY = Math.min(A4_HEIGHT_MM, box.y + box.h);
         var cursorY = box.y;
 
         function collectLines() {
@@ -1692,7 +2178,7 @@
         var allLines = collectLines();
 
         allLines.forEach(function (lineInfo) {
-            if (cursorY + lineH * 0.4 > maxY) {
+            if (cursorY >= maxY) {
                 return;
             }
             var indentX = box.x + (lineInfo.indentLevel || 0) * 5.0;
@@ -1776,7 +2262,7 @@
             return;
         }
         var box = boxMm(paperRect, img, scale);
-        if (box.w <= 0 || box.h <= 0 || box.y >= 210) {
+        if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
             return;
         }
         var dataUrl = img.src;
@@ -1788,7 +2274,7 @@
                 canvas.getContext('2d').drawImage(img, 0, 0);
                 dataUrl = canvas.toDataURL('image/png');
             }
-            pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, 210 - box.y));
+            pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
         } catch (err) {
             console.warn('PDF image skipped', err);
         }
@@ -1801,7 +2287,7 @@
         }
         var scale = paperScale(paperRect);
         pdf.setFillColor(255, 255, 255);
-        pdf.rect(0, 0, 297, 210, 'F');
+        pdf.rect(0, 0, A4_WIDTH_MM, A4_HEIGHT_MM, 'F');
         drawHeader(pdf, paper, paperRect, scale);
         paper.querySelectorAll('.grid-stack-item').forEach(function (item) {
             if (item.hidden) {
@@ -1810,13 +2296,20 @@
             var title = item.querySelector('.report-block-title');
             if (title) {
                 var titleText = (title.textContent || '').trim();
+                var tBox = boxMm(paperRect, title, scale);
+                var tStyle = window.getComputedStyle(title);
+                var tColor = parseRgb(tStyle.color) || [15, 23, 42];
+                var textX = tBox.x;
+                var dot = title.querySelector('.report-block-title-dot');
+                if (dot) {
+                    drawTitleDot(pdf, dot, paperRect, scale);
+                    var dBox = boxMm(paperRect, dot, scale);
+                    textX = dBox.x + dBox.w + 2;
+                }
                 if (titleText) {
-                    var tBox = boxMm(paperRect, title, scale);
-                    var tStyle = window.getComputedStyle(title);
-                    var tColor = parseRgb(tStyle.color) || [15, 23, 42];
                     pdf.setTextColor(tColor[0], tColor[1], tColor[2]);
                     pdf.setFontSize(pxToPt(parseFloat(tStyle.fontSize) || 12, scale));
-                    drawPdfText(pdf, titleText, tBox.x, tBox.y + tBox.h / 2, {
+                    drawPdfText(pdf, titleText, textX, tBox.y + tBox.h / 2, {
                         baseline: 'middle',
                         bold: fontWeightNum(tStyle) >= 600
                     });
@@ -1867,7 +2360,7 @@
             return loadReportFont();
         }).then(function () {
             var JsPDF = window.jspdf.jsPDF;
-            var pdf = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+            var pdf = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
             registerReportFont(pdf);
             var chain = Promise.resolve();
             Array.prototype.forEach.call(papers, function (paper, index) {
@@ -1875,7 +2368,7 @@
                     return hydratePage(index);
                 }).then(function () {
                     if (index > 0) {
-                        pdf.addPage('a4', 'landscape');
+                        pdf.addPage('a4', 'portrait');
                     }
                     drawPaper(pdf, paper);
                 });
@@ -2055,6 +2548,8 @@
             }
         });
         setCurrentPage(clampPageIndex(currentPageIndex));
+        markPaperOverflow();
+        syncPageListSticky();
     }
 
     function applyStoredLayout(stored, compact) {
@@ -2086,6 +2581,10 @@
                 refreshPageChrome();
                 initScrollSpy();
                 persistLocal(readLayoutFromDom());
+                window.setTimeout(function () {
+                    markPaperOverflow();
+                    syncPageListSticky();
+                }, 300);
             });
         });
     }
@@ -2118,10 +2617,16 @@
                             x: slot.x,
                             y: slot.y,
                             w: w,
-                            h: h
+                            h: h,
+                            minW: block.type === 'builtin_table' ? w : 1,
+                            minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
                         });
                         bindTextBlocks(node);
+                        node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
+                        node.setAttribute('data-min-w', block.type === 'builtin_table' ? String(w) : '1');
+                        clampItemToPaper(grid, node);
                         persistLocal(readLayoutFromDom());
+                        window.setTimeout(markPaperOverflow, 0);
                         if (paper) {
                             paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
                         }
@@ -2133,10 +2638,16 @@
                 x: slot.x,
                 y: slot.y,
                 w: w,
-                h: h
+                h: h,
+                minW: block.type === 'builtin_table' ? w : 1,
+                minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
             });
             bindTextBlocks(node);
+            node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
+            node.setAttribute('data-min-w', block.type === 'builtin_table' ? String(w) : '1');
+            clampItemToPaper(grid, node);
             persistLocal(readLayoutFromDom());
+            window.setTimeout(markPaperOverflow, 0);
         });
     }
 
@@ -2235,12 +2746,70 @@
             if (!src) {
                 return readLayoutFromDom();
             }
-            addWidgetToActive({
-                id: uniqueId('image'),
-                type: 'image',
-                src: src,
-                w: 6,
-                h: 5
+            loadImageNaturalSize(src).then(function (nat) {
+                var index = activePageIndex();
+                return hydratePage(index).then(function () {
+                    markPaperOverflow();
+                    var papers = document.querySelectorAll('#report-papers .report-paper');
+                    var paper = papers[activePageIndex()];
+                    var goNew = !paper || paperHasOverflow(paper);
+                    var place = function () {
+                        var grid = activeGrid();
+                        if (!grid) {
+                            return;
+                        }
+                        var maxRows = paperMaxRows(grid);
+                        var size = sizeImageForGrid(grid, nat.w, nat.h, maxRows);
+                        if (!size) {
+                            return addEmptyPaper().then(function (newPaper) {
+                                papers = document.querySelectorAll('#report-papers .report-paper');
+                                setCurrentPage(papers.length - 1);
+                                initScrollSpy();
+                                return hydratePage(papers.length - 1).then(function () {
+                                    grid = activeGrid();
+                                    if (!grid) {
+                                        return;
+                                    }
+                                    size = sizeImageForGrid(grid, nat.w, nat.h, paperMaxRows(grid))
+                                        || { w: 1, h: 1 };
+                                    addWidgetToActive({
+                                        id: uniqueId('image'),
+                                        type: 'image',
+                                        src: src,
+                                        w: size.w,
+                                        h: size.h,
+                                        aspect: nat.w / nat.h
+                                    });
+                                    if (newPaper) {
+                                        newPaper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                    }
+                                });
+                            });
+                        }
+                        addWidgetToActive({
+                            id: uniqueId('image'),
+                            type: 'image',
+                            src: src,
+                            w: size.w,
+                            h: size.h,
+                            aspect: nat.w / nat.h
+                        });
+                    };
+                    if (goNew) {
+                        return addEmptyPaper().then(function (newPaper) {
+                            papers = document.querySelectorAll('#report-papers .report-paper');
+                            setCurrentPage(papers.length - 1);
+                            initScrollSpy();
+                            return hydratePage(papers.length - 1).then(function () {
+                                place();
+                                if (newPaper) {
+                                    newPaper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                }
+                            });
+                        });
+                    }
+                    return place();
+                });
             });
             return readLayoutFromDom();
         },
@@ -2279,7 +2848,9 @@
         },
         exportPdf: function () {
             return exportPapersToPdf();
-        }
+        },
+        markOverflow: markPaperOverflow,
+        syncSticky: syncPageListSticky
     };
 
     function validateImageFile(file) {
@@ -2380,7 +2951,18 @@
             return;
         }
         if (event.target.closest('#btn-export-pdf')) {
-            window.splashboardReport.exportPdf();
+            if (anyPaperOverflowing()) {
+                askConfirm(
+                    'This export will crop content that sits outside A4.',
+                    'Export'
+                ).then(function (ok) {
+                    if (ok) {
+                        window.splashboardReport.exportPdf();
+                    }
+                });
+            } else {
+                window.splashboardReport.exportPdf();
+            }
             return;
         }
         var pageBtn = event.target.closest('.report-page-btn[data-page-index]');

@@ -10,6 +10,7 @@ Read the matching spec before changing behavior or fixing a bug.
 
 - Unit command: `python3 -m unittest discover -s tests -v`
 - Browser smoke: `python3 -m pytest tests/e2e -q` (needs Chromium once: `python3 -m playwright install chromium`)
+- Report PDF text extract (when `assets/report_canvas.js` PDF/font draw, `NotoSansTC-Regular.ttf`, or pdf spec change): `python3 -m pytest tests/e2e -q -m pdf_text -o addopts='-q --tb=short'`. Assert table-cell tokens (`PTS` or `Min`, plus `20:00` or `Lin`). Score titles, page-header names, and notes do not count.
 - Tests use mocks and small fixtures. They do not call live Synergy.
 - Credentials travel only as `SYNERGY_CREDENTIAL_ID` / `SYNERGY_CREDENTIAL_SECRET`. Do not commit them. Do not put them in `fly.toml` `[env]`.
 - Do not `git push` or `fly deploy` unless asked.

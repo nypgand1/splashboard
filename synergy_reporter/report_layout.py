@@ -3,8 +3,8 @@
 
 import re
 
-A4_WIDTH_MM = 297
-A4_HEIGHT_MM = 210
+A4_WIDTH_MM = 210
+A4_HEIGHT_MM = 297
 GRID_COLUMNS = 12
 LAYOUT_VERSION = 1
 STORAGE_KEY_PREFIX = 'splashboard.report.layout.'
@@ -74,9 +74,11 @@ def pdf_filename(match_info=None):
 
 def pdf_export_spec():
     return {
-        'orientation': 'landscape',
+        'orientation': 'portrait',
         'page_format': 'a4',
         'page_order': 'layout_pages',
+        'title_dot': 'filled_circle',
+        'starter_s': 'stroked_circle',
         'filename': 'match_date_yyyymmdd',
         'filename_fallback': PDF_FILENAME_FALLBACK,
         'engine': 'jspdf_dom',
@@ -146,6 +148,25 @@ def chrome_spec():
         'editor_chrome': 'dmc',
         'dialog': 'dmc.Modal',
         'sticky_top_px': 8,
+        'page_list_align': 'paper_top',
+        'page_list_sticky': 'toolbar_plus_gap',
+        'overflow_chrome': 'paper_ring',
+        'overflow_color': '#e63946',
+        'overflow_ring_px': 2,
+        'overflow_detect': 'item_box_vs_paper',
+        'pdf_overflow': 'confirm_modal',
+        'pdf_overflow_confirm': 'This export will crop content that sits outside A4.',
+        'pdf_overflow_ok': 'Export',
+        'resize_handles': 'se',
+        'image_place': 'natural_or_max_remaining',
+        'image_aspect': 'lock',
+        'table_min_size': 'max_content',
+        'block_place': 'clamp_to_paper',
+        'oversized_drag': 'x_only_y0',
+        'notes_enter_overflow': 'reject',
+        'notes_edit_overflow': 'reject',
+        'pdf_text_test': 'marker_pdf_text',
+        'resize_max': 'remaining_paper',
         'reset_icon': 'tabler:restore',
         'reset_label': 'Reset layout',
         'reset_confirm': 'Reset to the default layout? This cannot be undone.',
@@ -157,12 +178,15 @@ def chrome_spec():
         'page_delete_icon': 'tabler:x',
         'page_list_has_delete': False,
         'min_pages': 1,
+        'default_pages': 4,
         'toolbar_align': 'paper',
         'drag_handle': 'title_left',
         'note_drag_handle': 'overlay',
         'page_number': False,
         'notes_default_h': 2,
+        'notes_min_h': 1,
         'notes_resize': 'content',
+        'notes_preserve_w': True,
         'notes_editor': 'execCommand',
         'notes_placeholder': 'Notes',
         'notes_content_format': 'html',
@@ -234,7 +258,7 @@ def paint_spec():
         'hydrate': 'active_page',
         'python_paint': 'shell',
         'hidden_table_templates': False,
-        'lineup_rows': 'fit_block',
+        'lineup_rows': 'paint_all',
         'report_tab': 'finished_and_desktop',
         'desktop_min_px': REPORT_DESKTOP_MIN_PX,
         'player_stats_sort': '+/-_desc',
@@ -266,15 +290,16 @@ def _text(block_id, x, y, w, h):
 
 def default_layout(match_info=None):
     del match_info
+    half = GRID_COLUMNS // 2
     return {
         'version': LAYOUT_VERSION,
         'pages': [
             {
                 'id': 'page-1',
                 'blocks': [
-                    _table('p1-score', 'score_group', 0, 0, 7, 3),
-                    _text('p1-notes', 7, 0, 5, 2),
-                    _table('p1-four', 't_adv_df', 0, 3, GRID_COLUMNS, 3),
+                    _table('p1-score', 'score_group', 0, 0, half, 3),
+                    _table('p1-four', 't_adv_df', 0, 3, half, 3),
+                    _text('p1-notes', half, 0, half, 6),
                 ],
             },
             {
@@ -289,28 +314,14 @@ def default_layout(match_info=None):
                 'id': 'page-3',
                 'blocks': [
                     _table('p3-home', 'p_df_home', 0, 0, GRID_COLUMNS, 8),
-                    _text('p3-notes', 0, 8, GRID_COLUMNS, 2),
+                    _table('p3-away', 'p_df_away', 0, 8, GRID_COLUMNS, 8),
                 ],
             },
             {
                 'id': 'page-4',
                 'blocks': [
-                    _table('p4-away', 'p_df_away', 0, 0, GRID_COLUMNS, 8),
-                    _text('p4-notes', 0, 8, GRID_COLUMNS, 2),
-                ],
-            },
-            {
-                'id': 'page-5',
-                'blocks': [
-                    _table('p5-home', 'lineup_home', 0, 0, GRID_COLUMNS, 8),
-                    _text('p5-notes', 0, 8, GRID_COLUMNS, 2),
-                ],
-            },
-            {
-                'id': 'page-6',
-                'blocks': [
-                    _table('p6-away', 'lineup_away', 0, 0, GRID_COLUMNS, 8),
-                    _text('p6-notes', 0, 8, GRID_COLUMNS, 2),
+                    _table('p4-home', 'lineup_home', 0, 0, GRID_COLUMNS, 8),
+                    _table('p4-away', 'lineup_away', 0, 8, GRID_COLUMNS, 8),
                 ],
             },
         ],
