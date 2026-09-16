@@ -313,6 +313,8 @@ class ReportCacheTests(unittest.TestCase):
         self.assertFalse(should_use_live_endpoints(status='FINISHED'))
         self.assertTrue(should_use_live_endpoints(status='IN_PROGRESS'))
         self.assertTrue(should_use_live_endpoints(status='PENDING'))
+        self.assertFalse(should_use_live_endpoints(status='SCHEDULED'))
+        self.assertFalse(should_use_live_endpoints(status='IF_NEEDED'))
 
     def test_concurrent_lookups_build_once(self):
         builds = []
@@ -365,7 +367,10 @@ class PaneRenderGateTests(unittest.TestCase):
         self.assertIs(game_page.update_pane_rotation('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_pbp('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_lineup(5, 'tab-bs', '{}', None), no_update)
-        self.assertIs(game_page.update_pane_report('tab-bs', '{}', '{}', '{}', None), no_update)
+        self.assertIs(
+            game_page.update_pane_report('tab-bs', '', '{}', '{}', '{}', None),
+            no_update,
+        )
 
 
 class BackgroundWarmupTests(unittest.TestCase):

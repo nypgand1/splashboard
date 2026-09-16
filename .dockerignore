@@ -9,6 +9,5 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
-basketball_rest.json
-token_openapi.yml
+docs/api_reference/
 csv_output/

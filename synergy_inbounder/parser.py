@@ -71,15 +71,17 @@ class Parser:
         team_stats_periods_df = pd.DataFrame([team_stats_periods_row(t) for t in periods_json.get('data') or []])
 
         def player_stats_row(p):
-            p['statistics']['entityId'] = p['entityId']
-            p['statistics']['personId'] = p['personId']
-            p['statistics']['starter'] = p['starter']
-            return p['statistics']
-        player_stats_list = [player_stats_row(p) for p in (player_json.get('data') or []) if p['participated']]
+            stats = dict(p.get('statistics') or {})
+            stats['entityId'] = p.get('entityId')
+            stats['personId'] = p.get('personId')
+            stats['starter'] = bool(p.get('starter'))
+            stats['participated'] = bool(p.get('participated'))
+            return stats
+        player_stats_list = [player_stats_row(p) for p in (player_json.get('data') or [])]
         player_stats_df = pd.DataFrame(player_stats_list)
 
         team_id_list = team_stats_df['entityId'].to_list() if not team_stats_df.empty else []
-        starter_dict = {team_id: [p['personId'] for p in player_stats_list if p['starter'] and p['entityId'] == team_id]
+        starter_dict = {team_id: [p['personId'] for p in player_stats_list if p.get('starter') and p.get('entityId') == team_id]
                 for team_id in team_id_list}
 
         return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict

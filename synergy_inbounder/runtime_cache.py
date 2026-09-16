@@ -4,7 +4,13 @@ import threading
 import time
 from concurrent.futures import Future
 
-FINISHED_STATUSES = frozenset({'FINISHED', 'CONFIRMED'})
+from synergy_inbounder.game_status import (
+    FINISHED_STATUSES,
+    is_finished_status,
+    is_live_play_status,
+    normalize_status,
+)
+
 # One live cadence for PBP-derived views (Play-By-Play + Rotation).
 LIVE_CADENCE_SECONDS = 30
 LIVE_PBP_HTTP_TTL_SECONDS = 25
@@ -13,20 +19,10 @@ SEASON_LIST_TTL_SECONDS = 60
 ID_TABLE_TTL_SECONDS = 8 * 60 * 60
 
 
-def normalize_status(status):
-    if status is None:
-        return ''
-    return str(status).strip()
-
-
-def is_finished_status(status):
-    return normalize_status(status) in FINISHED_STATUSES
-
-
 def should_use_live_endpoints(status=None, game_id=None):
     if status is None and game_id:
         status = lookup_game_status(game_id)
-    return not is_finished_status(status)
+    return is_live_play_status(status)
 
 
 _report_lock = threading.Lock()
@@ -39,12 +35,15 @@ _id_table_cache = {}
 
 
 def _report_is_stale(entry):
-    if is_finished_status(entry.get('status')):
+    if not is_live_play_status(entry.get('status')):
         return False
     return (time.monotonic() - entry['fetched_at']) >= LIVE_REPORT_TTL_SECONDS
 
 
 def get_cached_report(game_id):
+    factory = getattr(get_cached_report, 'factory', None)
+    if callable(factory):
+        return factory(game_id)
     if not game_id:
         raise ValueError('game_id is required')
 

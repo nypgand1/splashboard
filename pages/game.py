@@ -1,9 +1,10 @@
 import datetime
 import io
 import json
+import os
 
-from dash import dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
-import dash_bootstrap_components as dbc
+from dash import ALL, ctx, dcc, html, Input, Output, State, callback, register_page, clientside_callback, no_update
+import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
@@ -12,9 +13,13 @@ from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
     get_cached_report,
-    is_finished_status,
+)
+from synergy_inbounder.game_status import (
+    is_live_play_status,
+    status_bucket,
 )
 from synergy_reporter.report_components import (
+    apply_page_cmd,
     lineup_tables_for_size,
     render_report_workspace,
 )
@@ -22,7 +27,23 @@ from synergy_reporter.report_layout import (
     default_layout,
     report_tab_is_visible,
 )
-from synergy_reporter.rotation import build_rotation_figure
+from synergy_reporter.rotation import (
+    apply_camera_relayout,
+    build_rotation_figure,
+    format_run_label,
+    live_playhead_t,
+)
+from ui_kit import (
+    EMPTY_GAME,
+    EMPTY_GAME_NEXT,
+    ERROR_GAME,
+    empty_state,
+    error_alert,
+    filter_control,
+    game_banner,
+    icon,
+    loading_skeleton,
+)
 
 register_page(
     __name__,
@@ -31,69 +52,183 @@ register_page(
     path_template='/game/<game_id>'
 )
 
+ROTATION_GRAPH_CONFIG = {
+    'displayModeBar': False,
+    'responsive': True,
+    'scrollZoom': False,
+    'doubleClick': False,
+}
+
+
+def _pane(wrap_id, pane_id, kind, hidden=False):
+    body = html.Div(id=pane_id, children=loading_skeleton(kind))
+    style = {'display': 'none'} if hidden else {}
+    if os.environ.get('SPLASHBOARD_E2E'):
+        return html.Div(body, id=wrap_id, style=style)
+    return html.Div(
+        dcc.Loading(custom_spinner=loading_skeleton(kind), children=body),
+        id=wrap_id,
+        style=style,
+    )
+
+
+def _rotation_controls():
+    return dmc.Group(
+        [
+            dmc.Group(
+                [
+                    dmc.Button(
+                        'Live',
+                        id='rotation-live',
+                        size='compact-xs',
+                        variant='filled',
+                        color='blue',
+                        radius='sm',
+                        style={'display': 'none'},
+                    ),
+                    dmc.SegmentedControl(
+                        id='rotation-period',
+                        data=[{'label': 'All', 'value': 'all'}],
+                        value='all',
+                        radius='md',
+                        size='xs',
+                    ),
+                ],
+                gap='sm',
+                align='center',
+                wrap='wrap',
+            ),
+            dmc.Switch(
+                id='rotation-show-dnp',
+                label='Show DNP',
+                checked=False,
+                size='sm',
+                color='gray',
+            ),
+        ],
+        justify='space-between',
+        align='center',
+        mb='sm',
+        wrap='wrap',
+        gap='sm',
+    )
+
+
+def _rotation_graph_paper():
+    return dmc.Paper(
+        dcc.Graph(
+            id='rotation-graph',
+            figure={},
+            config=ROTATION_GRAPH_CONFIG,
+            style={'width': '100%', 'height': '520px'},
+        ),
+        id='rotation-graph-paper',
+        withBorder=True,
+        radius='md',
+        shadow='xs',
+        className='braves-card-wrapper',
+        style={'overflow': 'hidden', 'display': 'none'},
+    )
+
+
+def _rotation_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    pane = html.Div(id='pane-rotation', children=loading_skeleton('chart'))
+    if os.environ.get('SPLASHBOARD_E2E'):
+        body = pane
+    else:
+        body = dcc.Loading(custom_spinner=loading_skeleton('chart'), children=pane)
+    return html.Div(
+        [
+            html.Div(id='rotation-last-update', children=_last_update_span()),
+            _rotation_controls(),
+            body,
+            _rotation_graph_paper(),
+        ],
+        id='wrap-rotation',
+        style=style,
+    )
+
+
+def _lineup_controls():
+    row = filter_control(
+        '',
+        dmc.SegmentedControl(
+            id='lineup_size_dropdown',
+            data=[
+                {'label': '5 Players', 'value': '5'},
+                {'label': '4 Players', 'value': '4'},
+                {'label': '3 Players', 'value': '3'},
+                {'label': '2 Players', 'value': '2'},
+            ],
+            value='5',
+            radius='md',
+            size='xs',
+            fullWidth=True,
+        ),
+    )
+    return dmc.Box(row, mb='sm')
+
+
+def _lineup_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    pane = html.Div(id='pane-lineup', children=loading_skeleton('table'))
+    if os.environ.get('SPLASHBOARD_E2E'):
+        body = pane
+    else:
+        body = dcc.Loading(custom_spinner=loading_skeleton('table'), children=pane)
+    return html.Div(
+        [
+            html.Div(id='lineup-last-update', children=_last_update_span()),
+            _lineup_controls(),
+            body,
+        ],
+        id='wrap-lineup',
+        style=style,
+    )
+
+
 def layout(game_id=None):
     return html.Div([
         html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
         
-        # Upper Tabs
-        dbc.Tabs([
-            dbc.Tab(label='Box Score', tab_id='tab-bs'),
-            dbc.Tab(label='Rotation', tab_id='tab-rotation'),
-            dbc.Tab(label='Play-By-Play', tab_id='tab-pbp'),
-            dbc.Tab(label='Lineup Stats', tab_id='tab-lineup'),
-            dbc.Tab(
-                label='Report',
-                tab_id='tab-report',
-                id='report-tab',
-                tab_style={'display': 'none'},
-            ),
-        ],
-        id='tabs',
-        active_tab='tab-bs',
+        # Game Info Banner Card (visible across all tabs)
+        html.Div(id='game-info-banner-wrap'),
+
+        dmc.Tabs(
+            [
+                dmc.TabsList(
+                    [
+                        dmc.TabsTab("Box Score", value="tab-bs", leftSection=icon("tabler:table", width=14)),
+                        dmc.TabsTab("Rotation", value="tab-rotation", leftSection=icon("tabler:chart-bar", width=14)),
+                        dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=icon("tabler:users", width=14)),
+                        dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
+                        dmc.TabsTab(
+                            "Report",
+                            value="tab-report",
+                            id="report-tab",
+                            leftSection=icon("tabler:file-text", width=14),
+                            style={"display": "none"},
+                        ),
+                    ],
+                )
+            ],
+            id="tabs",
+            value="tab-bs",
+            variant="default",
+            className="braves-clean-tabs",
+            style={
+                "margin": "0 0 16px 0",
+                "padding": "0",
+                "borderBottom": "none",
+            }
         ),
         
-        # Lineup Dropdown Container
-        html.Div([
-            html.Label("Lineups", style={'font-weight': 'bold', 'margin-bottom': '5px'}),
-            dcc.Dropdown(
-                id='lineup_size_dropdown',
-                options=[
-                    {'label': '5 Players', 'value': 5},
-                    {'label': '4 Players', 'value': 4},
-                    {'label': '3 Players', 'value': 3},
-                    {'label': '2 Players', 'value': 2},
-                ],
-                value=5,
-                clearable=False,
-                searchable=False,
-                style={'width': '200px', 'margin-bottom': '10px'}
-            )
-        ], id='lineup_dropdown_container', style={'display': 'none'}),
-
-        html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-bs')),
-            id='wrap-bs',
-        ),
-        html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-rotation')),
-            id='wrap-rotation',
-            style={'display': 'none'},
-        ),
-        html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-pbp')),
-            id='wrap-pbp',
-            style={'display': 'none'},
-        ),
-        html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-lineup')),
-            id='wrap-lineup',
-            style={'display': 'none'},
-        ),
-        html.Div(
-            dcc.Loading(type='circle', children=html.Div(id='pane-report')),
-            id='wrap-report',
-            style={'display': 'none'},
-        ),
+        _pane('wrap-bs', 'pane-bs', 'cards'),
+        _rotation_wrap(hidden=True),
+        _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
+        _lineup_wrap(hidden=True),
+        _pane('wrap-report', 'pane-report', 'table', hidden=True),
         html.Div(id='pbp_table', style={'display': 'block'}),
         
         # Background Stores & Intervals
@@ -106,11 +241,26 @@ def layout(game_id=None):
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
         dcc.Store(id='rotation_store'),
+        dcc.Store(id='rotation-click-t'),
+        html.Button(id='rotation-click-fire', n_clicks=0, style={'display': 'none'}),
+        dcc.Store(id='rotation_view_store', data={
+            'period': 'all',
+            't': None,
+            'x0': None,
+            'x1': None,
+            'show_dnp': False,
+            'slice_width': None,
+            'axis_rev': 0,
+            'follow_live': True,
+        }),
         dcc.Store(id='match_info_store'),
+        dcc.Store(id='report-pane-ready', data=''),
         
         # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
         html.Div(dag.AgGrid(id="dummy-grid", rowData=[], columnDefs=[]), style={'display': 'none'})
     ])
+
+
 
 @callback(
     Output('bs_store', 'data'),
@@ -124,7 +274,7 @@ def update_bs_store(n, game_id):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
-        return json.dumps({})
+        return _error_store()
     bs_dict = {
         'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
         'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
@@ -132,15 +282,17 @@ def update_bs_store(n, game_id):
         't_adv_df': report.get_team_advance_stats_df().to_json(date_format='iso', orient='split'),
         't_df': report.get_team_stats_df().to_json(date_format='iso', orient='split'),
         'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
-        'p_df_dict': report.get_player_stats_json_dict()
+        'p_df_dict': report.get_player_stats_json_dict(),
+        'p_summary_dict': report.get_player_box_score_summary_json_dict(),
     }
     return json.dumps(bs_dict)
 
 @callback(
     Output('match_info_store', 'data'),
-    Input('game_id', 'children'),
+    [Input('interval-component', 'n_intervals'),
+     Input('game_id', 'children')]
 )
-def update_match_info_store(game_id):
+def update_match_info_store(n, game_id):
     if not game_id:
         return json.dumps({})
     try:
@@ -158,7 +310,7 @@ def update_match_info_store(game_id):
         dt_str = str(row['startTimeLocal'])
         try:
             dt = pd.to_datetime(dt_str)
-            date_display = dt.strftime('%Y年%m月%d日')
+            date_display = dt.strftime('%Y-%m-%d')
             time_display = dt.strftime('%H:%M')
         except Exception:
             date_display = dt_str
@@ -182,19 +334,38 @@ def update_match_info_store(game_id):
         return json.dumps({})
 
 @callback(
+    Output('game-info-banner-wrap', 'children'),
+    Input('match_info_store', 'data')
+)
+def render_game_info_banner(match_info_store):
+    info = safe_loads(match_info_store)
+    if not info:
+        return html.Div()
+    return game_banner(
+        home_team=info.get('home_team') or 'Home',
+        away_team=info.get('away_team') or 'Away',
+        home_score=info.get('home_score') or '—',
+        away_score=info.get('away_score') or '—',
+        status=info.get('status') or '',
+        date=info.get('date') or '',
+        time=info.get('time') or '',
+        venue=info.get('venue') or '',
+    )
+
+@callback(
     Output('interval-component', 'disabled'),
     Input('match_info_store', 'data'),
 )
 def set_interval_disabled(match_info_store):
     info = safe_loads(match_info_store)
-    return is_finished_status(info.get('status'))
+    return not is_live_play_status(info.get('status'))
 
 
 @callback(
-    Output('report-tab', 'tab_style'),
-    Output('tabs', 'active_tab'),
+    Output('report-tab', 'style'),
+    Output('tabs', 'value'),
     Input('match_info_store', 'data'),
-    State('tabs', 'active_tab'),
+    State('tabs', 'value'),
 )
 def toggle_report_tab(match_info_store, active_tab):
     info = safe_loads(match_info_store)
@@ -216,7 +387,7 @@ def update_pbp_store(n, game_id):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading play-by-play: {exc}")
-        return json.dumps({})
+        return _error_store()
     return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
 
 @callback(
@@ -233,14 +404,14 @@ def update_lineup_store(n, game_id):
         warmup_game_report(game_id)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
-        return json.dumps({})
+        return _error_store()
     return json.dumps(report.get_all_lineup_stats_json_dict(sizes=(5,)))
 
 @callback(
     Output('rotation_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('tabs', 'active_tab'),
+     Input('tabs', 'value'),
      Input('match_info_store', 'data')],
 )
 def update_rotation_store(n, game_id, active_tab, match_info_store):
@@ -252,7 +423,7 @@ def update_rotation_store(n, game_id, active_tab, match_info_store):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading rotation: {exc}")
-        return json.dumps({})
+        return _error_store()
     info = safe_loads(match_info_store)
     return json.dumps(report.get_rotation_payload(
         home_team_id=info.get('home_team_id'),
@@ -273,105 +444,1052 @@ def safe_loads(val):
             return parsed
     return {}
 
+def _error_store(message=None):
+    return json.dumps({
+        '_ui': 'error',
+        'message': message or ERROR_GAME,
+    })
+
+
 def _last_update_span():
-    return html.Span(
+    return dmc.Text(
         f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}',
-        className="text-muted small mb-2 d-block no-print"
+        size="sm",
+        c="dimmed",
+        mb=8,
+        className="no-print",
     )
 
 
-def _loading_placeholder():
-    return html.Div("Loading...", className="p-4 text-center text-muted")
+def _empty_view():
+    return empty_state(EMPTY_GAME, EMPTY_GAME_NEXT)
+
+
+def _error_view(payload=None):
+    data = payload if isinstance(payload, dict) else safe_loads(payload)
+    return error_alert(data.get('message') or ERROR_GAME)
+
+
+def _parse_numeric_stat(val):
+    if val is None or pd.isna(val):
+        return None
+    s = str(val).strip()
+    if not s or s in ('nan', 'None', '—', '-'):
+        return None
+    # If percentage e.g. "59.1%"
+    if s.endswith('%'):
+        try:
+            return float(s[:-1])
+        except Exception:
+            return None
+    # If fraction e.g. "26-44" or "30-62 (48.4%)"
+    if '(' in s and '%' in s:
+        try:
+            pct_part = s.split('(')[1].split('%')[0].strip()
+            return float(pct_part)
+        except Exception:
+            pass
+    if '-' in s and not s.startswith('-'):
+        try:
+            made_part = s.split('-')[0].strip()
+            return float(made_part)
+        except Exception:
+            pass
+    # If MM:SS
+    if ':' in s:
+        try:
+            parts = s.split(':')
+            return float(parts[0]) * 60 + float(parts[1])
+        except Exception:
+            pass
+    # Standard float
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _dmc_table_from_df(df, is_team_summary=True, title=None):
+    if df is None or df.empty:
+        return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
+
+    # Precalculate winning values for each column across rows (team summary tables have 2 rows: Home vs Away)
+    is_timeouts_card = bool(title and 'timeout' in title.lower())
+    col_winners = {}
+    if is_team_summary and len(df) == 2 and not is_timeouts_card:
+        is_fouls_card = bool(title and 'foul' in title.lower())
+        for col in df.columns:
+            if col in ('Team', 'Min'):
+                continue
+            val0 = _parse_numeric_stat(df.iloc[0][col])
+            val1 = _parse_numeric_stat(df.iloc[1][col])
+            if val0 is not None and val1 is not None and val0 != val1:
+                # Lower is better for Fouls, TO, TOV, TOV%, PF
+                if is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TOV%'):
+                    col_winners[col] = 0 if val0 < val1 else 1
+                else:
+                    col_winners[col] = 0 if val0 > val1 else 1
+
+    has_grouped_cols = any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%'))
+    has_key_stats_grouped = any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP', 'SCPM', 'SCPA', 'SCP'))
+    
+    if has_grouped_cols:
+        top_row = []
+        sub_row = []
+        for col in ('Team', 'Min'):
+            if col in df.columns:
+                top_row.append(dmc.TableTh(
+                    col.upper(),
+                    tableProps={"rowSpan": 2},
+                    style={
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "padding": "6px 10px",
+                        "fontSize": "12px",
+                        "fontWeight": 700,
+                        "color": "#0f172a",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                        "whiteSpace": "nowrap",
+                    }
+                ))
+
+        if any(c in df.columns for c in ('2M', '2A', '2FG%')):
+            top_row.append(dmc.TableTh("2PT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        if any(c in df.columns for c in ('3M', '3A', '3FG%')):
+            top_row.append(dmc.TableTh("3PT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        if any(c in df.columns for c in ('FTM', 'FTA', 'FT%')):
+            top_row.append(dmc.TableTh("FT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        if any(c in df.columns for c in ('OR', 'DR', 'REB')):
+            top_row.append(dmc.TableTh("REB", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                dmc.TableTh("O", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("D", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("T", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+
+        for col in ('AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
+            if col in df.columns:
+                top_row.append(dmc.TableTh(
+                    col,
+                    tableProps={"rowSpan": 2},
+                    style={
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "padding": "6px 8px",
+                        "fontSize": "12px",
+                        "fontWeight": 700,
+                        "color": "#0f172a",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                        "whiteSpace": "nowrap",
+                    }
+                ))
+        header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
+    elif has_key_stats_grouped:
+        top_row = []
+        sub_row = []
+        if 'Team' in df.columns:
+            top_row.append(dmc.TableTh(
+                "TEAM",
+                tableProps={"rowSpan": 2},
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        if any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP')):
+            top_row.append(dmc.TableTh("PIP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+        if any(c in df.columns for c in ('SCPM', 'SCPA', 'SCP')):
+            top_row.append(dmc.TableTh("SCP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
+            sub_row.extend([
+                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+            ])
+        for col in ('FBP', 'POT', 'BP'):
+            if col in df.columns:
+                top_row.append(dmc.TableTh(
+                    col,
+                    tableProps={"rowSpan": 2},
+                    style={
+                        "textAlign": "center",
+                        "verticalAlign": "middle",
+                        "padding": "6px 8px",
+                        "fontSize": "12px",
+                        "fontWeight": 700,
+                        "color": "#0f172a",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                        "whiteSpace": "nowrap",
+                    }
+                ))
+        header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
+    elif any(c in df.columns for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R')):
+        top_row = []
+        sub_row = []
+        if 'Team' in df.columns:
+            top_row.append(dmc.TableTh(
+                "TEAM",
+                tableProps={"rowSpan": 2},
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        if 'Pace' in df.columns:
+            top_row.append(dmc.TableTh(
+                "PACE",
+                tableProps={"rowSpan": 2},
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        if 'PPP' in df.columns:
+            top_row.append(dmc.TableTh(
+                "PPP",
+                tableProps={"rowSpan": 2},
+                style={
+                    "textAlign": "center",
+                    "verticalAlign": "middle",
+                    "padding": "6px 10px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ))
+        ff_cols = [c for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R') if c in df.columns]
+        if ff_cols:
+            top_row.append(dmc.TableTh(
+                "4 FACTORS",
+                tableProps={"colSpan": len(ff_cols)},
+                style={
+                    "textAlign": "center",
+                    "padding": "4px 8px",
+                    "fontSize": "12px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                }
+            ))
+            for fc in ff_cols:
+                sub_row.append(dmc.TableTh(
+                    fc,
+                    style={
+                        "textAlign": "center",
+                        "padding": "4px 6px",
+                        "fontSize": "11px",
+                        "fontWeight": 700,
+                        "color": "#475569",
+                        "borderBottom": "1px solid #e2e8f0",
+                        "backgroundColor": "#f8fafc",
+                    }
+                ))
+        header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
+    else:
+        header = [dmc.TableTr([
+            dmc.TableTh(
+                col,
+                style={
+                    "textAlign": "center",
+                    "padding": "7px 10px",
+                    "fontSize": "13px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ) for col in df.columns
+        ])]
+
+    rows = []
+    for row_idx in range(len(df)):
+        team_stripe_style = {}
+        if is_team_summary and 'Team' in df.columns:
+            stripe_color = "#0077b6" if row_idx == 0 else "#94a3b8"
+            team_stripe_style = {"borderLeft": f"3.5px solid {stripe_color}"}
+
+        cells = []
+        for c_idx, col in enumerate(df.columns):
+            val = df.iloc[row_idx][col]
+            if pd.isna(val) or val is None or str(val).strip() in ('nan', 'None'):
+                val_str = ""
+            elif is_timeouts_card and str(val).strip() in ('0', '0.0'):
+                val_str = ""
+            else:
+                val_str = str(val)
+
+            # Determine bolding and color: Only winning row in column is bold blue (team name itself is regular or semi-bold)
+            is_winner = col_winners.get(col) == row_idx
+            text_color = "#0077b6" if is_winner else "#1e293b"
+            font_weight = 700 if is_winner else 400
+
+            cell_style = {
+                "textAlign": "center",
+                "padding": "7px 10px",
+                "fontSize": "13px",
+                "fontWeight": font_weight,
+                "color": text_color,
+                "whiteSpace": "nowrap",
+            }
+            if c_idx == 0 and team_stripe_style:
+                cell_style.update(team_stripe_style)
+
+            cells.append(dmc.TableTd(val_str, style=cell_style))
+
+        rows.append(dmc.TableTr(
+            cells,
+            className="braves-clean-row",
+            style={"backgroundColor": "#ffffff"}
+        ))
+
+    table = dmc.Table(
+        [dmc.TableThead(header), dmc.TableTbody(rows)],
+        withTableBorder=False,
+        withColumnBorders=False,
+        className="braves-clean-table",
+        style={"width": "100%"}
+    )
+
+    scrolled = dmc.Box(table, className="braves-table-scroll")
+    paper_children = [scrolled]
+    if title:
+        paper_children = [
+            dmc.Text(title.upper(), size="xs", fw=700, c="dimmed", mb=6, style={"letterSpacing": "0.05em"}),
+            scrolled,
+        ]
+    return dmc.Paper(
+        paper_children,
+        withBorder=True,
+        radius="md",
+        p="sm",
+        shadow="xs",
+        className="braves-card-wrapper",
+    )
+
+
+LINEUP_COL_SIZES = {
+    2: (140, 150),
+    3: (180, 190),
+    4: (220, 230),
+    5: (260, 270),
+}
+
+
+def _lineup_col_size(lineup_size):
+    try:
+        size = int(lineup_size)
+    except Exception:
+        size = 5
+    return LINEUP_COL_SIZES.get(size, LINEUP_COL_SIZES[5])
+
+
+def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
+    col_set = set(columns)
+    column_defs = []
+
+    sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
+
+    # Pinned left columns: #, PLAYER/LINEUP/TEAM, S
+    if '#' in col_set:
+        column_defs.append({
+            "field": "#",
+            "headerName": "#",
+            "pinned": "left",
+            "sortable": True,
+            "filter": False,
+            "cellDataType": "text",
+            "minWidth": 36,
+            "width": 38,
+            "cellStyle": {"textAlign": "center", "fontWeight": "600", "color": "#64748b"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+            "valueFormatter": {"function": "params.value != null ? params.value : ''"},
+            "colSpan": {"function": "params.data && (params.data['#'] === 'TEAM / COACHES' || params.data['#'] === 'TOTAL') ? 3 : 1"},
+        })
+
+    first_col = next((c for c in ('Player', 'Lineup', 'Lineups', 'Team') if c in col_set), None)
+    if first_col:
+        is_lineup = 'lineup' in first_col.lower()
+        has_filter = bool(filterable_cols and any(fc.lower() in first_col.lower() for fc in filterable_cols))
+        col_def = {
+            "field": first_col,
+            "headerName": first_col.upper(),
+            "pinned": "left",
+            "sortable": True,
+            "filter": has_filter,
+            "cellStyle": {"textAlign": "center", "fontWeight": "700"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        }
+        if is_lineup:
+            min_w, width = _lineup_col_size(lineup_size)
+            col_def["minWidth"] = min_w
+            col_def["width"] = width
+            col_def["wrapText"] = True
+            col_def["autoHeight"] = True
+            col_def["cellStyle"] = {
+                "textAlign": "center",
+                "fontWeight": "700",
+                "whiteSpace": "normal",
+                "lineHeight": "1.3",
+            }
+        else:
+            col_def["minWidth"] = 95
+            col_def["width"] = 95
+        column_defs.append(col_def)
+
+    if 'S' in col_set:
+        column_defs.append({
+            "field": "S",
+            "headerName": "S",
+            "pinned": "left",
+            "sortable": True,
+            "minWidth": 34,
+            "width": 36,
+            "cellRenderer": "StarterCell",
+            "cellStyle": {"textAlign": "center"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        })
+
+    if 'Min' in col_set:
+        column_defs.append({
+            "field": "Min",
+            "headerName": "MIN",
+            "sortable": True,
+            "minWidth": 50,
+            "width": 56,
+            "cellStyle": {
+                "styleConditions": [
+                    {
+                        "condition": "params.value === 'DNP'",
+                        "style": {"textAlign": "center", "fontWeight": "700", "color": "#94a3b8", "letterSpacing": "0.05em"}
+                    }
+                ],
+                "default": {"textAlign": "center"}
+            },
+            "colSpan": {"function": "params.data && params.data['Min'] === 'DNP' ? 30 : 1"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        })
+
+    if '+/-' in col_set:
+        column_defs.append({
+            "field": "+/-",
+            "headerName": "+/-",
+            "sortable": True,
+            "minWidth": 46,
+            "width": 48,
+            "cellRenderer": "PlusMinusCell",
+            "cellStyle": {"textAlign": "center"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        })
+
+    if any(c in col_set for c in ('2M', '2A', '2FG%')):
+        children = []
+        if '2M' in col_set:
+            children.append({"field": "2M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '2A' in col_set:
+            children.append({"field": "2A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '2FG%' in col_set:
+            children.append({"field": "2FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "2PT",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    if any(c in col_set for c in ('3M', '3A', '3FG%')):
+        children = []
+        if '3M' in col_set:
+            children.append({"field": "3M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '3A' in col_set:
+            children.append({"field": "3A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if '3FG%' in col_set:
+            children.append({"field": "3FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "3PT",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    if any(c in col_set for c in ('FTM', 'FTA', 'FT%')):
+        children = []
+        if 'FTM' in col_set:
+            children.append({"field": "FTM", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'FTA' in col_set:
+            children.append({"field": "FTA", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'FT%' in col_set:
+            children.append({"field": "FT%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "FT",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    if any(c in col_set for c in ('OR', 'DR', 'REB')):
+        children = []
+        if 'OR' in col_set:
+            children.append({"field": "OR", "headerName": "O", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'DR' in col_set:
+            children.append({"field": "DR", "headerName": "D", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        if 'REB' in col_set:
+            children.append({"field": "REB", "headerName": "T", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+        column_defs.append({
+            "headerName": "REB",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": children,
+        })
+
+    stat_specs = [
+        ('AST', 'AST', 42, 44),
+        ('TO', 'TO', 42, 44),
+        ('ST', 'ST', 42, 44),
+        ('BL', 'BL', 42, 44),
+        ('PF', 'PF', 42, 44),
+        ('FD', 'FD', 42, 44),
+        ('PTS', 'PTS', 44, 46),
+        ('eFG%', 'eFG%', 54, 58),
+        ('USG%', 'USG%', 54, 58),
+        ('PM', 'PM', 56, 62),
+    ]
+    for col_name, hdr_name, min_w, w in stat_specs:
+        if col_name in col_set:
+            column_defs.append({
+                "field": col_name,
+                "headerName": hdr_name,
+                "sortable": True,
+                "minWidth": min_w,
+                "width": w,
+                "cellStyle": {"textAlign": "center"},
+                "cellClass": "ag-cell-align-center",
+                "headerClass": "ag-header-align-center",
+                "cellClassRules": sorted_cell_rules,
+            })
+
+    return column_defs
+
+
+def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None, lineup_size=5):
+    if df is None or df.empty:
+        return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
+    
+    sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
+
+    # If standard basketball stats table (2PT/3PT/FT breakdown present), use multi-level grouped columns
+    if any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%')):
+        column_defs = _build_stats_column_defs(
+            df.columns,
+            filterable_cols=filterable_cols,
+            lineup_size=lineup_size,
+        )
+    else:
+        column_defs = []
+        for c_idx, c in enumerate(df.columns):
+            align = "center"
+
+            cell_style = {"textAlign": align}
+            if c in ('Player', 'Lineup', 'Lineups') or 'lineup' in c.lower():
+                cell_style["fontWeight"] = "700"
+
+            has_filter = bool(filterable_cols and (c in filterable_cols or any(fc.lower() in c.lower() for fc in filterable_cols)))
+
+            col_width_props = {}
+            if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
+                min_w, width = _lineup_col_size(lineup_size)
+                col_width_props["minWidth"] = min_w
+                col_width_props["width"] = width
+            elif c in ('Player', 'Team'):
+                col_width_props["minWidth"] = 90
+                col_width_props["width"] = 95
+            elif c == 'Min':
+                col_width_props["minWidth"] = 50
+                col_width_props["width"] = 55
+            elif c in ('PM', '+/-'):
+                col_width_props["minWidth"] = 42
+                col_width_props["width"] = 45
+            else:
+                col_width_props["minWidth"] = 38
+                col_width_props["width"] = 42
+
+            col_def = {
+                "field": c,
+                "headerName": c,
+                "sortable": True,
+                "filter": has_filter,
+                "cellStyle": cell_style,
+                "cellClass": f"ag-cell-align-{align}",
+                "headerClass": f"ag-header-align-{align}",
+                "cellClassRules": sorted_cell_rules,
+                **col_width_props
+            }
+            if c in ('Lineup', 'Lineups') or 'lineup' in c.lower():
+                col_def['wrapText'] = True
+                col_def['autoHeight'] = True
+                col_def['cellStyle'] = {
+                    **cell_style,
+                    'whiteSpace': 'normal',
+                    'lineHeight': '1.3',
+                }
+            column_defs.append(col_def)
+
+    dash_options = {
+        "domLayout": "autoHeight",
+        "suppressHorizontalScroll": False,
+    }
+    if page_size:
+        dash_options["pagination"] = True
+        dash_options["paginationPageSize"] = page_size
+    if pinned_bottom_data:
+        dash_options["pinnedBottomRowData"] = pinned_bottom_data
+
+    grid_class = "ag-theme-alpine braves-clean-ag-grid"
+    if any('lineup' in str(c).lower() for c in df.columns):
+        grid_class += " braves-lineup-grid"
+    return dmc.Paper(
+        dag.AgGrid(
+            rowData=df.to_dict('records'),
+            columnDefs=column_defs,
+            defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
+            dashGridOptions=dash_options,
+            className=grid_class,
+            style={'width': '100%'}
+        ),
+        withBorder=True,
+        radius="md",
+        shadow="xs",
+        mb="md",
+        className="braves-grid-wrap",
+        style={"overflowX": "auto"},
+    )
 
 
 def render_bs_children(bs_store):
-    if not bs_store:
-        return _loading_placeholder()
     bs_dict = safe_loads(bs_store)
+    if bs_dict.get('_ui') == 'error':
+        return [_error_view(bs_dict)]
     if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return _loading_placeholder()
+        return [_empty_view()]
 
     qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
     qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
     qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
 
     t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
-    t_adv_df['Poss'] = t_adv_df['Poss'].apply(lambda x: f"{float(x):.1f}")
-    t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
-    t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
+    if 'Pace' in t_adv_df.columns:
+        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
+    if 'PPP' in t_adv_df.columns:
+        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
 
     t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
     k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
 
+    # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
+    row1 = dmc.SimpleGrid(
+        cols={"base": 1, "lg": 3},
+        spacing="12px",
+        children=[
+            _dmc_table_from_df(qt_pts_df, is_team_summary=True, title="Score"),
+            _dmc_table_from_df(qt_foul_df, is_team_summary=True, title="Fouls"),
+            _dmc_table_from_df(qt_tout_df, is_team_summary=True, title="Timeouts"),
+        ],
+        style={"marginBottom": "12px"}
+    )
+
+    # Row 2: 2-column with titles 'PACE & 4 FACTORS' and 'PAINT / 2nd CHANCE / FASTBREAK / OFF TOV / BENCH' (gap 12px)
+    row2 = dmc.SimpleGrid(
+        cols={"base": 1, "lg": 2},
+        spacing="12px",
+        children=[
+            _dmc_table_from_df(t_adv_df, is_team_summary=True, title="Pace & 4 Factors"),
+            _dmc_table_from_df(k_df, is_team_summary=True, title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench"),
+        ],
+        style={"marginBottom": "12px"}
+    )
+
+    # Row 3: Full Team Box Score
+    row3 = dmc.Box(_dmc_table_from_df(t_df, is_team_summary=True), mb="sm")
+
     children = [
         _last_update_span(),
-        html.Div(
-            dbc.Row([
-                dbc.Col(dbc.Table.from_dataframe(qt_pts_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                dbc.Col(dbc.Table.from_dataframe(qt_foul_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-                dbc.Col(dbc.Table.from_dataframe(qt_tout_df, striped=True, bordered=True, hover=True, className='text-nowrap')),
-            ])
-        ),
-        dbc.Table.from_dataframe(t_adv_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
-        dbc.Table.from_dataframe(t_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
-        dbc.Table.from_dataframe(k_df, striped=True, bordered=True, hover=True, className='text-nowrap'),
+        row1,
+        row2,
+        row3,
     ]
-    for team_name, p_json in sorted(bs_dict.get('p_df_dict', {}).items()):
-        children.append(html.H4(team_name))
+
+    p_dict = bs_dict.get('p_df_dict', {})
+    p_summary = bs_dict.get('p_summary_dict', {})
+    for idx, (team_name, p_json) in enumerate(sorted(p_dict.items())):
+        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+        title_section = dmc.Group(
+            [
+                dmc.Box(style={
+                    "width": "8px",
+                    "height": "8px",
+                    "borderRadius": "50%",
+                    "backgroundColor": dot_color,
+                }),
+                dmc.Text(team_name, fw=800, fz="16px"),
+            ],
+            gap=8,
+            align="center",
+            mt="md",
+            mb=10,
+        )
+        children.append(title_section)
         p_df = pd.read_json(io.StringIO(p_json), orient='split')
-        children.append(dbc.Table.from_dataframe(p_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+        summary_rows = p_summary.get(team_name) if isinstance(p_summary, dict) else None
+        children.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
     return children
 
 
-def render_rotation_children(rotation_store):
+DEFAULT_ROTATION_VIEW = {
+    'period': 'all',
+    't': None,
+    'x0': None,
+    'x1': None,
+    'show_dnp': False,
+    'slice_width': None,
+    'axis_rev': 0,
+    'follow_live': True,
+}
+
+
+def _rotation_view(view_store):
+    data = view_store if isinstance(view_store, dict) else safe_loads(view_store)
+    merged = dict(DEFAULT_ROTATION_VIEW)
+    if isinstance(data, dict):
+        for key in DEFAULT_ROTATION_VIEW:
+            if key in data:
+                merged[key] = data[key]
+    return merged
+
+
+def _period_control_data(periods):
+    data = [{'label': 'All', 'value': 'all'}]
+    seen = {'all'}
+    for period in periods or []:
+        value = str(period.get('id'))
+        if value in seen:
+            continue
+        seen.add(value)
+        data.append({'label': period.get('label') or value, 'value': value})
+    return data
+
+
+def _find_period(periods, period_value):
+    for period in periods or []:
+        if str(period.get('id')) == str(period_value):
+            return period
+    return None
+
+
+def _render_run_buttons(runs, periods):
+    if not runs:
+        return None
+    buttons = []
+    for index, run in enumerate(runs):
+        is_home = run.get('side') == 'home'
+        buttons.append(
+            dmc.Button(
+                format_run_label(run, periods),
+                id={'type': 'rotation-run', 'index': index},
+                color='blue' if is_home else 'gray',
+                variant='light',
+                size='compact-xs',
+                radius='sm',
+                px=8,
+            )
+        )
+    return dmc.Group(
+        buttons,
+        gap=6,
+        mb='sm',
+        style={'flexWrap': 'wrap'},
+    )
+
+
+def resolve_rotation_playhead(payload, view, match_info_store=None):
+    info = match_info_store if isinstance(match_info_store, dict) else safe_loads(match_info_store)
+    live = is_live_play_status(info.get('status'))
+    periods = (payload or {}).get('periods') or []
+    if live and view.get('follow_live', True):
+        return live_playhead_t(payload)
+    playhead = view.get('t')
+    if playhead is not None:
+        return playhead
+    if live:
+        return live_playhead_t(payload)
+    if periods:
+        return periods[-1]['end']
+    return None
+
+
+def _rotation_figure_from_view(payload, view, match_info_store=None):
+    playhead = resolve_rotation_playhead(payload, view, match_info_store)
+    x_range = None
+    if view.get('x0') is not None and view.get('x1') is not None:
+        x_range = (view['x0'], view['x1'])
+    width = (x_range[1] - x_range[0]) if x_range else None
+    uirevision = f"{width if width is not None else 'all'}:{int(view.get('axis_rev') or 0)}"
+    return build_rotation_figure(
+        payload,
+        playhead=playhead,
+        x_range=x_range,
+        show_dnp=bool(view.get('show_dnp')),
+        uirevision=uirevision,
+    )
+
+
+def render_rotation_children(rotation_store, view_store=None, match_info_store=None):
     payload = safe_loads(rotation_store)
+    if payload.get('_ui') == 'error':
+        return [_error_view(payload)]
     if not payload or not payload.get('teams'):
-        return [_last_update_span(), _loading_placeholder()]
-    fig = build_rotation_figure(payload)
-    return [
-        _last_update_span(),
-        dcc.Graph(
-            id='rotation-graph',
-            figure=fig,
-            config={'displayModeBar': False, 'responsive': False},
-            style={
-                'height': f"{fig.layout.height or 640}px",
-                'width': f"{fig.layout.width or 1220}px",
-            },
-        ),
-    ]
+        return [_empty_view()]
+    runs = payload.get('runs') or []
+    periods = payload.get('periods') or []
+    runs_row = _render_run_buttons(runs, periods)
+    if runs_row is not None:
+        return [runs_row]
+    return []
+
+
+def apply_rotation_view_event(
+    triggered_id,
+    period,
+    show_dnp,
+    run_clicks,
+    click_t,
+    rotation_store,
+    game_id,
+    view_store,
+    match_info_store,
+    relayout_data=None,
+):
+    view = _rotation_view(view_store)
+    if triggered_id == 'game_id':
+        return dict(DEFAULT_ROTATION_VIEW)
+    payload = safe_loads(rotation_store)
+    periods = payload.get('periods') or []
+    runs = payload.get('runs') or []
+    if triggered_id == 'rotation-graph.relayoutData':
+        updated = apply_camera_relayout(relayout_data, view, periods)
+        return updated if updated is not None else no_update
+
+    if triggered_id == 'rotation-live':
+        view['follow_live'] = True
+        view['t'] = live_playhead_t(payload)
+        return view
+
+    if triggered_id == 'rotation-period':
+        if period == view.get('period'):
+            already_all = period in (None, 'all') and view.get('x0') is None
+            already_period = (
+                period not in (None, 'all')
+                and _find_period(periods, period)
+                and view.get('x0') == _find_period(periods, period)['start']
+                and view.get('x1') == _find_period(periods, period)['end']
+            )
+            if already_all or already_period:
+                return no_update
+        view['period'] = period or 'all'
+        if view['period'] == 'all':
+            view['x0'] = None
+            view['x1'] = None
+            view['slice_width'] = None
+        else:
+            found = _find_period(periods, view['period'])
+            if found:
+                view['x0'] = found['start']
+                view['x1'] = found['end']
+                view['slice_width'] = float(found['end'] - found['start'])
+                view['t'] = found['start']
+                view['follow_live'] = False
+        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
+        return view
+
+    if triggered_id == 'rotation-show-dnp':
+        checked = bool(show_dnp)
+        if checked == bool(view.get('show_dnp')):
+            return no_update
+        view['show_dnp'] = checked
+        return view
+
+    if isinstance(triggered_id, dict) and triggered_id.get('type') == 'rotation-run':
+        index = triggered_id.get('index')
+        clicks = run_clicks or []
+        if not clicks or not any(clicks):
+            return no_update
+        if not isinstance(index, int) or index < 0 or index >= len(runs):
+            return no_update
+        run = runs[index]
+        view['period'] = 'all'
+        view['x0'] = None
+        view['x1'] = None
+        view['slice_width'] = None
+        view['t'] = run['start']
+        view['follow_live'] = False
+        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
+        return view
+
+    if triggered_id == 'rotation-click-t':
+        if click_t is None:
+            return no_update
+        try:
+            t_val = float(click_t)
+        except (TypeError, ValueError):
+            return no_update
+        game_end = periods[-1]['end'] if periods else None
+        if game_end is not None:
+            t_val = min(max(0.0, t_val), float(game_end))
+        view['t'] = t_val
+        view['follow_live'] = False
+        return view
+
+    if triggered_id in ('rotation_store', 'match_info_store'):
+        info = match_info_store if isinstance(match_info_store, dict) else safe_loads(match_info_store)
+        if is_live_play_status(info.get('status')) and view.get('follow_live', True):
+            now = live_playhead_t(payload)
+            if now == view.get('t'):
+                return no_update
+            view['t'] = now
+            return view
+        return no_update
+
+    return no_update
 
 
 def render_pbp_children(pbp_store):
-    if not pbp_store or pbp_store == "{}" or pbp_store == '"{}"':
-        return [_last_update_span(), _loading_placeholder()]
+    payload = safe_loads(pbp_store)
+    if payload.get('_ui') == 'error':
+        return [_error_view(payload)]
+    if not payload or 'columns' not in payload:
+        return [_empty_view()]
     pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
-    team_name_list = pbp_df['Team'].dropna().unique()
+    if pbp_df.empty:
+        return [_empty_view()]
+    team_name_list = pbp_df['Team'].dropna().unique() if 'Team' in pbp_df.columns else []
     col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'Team', 'Player', 'eventType', 'subType', 'success', 'scores']
     col_list.extend(team_name_list)
     col_list = [c for c in col_list if c in pbp_df.columns]
     pbp_df = pbp_df[col_list][::-1]
     grid = dag.AgGrid(
         rowData=pbp_df.to_dict('records'),
-        columnDefs=[{"field": c} for c in pbp_df.columns],
+        columnDefs=[{
+            "field": c,
+            "headerClass": "ag-header-align-center",
+            "cellClass": "ag-cell-align-center",
+            "cellStyle": {"textAlign": "center"},
+        } for c in pbp_df.columns],
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
         dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
         columnSize="autoSize",
-        className="ag-theme-alpine",
+        className="ag-theme-alpine braves-clean-ag-grid",
         style={'width': '100%'}
     )
-    return [_last_update_span(), grid]
+    return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
-def render_lineup_children(lineup_store, lineup_size):
-    lineup_dict = lineup_tables_for_size(lineup_store, lineup_size)
+def render_lineup_children(lineup_store, lineup_size=5):
+    try:
+        size_int = int(lineup_size)
+    except Exception:
+        size_int = 5
+    payload = safe_loads(lineup_store)
+    if payload.get('_ui') == 'error':
+        return [_error_view(payload)]
+    lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict:
-        return [_last_update_span(), _loading_placeholder()]
-    children = [_last_update_span()]
-    for team_name, l_json in sorted(lineup_dict.items()):
-        children.append(html.H4(team_name))
+        return [_empty_view()]
+    children = []
+    page_size = 20 if size_int < 5 else None
+    for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
+        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+        title_section = dmc.Group(
+            [
+                dmc.Box(style={
+                    "width": "8px",
+                    "height": "8px",
+                    "borderRadius": "50%",
+                    "backgroundColor": dot_color,
+                }),
+                dmc.Text(team_name, fw=800, fz="16px"),
+            ],
+            gap=8,
+            align="center",
+            mt="md",
+            mb=10,
+        )
+        children.append(title_section)
         l_df = pd.read_json(io.StringIO(l_json), orient='split')
-        children.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
+        children.append(_ag_grid_from_df(
+            l_df,
+            page_size=page_size,
+            filterable_cols=['Lineup', 'Lineups'],
+            lineup_size=size_int,
+        ))
     return children
 
 
@@ -379,8 +1497,10 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
     bs_dict = safe_loads(bs_store) if bs_store else {}
     match_info = safe_loads(match_info_store) if match_info_store else {}
     layout = default_layout(match_info)
+    if bs_dict.get('_ui') == 'error':
+        return [_error_view(bs_dict)]
     if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return [_last_update_span(), _loading_placeholder()]
+        return [_empty_view()]
     return [
         _last_update_span(),
         render_report_workspace(layout, bs_dict, lineup_store, match_info, game_id),
@@ -390,7 +1510,7 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
 @callback(
     Output('pane-bs', 'children'),
     Input('bs_store', 'data'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
 def update_pane_bs(bs_store, active_tab):
     if active_tab != 'tab-bs':
@@ -401,18 +1521,162 @@ def update_pane_bs(bs_store, active_tab):
 @callback(
     Output('pane-rotation', 'children'),
     Input('rotation_store', 'data'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
-def update_pane_rotation(rotation_store, active_tab):
+def update_pane_rotation(rotation_store, active_tab, view_store=None, match_info_store=None):
     if active_tab != 'tab-rotation':
         return no_update
-    return render_rotation_children(rotation_store)
+    return render_rotation_children(rotation_store, view_store, match_info_store)
+
+
+@callback(
+    Output('rotation-period', 'data'),
+    Input('rotation_store', 'data'),
+)
+def update_rotation_period_options(rotation_store):
+    payload = safe_loads(rotation_store)
+    return _period_control_data(payload.get('periods') or [])
+
+
+@callback(
+    Output('rotation-graph', 'figure'),
+    Output('rotation-graph', 'style'),
+    Output('rotation-graph-paper', 'style'),
+    Input('rotation_store', 'data'),
+    Input('rotation_view_store', 'data'),
+    Input('tabs', 'value'),
+    State('match_info_store', 'data'),
+)
+def update_rotation_graph(rotation_store, view_store, active_tab, match_info_store=None):
+    if active_tab != 'tab-rotation':
+        return no_update, no_update, no_update
+    payload = safe_loads(rotation_store)
+    hidden_paper = {'overflow': 'hidden', 'display': 'none'}
+    if payload.get('_ui') == 'error' or not payload or not payload.get('teams'):
+        return {}, {'width': '100%', 'height': '520px'}, hidden_paper
+    fig = _rotation_figure_from_view(payload, _rotation_view(view_store), match_info_store)
+    return (
+        fig,
+        {'width': '100%', 'height': f"{fig.layout.height or 520}px"},
+        {'overflow': 'hidden'},
+    )
+
+
+@callback(
+    Output('rotation_view_store', 'data'),
+    Output('rotation-period', 'value'),
+    Output('rotation-show-dnp', 'checked'),
+    Input('rotation-period', 'value'),
+    Input('rotation-show-dnp', 'checked'),
+    Input({'type': 'rotation-run', 'index': ALL}, 'n_clicks'),
+    Input('rotation-live', 'n_clicks'),
+    Input('rotation-click-t', 'data'),
+    Input('rotation-graph', 'relayoutData'),
+    Input('rotation_store', 'data'),
+    Input('game_id', 'children'),
+    State('rotation_view_store', 'data'),
+    State('match_info_store', 'data'),
+    prevent_initial_call=True,
+)
+def update_rotation_view(
+    period,
+    show_dnp,
+    run_clicks,
+    live_clicks,
+    click_t,
+    relayout_data,
+    rotation_store,
+    game_id,
+    view_store,
+    match_info_store,
+):
+    triggered_id = ctx.triggered_id
+    prop_id = ''
+    if ctx.triggered:
+        prop_id = ctx.triggered[0].get('prop_id') or ''
+    if isinstance(prop_id, str) and prop_id.endswith('relayoutData'):
+        triggered_id = 'rotation-graph.relayoutData'
+    if triggered_id == 'rotation-live' and not live_clicks:
+        return no_update, no_update, no_update
+    result = apply_rotation_view_event(
+        triggered_id,
+        period,
+        show_dnp,
+        run_clicks,
+        click_t,
+        rotation_store,
+        game_id,
+        view_store,
+        match_info_store,
+        relayout_data=relayout_data,
+    )
+    if result is no_update:
+        return no_update, no_update, no_update
+    if triggered_id == 'game_id':
+        return result, 'all', False
+    if isinstance(ctx.triggered_id, dict) and ctx.triggered_id.get('type') == 'rotation-run':
+        return result, 'all', no_update
+    if triggered_id == 'rotation-graph.relayoutData':
+        return result, result.get('period') or 'all', no_update
+    return result, no_update, no_update
+
+
+clientside_callback(
+    """
+    function(n) {
+        if (!n) { return window.dash_clientside.no_update; }
+        if (typeof window._rotationClickT !== 'number') {
+            return window.dash_clientside.no_update;
+        }
+        return window._rotationClickT;
+    }
+    """,
+    Output('rotation-click-t', 'data'),
+    Input('rotation-click-fire', 'n_clicks'),
+    prevent_initial_call=True,
+)
+
+
+@callback(
+    Output('rotation-live', 'style'),
+    Output('rotation-live', 'variant'),
+    Input('match_info_store', 'data'),
+    Input('rotation_view_store', 'data'),
+)
+def update_rotation_live_chip(match_info_store, view_store):
+    live = is_live_play_status(safe_loads(match_info_store).get('status'))
+    if not live:
+        return {'display': 'none'}, 'light'
+    follow = _rotation_view(view_store).get('follow_live', True)
+    return {}, ('filled' if follow else 'light')
+
+
+@callback(
+    Output('rotation-last-update', 'children'),
+    Input('rotation_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_rotation_last_update(rotation_store, active_tab):
+    if active_tab != 'tab-rotation':
+        return no_update
+    return _last_update_span()
+
+
+@callback(
+    Output('lineup-last-update', 'children'),
+    Input('lineup_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_lineup_last_update(lineup_store, active_tab):
+    if active_tab != 'tab-lineup':
+        return no_update
+    return _last_update_span()
 
 
 @callback(
     Output('pane-pbp', 'children'),
     Input('pbp_store', 'data'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
 def update_pane_pbp(pbp_store, active_tab):
     if active_tab != 'tab-pbp':
@@ -423,40 +1687,52 @@ def update_pane_pbp(pbp_store, active_tab):
 @callback(
     Output('pane-lineup', 'children'),
     Input('lineup_size_dropdown', 'value'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
     State('lineup_store', 'data'),
     State('game_id', 'children'),
 )
-def update_pane_lineup(lineup_size=5, active_tab='tab-lineup', lineup_store=None, game_id=None):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None):
     if active_tab != 'tab-lineup':
         return no_update
-    lineup_dict = lineup_tables_for_size(lineup_store, lineup_size)
+    try:
+        size_int = int(lineup_size)
+    except Exception:
+        size_int = 5
+    lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
             report = get_cached_report(game_id)
-            custom_dict = report.get_lineup_stats_json_dict(lineup_size=lineup_size)
+            custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
-                children = [_last_update_span()]
-                for team_name, l_json in sorted(custom_dict.items()):
-                    children.append(html.H4(team_name))
-                    l_df = pd.read_json(io.StringIO(l_json), orient='split')
-                    children.append(dbc.Table.from_dataframe(l_df, striped=True, bordered=True, hover=True, className='text-nowrap'))
-                return children
+                return render_lineup_children(
+                    json.dumps({str(size_int): custom_dict}),
+                    size_int,
+                )
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
-    return render_lineup_children(lineup_store, lineup_size)
+    return render_lineup_children(lineup_store, size_int)
 
 
 @callback(
     Output('pane-report', 'children'),
-    Input('tabs', 'active_tab'),
-    State('lineup_store', 'data'),
+    Input('tabs', 'value'),
+    Input('report-pane-ready', 'data'),
     State('bs_store', 'data'),
+    State('lineup_store', 'data'),
     State('match_info_store', 'data'),
     State('game_id', 'children'),
 )
-def update_pane_report(active_tab, lineup_store, bs_store, match_info_store, game_id):
+def update_pane_report(
+    active_tab,
+    pane_ready='',
+    bs_store=None,
+    lineup_store=None,
+    match_info_store=None,
+    game_id=None,
+):
     if active_tab != 'tab-report':
+        return no_update
+    if str(pane_ready or '') in ('1', 'true', 'True'):
         return no_update
     try:
         return render_report_children(
@@ -469,7 +1745,27 @@ def update_pane_report(active_tab, lineup_store, bs_store, match_info_store, gam
         import traceback
         traceback.print_exc()
         print(f"Error rendering report: {exc}")
-        return [_last_update_span(), html.Div(str(exc), className="p-4 text-danger")]
+        return [_error_view({'_ui': 'error', 'message': ERROR_GAME})]
+
+
+@callback(
+    Output('report-papers', 'children'),
+    Output('report-page-list', 'children'),
+    Input('report-page-cmd', 'data'),
+    State('match_info_store', 'data'),
+    prevent_initial_call=True,
+)
+def sync_report_page_shells(cmd, match_info_store):
+    return apply_page_cmd(cmd, safe_loads(match_info_store))
+
+
+@callback(
+    Output('report-dialog', 'opened'),
+    Input('report-dialog-opened', 'data'),
+    prevent_initial_call=True,
+)
+def sync_report_dialog(opened):
+    return bool(opened)
 
 
 clientside_callback(
@@ -477,24 +1773,20 @@ clientside_callback(
     function(active_tab) {
         const hide = {display: 'none'};
         const show = {display: 'block'};
-        const dropdown = (active_tab === 'tab-lineup')
-            ? {display: 'block', 'margin-bottom': '10px'}
-            : {display: 'none'};
         return [
             active_tab === 'tab-bs' ? show : hide,
             active_tab === 'tab-rotation' ? show : hide,
-            active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
-            active_tab === 'tab-report' ? show : hide,
-            dropdown
+            active_tab === 'tab-pbp' ? show : hide,
+            active_tab === 'tab-report' ? show : hide
         ];
     }
     """,
     Output('wrap-bs', 'style'),
     Output('wrap-rotation', 'style'),
-    Output('wrap-pbp', 'style'),
     Output('wrap-lineup', 'style'),
+    Output('wrap-pbp', 'style'),
     Output('wrap-report', 'style'),
-    Output('lineup_dropdown_container', 'style'),
-    Input('tabs', 'active_tab'),
+    Input('tabs', 'value'),
 )
+

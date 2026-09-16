@@ -1,6 +1,6 @@
 # Splashboard
 
-A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST, lists the season on Home, and shows Box Score, Rotation, Play-By-Play, Lineup Stats, and Report on the Game page.
+A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST, lists the season on Home, and shows Box Score, Rotation, Lineup Stats, Play-By-Play, and Report on the Game page.
 
 ## Requirements
 
@@ -23,11 +23,22 @@ Open `http://127.0.0.1:8050`.
 
 ## Tests
 
-Tests do not call live Synergy. A clean clone only needs `requirements.txt`; `.env` is optional:
+Tests do not call live Synergy. A clean clone only needs `requirements.txt`; `.env` is optional.
+
+Unit suite (every change):
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Browser smoke (before commit, or when UI work is done). First machine also needs Chromium:
+
+```bash
+python3 -m playwright install chromium
+python3 -m pytest tests/e2e -q
+```
+
+Smoke drives a local app with fixtures. It does not call live Synergy. `tests/e2e` covers Home, Game, and Report (first-paint, delete page, notes, PDF, sticky).
 
 ## Environment variables
 
@@ -50,4 +61,4 @@ fly deploy
 
 Set secrets before the first deploy that no longer bakes credentials into the image. Later `fly deploy` runs keep the existing secrets.
 
-Product behavior: `docs/spec.md`. Report canvas ADR: `docs/adr/0001-report-canvas.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.
+Product behavior: `docs/spec.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.

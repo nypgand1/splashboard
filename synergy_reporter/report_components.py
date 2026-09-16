@@ -2,13 +2,14 @@ import io
 import json
 
 import pandas as pd
-from dash import dcc, html
-import dash_bootstrap_components as dbc
+from dash import Patch, dcc, html, no_update
+import dash_mantine_components as dmc
+
+from ui_kit import icon as dmc_icon
 
 from synergy_reporter.report_layout import (
-    ALLOWED_TABLE_KEYS,
     TABLE_TITLES,
-    default_layout,
+    empty_page,
     normalize_layout,
     pdf_filename,
 )
@@ -39,19 +40,6 @@ def lineup_tables_for_size(lineup_store_data, lineup_size=5):
     return {}
 
 
-def create_report_table(df):
-    if df is None or df.empty:
-        return html.Div("—", className="text-muted fst-italic text-center p-2")
-    return dbc.Table.from_dataframe(
-        df,
-        striped=True,
-        bordered=True,
-        hover=True,
-        size="sm",
-        className="text-nowrap report-dbc-table",
-    )
-
-
 def _df_from_split(payload):
     if payload is None:
         return None
@@ -71,7 +59,26 @@ def _df_from_split(payload):
 def sort_player_stats_for_report(df):
     if df is None or df.empty or '+/-' not in df.columns:
         return df
-    return df.sort_values(by=['+/-'], ascending=False, kind='mergesort')
+    res = df.copy()
+    res['_is_dnp'] = res['Min'].apply(lambda m: 1 if str(m) == 'DNP' else 0) if 'Min' in res.columns else 0
+    res['_pm_num'] = pd.to_numeric(res['+/-'], errors='coerce').fillna(-9999)
+    if 'PTS' in res.columns:
+        res['_pts_num'] = pd.to_numeric(res['PTS'], errors='coerce').fillna(-9999)
+    else:
+        res['_pts_num'] = 0
+    if '#' in res.columns:
+        res['_shirt_num'] = res['#'].apply(
+            lambda s: int(s) if str(s).strip().isdigit() else 999
+        )
+    else:
+        res['_shirt_num'] = 0
+    res = res.sort_values(
+        by=['_is_dnp', '_pm_num', '_pts_num', '_shirt_num'],
+        ascending=[True, False, False, True],
+        kind='mergesort',
+    )
+    res = res.drop(columns=['_is_dnp', '_pm_num', '_pts_num', '_shirt_num'])
+    return res
 
 
 CAPTIONED_TABLE_KEYS = ('p_df_home', 'p_df_away', 'lineup_home', 'lineup_away')
@@ -107,27 +114,33 @@ def _lineup_table_json(lineup_store_data, match_info, side):
     )
 
 
+def _sorted_player_split(bs_dict, match_info, side):
+    payload = _player_table_json(bs_dict, match_info, side)
+    df = sort_player_stats_for_report(_df_from_split(payload))
+    if df is None:
+        return payload
+    return df.to_json(orient='split')
+
+
+def report_table_payload(bs_dict, lineup_store_data, match_info):
+    bs_dict = bs_dict or {}
+    match_info = match_info or {}
+    return {
+        'score_group': bs_dict.get('qt_pts_df'),
+        't_adv_df': bs_dict.get('t_adv_df'),
+        't_df': bs_dict.get('t_df'),
+        'k_df': bs_dict.get('k_df'),
+        'p_df_home': _sorted_player_split(bs_dict, match_info, 'home'),
+        'p_df_away': _sorted_player_split(bs_dict, match_info, 'away'),
+        'lineup_home': _lineup_table_json(lineup_store_data, match_info, 'home'),
+        'lineup_away': _lineup_table_json(lineup_store_data, match_info, 'away'),
+        'match': match_info,
+    }
+
+
 def render_builtin_table(table_key, bs_dict, lineup_store_data, match_info, block_id):
-    del block_id
-    if table_key == 'score_group':
-        df = _df_from_split((bs_dict or {}).get('qt_pts_df'))
-        return create_report_table(df)
-    if table_key in ('t_adv_df', 't_df', 'k_df'):
-        df = _df_from_split((bs_dict or {}).get(table_key))
-        return create_report_table(df)
-    if table_key in ('lineup_home', 'lineup_away'):
-        side = 'home' if table_key.endswith('home') else 'away'
-        if not lineup_tables_for_size(lineup_store_data, lineup_size=5):
-            return html.Div("Loading...", className="text-muted p-2")
-        payload = _lineup_table_json(lineup_store_data, match_info, side)
-        df = _df_from_split(payload)
-        return create_report_table(df)
-    if table_key in ('p_df_home', 'p_df_away'):
-        side = 'home' if table_key.endswith('home') else 'away'
-        payload = _player_table_json(bs_dict, match_info, side)
-        df = sort_player_stats_for_report(_df_from_split(payload))
-        return create_report_table(df)
-    return html.Div("—", className="text-muted")
+    del bs_dict, lineup_store_data, match_info, block_id
+    return html.Div(className="report-table-host", **{'data-table-host': table_key or ''})
 
 
 def render_header(match_info):
@@ -183,10 +196,23 @@ def _block_body(block, bs_dict, lineup_store_data, match_info):
 
 
 def _table_heading(table_key, match_info):
-    if table_key in CAPTIONED_TABLE_KEYS:
-        side = 'home' if table_key.endswith('home') else 'away'
-        return _side_team_name(match_info, side)
-    return TABLE_TITLES.get(table_key, '')
+    if table_key not in CAPTIONED_TABLE_KEYS:
+        return TABLE_TITLES.get(table_key, '')
+    side = 'home' if table_key.endswith('home') else 'away'
+    kind = 'Player Stats' if table_key.startswith('p_df') else 'Lineup Stats'
+    return '{name} | {kind}'.format(name=_side_team_name(match_info, side), kind=kind)
+
+
+def _table_title_children(table_key, match_info):
+    heading = _table_heading(table_key, match_info)
+    if table_key not in CAPTIONED_TABLE_KEYS:
+        return heading
+    side = 'home' if table_key.endswith('home') else 'away'
+    color = '#00b4d8' if side == 'home' else '#94a3b8'
+    return [
+        html.Span(className='report-block-title-dot', style={'backgroundColor': color}),
+        html.Span(heading),
+    ]
 
 
 def render_grid_item(block, bs_dict, lineup_store_data, match_info, item_id=None, hidden=False):
@@ -202,7 +228,6 @@ def render_grid_item(block, bs_dict, lineup_store_data, match_info, item_id=None
     }
     class_name = "grid-stack-item"
     if hidden:
-        class_name += " report-item-template"
         kwargs['hidden'] = True
     handle = html.Div("⋮⋮", className="grid-stack-item-handle no-print", title="Drag")
     remove = html.Button(
@@ -216,7 +241,7 @@ def render_grid_item(block, bs_dict, lineup_store_data, match_info, item_id=None
     )
     card_children = [remove]
     if block.get('type') == 'builtin_table':
-        heading = _table_heading(block.get('table_key'), match_info)
+        heading = _table_title_children(block.get('table_key'), match_info)
         card_children.append(html.Div([
             handle,
             html.Div(heading, className="report-block-title"),
@@ -235,39 +260,76 @@ def render_grid_item(block, bs_dict, lineup_store_data, match_info, item_id=None
 
 
 def render_paper(page, page_index, bs_dict, lineup_store_data, match_info, page_count):
-    items = [
-        render_grid_item(block, bs_dict, lineup_store_data, match_info)
-        for block in page.get('blocks') or []
-    ]
+    del bs_dict, lineup_store_data
     delete_hidden = page_count <= 1
+    page_id = page.get('id', page_index)
     return html.Div([
-        html.Button(
-            html.I(className="bi bi-x-lg", **{'aria-hidden': 'true'}),
+        html.Div(
+            dmc.ActionIcon(
+                dmc_icon("tabler:x", width=16),
+                variant="subtle",
+                radius="xl",
+                size="sm",
+                disabled=delete_hidden,
+                **{'aria-label': 'Delete page'},
+            ),
             className="report-page-delete no-print" + (" is-disabled" if delete_hidden else ""),
-            type="button",
-            title="Delete page",
-            disabled=delete_hidden,
-            **{
-                'data-delete-page': str(page_index),
-                'aria-label': 'Delete page',
-            },
+            **{'data-delete-page': str(page_index)},
         ),
         render_header(match_info),
-        html.Div(items, className="grid-stack report-grid", id=f"report-grid-{page.get('id', page_index)}"),
-    ], className="report-paper", id=f"report-paper-{page.get('id', page_index)}", **{'data-page-index': str(page_index)})
+        html.Div([], className="grid-stack report-grid", id=f"report-grid-{page_id}"),
+    ], className="report-paper", id=f"report-paper-{page_id}", **{
+        'data-page-index': str(page_index),
+        'data-hydrated': '0',
+    })
 
 
-def render_page_list(page_count):
+def page_list_buttons(page_count, active=0):
     buttons = []
     for index in range(page_count):
-        class_name = "report-page-btn is-active" if index == 0 else "report-page-btn"
-        buttons.append(html.Button(
+        class_name = "report-page-btn is-active" if index == active else "report-page-btn"
+        buttons.append(dmc.Button(
             str(index + 1),
             className=class_name,
-            **{'data-page-index': str(index), 'type': 'button'},
+            variant="default",
+            size="compact-md",
+            radius="sm",
+            **{'data-page-index': str(index)},
         ))
-    buttons.append(html.Button("+", id="report-add-page", className="report-page-btn report-page-add", type="button"))
-    return html.Div(buttons, id="report-page-list", className="report-page-list no-print")
+    buttons.append(dmc.ActionIcon(
+        "+",
+        id="report-add-page",
+        className="report-page-btn report-page-add",
+        variant="default",
+        radius="sm",
+        size="lg",
+        style={'width': 36, 'height': 36, 'minWidth': 36},
+        **{'aria-label': 'Add page'},
+    ))
+    return buttons
+
+
+def render_page_list(page_count, active=0):
+    return dmc.Stack(
+        page_list_buttons(page_count, active),
+        id="report-page-list",
+        className="report-page-list no-print",
+        gap=8,
+        align="center",
+    )
+
+
+def _chrome_icon(icon_name, ident, label, extra_class=''):
+    return dmc.ActionIcon(
+        dmc_icon(icon_name, width=18),
+        id=ident,
+        variant="default",
+        radius="sm",
+        size="lg",
+        className=("report-chrome-btn report-chrome-btn-icon " + extra_class).strip(),
+        style={'width': 36, 'height': 36, 'minWidth': 36},
+        **{'aria-label': label},
+    )
 
 
 def render_toolbar():
@@ -302,11 +364,10 @@ def render_toolbar():
                 **{f'data-rte-{mode}': hex_color, 'aria-label': f"{name}"}
             ))
         custom_input = html.Label([
-            html.I(className="bi bi-eyedropper", **{'aria-hidden': 'true'}),
+            dmc_icon("tabler:color-picker", width=14),
             html.Span("Custom", className="report-rte-custom-label"),
-            dbc.Input(
+            dmc.ColorInput(
                 id=f"report-custom-{mode}",
-                type="color",
                 className="report-rte-custom-input",
                 value="#3498db" if mode == "color" else "#f1c40f",
             )
@@ -316,18 +377,21 @@ def render_toolbar():
             custom_input,
         ], id=f"report-rte-{mode}-menu", className="report-table-menu report-rte-color-menu", hidden=True)
 
-    return html.Div([
-        html.Button(
-            html.I(className="bi bi-journal-text", **{'aria-hidden': 'true'}),
-            id="report-add-text",
-            className="report-chrome-btn report-chrome-btn-icon",
-            type="button",
-            title="Add note",
-            **{'aria-label': 'Add note'},
-        ),
+    rte_btn = lambda icon_name, cmd, label: dmc.ActionIcon(
+        dmc_icon(icon_name, width=18),
+        variant="default",
+        radius="sm",
+        size="lg",
+        className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
+        style={'width': 36, 'height': 36, 'minWidth': 36},
+        **{'data-rte-cmd': cmd, 'aria-label': label},
+    )
+
+    return dmc.Group([
+        _chrome_icon("tabler:notebook", "report-add-text", "Add note"),
         dcc.Upload(
             [
-                html.I(className="bi bi-image", **{'aria-hidden': 'true'}),
+                dmc_icon("tabler:photo", width=18),
                 html.Span("Add image", className="visually-hidden"),
             ],
             id="report-image-upload",
@@ -335,153 +399,106 @@ def render_toolbar():
             multiple=False,
             className="report-chrome-btn report-chrome-btn-icon report-image-upload",
         ),
-        html.Div([
-            html.Button(
-                html.I(className="bi bi-table", **{'aria-hidden': 'true'}),
-                id="report-add-table",
-                className="report-chrome-btn report-chrome-btn-icon",
-                type="button",
-                title="Add table",
-                **{'aria-label': 'Add table', 'aria-expanded': 'false', 'aria-haspopup': 'true'},
-            ),
-            html.Div(
-                menu_items,
-                id="report-table-menu",
-                className="report-table-menu",
-                **{'role': 'menu', 'aria-label': 'Add table'},
-            ),
-        ], className="report-table-picker"),
+        html.Div(
+            dmc.Menu([
+                dmc.MenuTarget(_chrome_icon(
+                    "tabler:table",
+                    "report-add-table",
+                    "Add table",
+                )),
+                dmc.MenuDropdown(
+                    menu_items,
+                    id="report-table-menu",
+                    className="report-table-menu",
+                    **{'aria-label': 'Add table'},
+                ),
+            ], position="bottom-start"),
+            className="report-table-picker",
+        ),
         
         # Note formatting toolbar (visible when a note is focused)
         html.Div([
             html.Div(className="report-toolbar-divider"),
-            html.Button(
-                html.I(className="bi bi-type-bold", **{'aria-hidden': 'true'}),
-                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
-                title="Bold",
-                type="button",
-                **{'data-rte-cmd': 'bold', 'aria-label': 'Bold'}
-            ),
-            html.Button(
-                html.I(className="bi bi-type-italic", **{'aria-hidden': 'true'}),
-                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
-                title="Italic",
-                type="button",
-                **{'data-rte-cmd': 'italic', 'aria-label': 'Italic'}
-            ),
-            html.Button(
-                html.I(className="bi bi-type-underline", **{'aria-hidden': 'true'}),
-                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
-                title="Underline",
-                type="button",
-                **{'data-rte-cmd': 'underline', 'aria-label': 'Underline'}
-            ),
-            html.Button(
-                html.I(className="bi bi-type-strikethrough", **{'aria-hidden': 'true'}),
-                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
-                title="Strikethrough",
-                type="button",
-                **{'data-rte-cmd': 'strikethrough', 'aria-label': 'Strikethrough'}
-            ),
-            html.Button(
-                html.I(className="bi bi-list-ul", **{'aria-hidden': 'true'}),
-                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
-                title="Bullet List",
-                type="button",
-                **{'data-rte-cmd': 'bulletList', 'aria-label': 'Bullet List'}
-            ),
-            html.Button(
-                html.I(className="bi bi-list-ol", **{'aria-hidden': 'true'}),
-                className="report-chrome-btn report-chrome-btn-icon report-rte-btn",
-                title="Ordered List",
-                type="button",
-                **{'data-rte-cmd': 'orderedList', 'aria-label': 'Ordered List'}
-            ),
+            rte_btn("tabler:bold", "bold", "Bold"),
+            rte_btn("tabler:italic", "italic", "Italic"),
+            rte_btn("tabler:underline", "underline", "Underline"),
+            rte_btn("tabler:strikethrough", "strikethrough", "Strikethrough"),
+            rte_btn("tabler:list", "bulletList", "Bullet List"),
+            rte_btn("tabler:list-numbers", "orderedList", "Ordered List"),
             
             # Text Color Dropdown Button
             html.Div([
-                html.Button(
+                dmc.ActionIcon(
                     [
-                        html.I(className="bi bi-fonts", **{'aria-hidden': 'true'}),
+                        dmc_icon("tabler:letter-case", width=18),
                         html.Span(className="report-rte-color-indicator", id="report-rte-color-indicator"),
                     ],
                     id="report-btn-color-picker",
+                    variant="default",
+                    radius="sm",
+                    size="lg",
                     className="report-chrome-btn report-chrome-btn-icon report-rte-btn report-rte-picker-btn",
-                    title="Text Color",
-                    type="button",
-                    **{'data-rte-toggle-menu': 'color', 'aria-label': 'Text Color', 'aria-expanded': 'false'}
+                    style={'width': 36, 'height': 36, 'minWidth': 36},
+                    **{'data-rte-toggle-menu': 'color', 'aria-label': 'Text Color'},
                 ),
                 _render_color_menu('color'),
             ], className="report-rte-dropdown-wrap"),
-            
-            # Highlight Dropdown Button
             html.Div([
-                html.Button(
+                dmc.ActionIcon(
                     [
-                        html.I(className="bi bi-highlighter", **{'aria-hidden': 'true'}),
+                        dmc_icon("tabler:highlight", width=18),
                         html.Span(className="report-rte-color-indicator", id="report-rte-highlight-indicator"),
                     ],
                     id="report-btn-highlight-picker",
+                    variant="default",
+                    radius="sm",
+                    size="lg",
                     className="report-chrome-btn report-chrome-btn-icon report-rte-btn report-rte-picker-btn",
-                    title="Highlight",
-                    type="button",
-                    **{'data-rte-toggle-menu': 'highlight', 'aria-label': 'Highlight', 'aria-expanded': 'false'}
+                    style={'width': 36, 'height': 36, 'minWidth': 36},
+                    **{'data-rte-toggle-menu': 'highlight', 'aria-label': 'Highlight'},
                 ),
                 _render_color_menu('highlight'),
             ], className="report-rte-dropdown-wrap"),
         ], id="report-note-toolbar", className="report-note-toolbar", style={'display': 'none'}),
 
         html.Div([
-            html.Button(
-                html.I(className="bi bi-arrow-counterclockwise", **{'aria-hidden': 'true'}),
-                id="report-reset-layout",
-                className="report-chrome-btn report-chrome-btn-icon",
-                type="button",
-                title="Reset layout",
-                **{'aria-label': 'Reset layout'},
+            _chrome_icon("tabler:restore", "report-reset-layout", "Reset layout"),
+            dmc.Button(
+                "PDF",
+                id="btn-export-pdf",
+                className="report-chrome-btn-pdf",
+                color="blue",
+                variant="filled",
+                radius="sm",
+                size="sm",
+                style={"backgroundColor": "#0077b6", "fontWeight": 700, "height": 36},
             ),
-            html.Button("PDF", id="btn-export-pdf", className="report-chrome-btn report-chrome-btn-pdf", type="button"),
         ], className="report-toolbar-end"),
-    ], id="report-toolbar", className="report-toolbar no-print")
+    ], id="report-toolbar", className="report-toolbar no-print", gap="xs", wrap="wrap")
 
 
 def render_dialog():
-    return html.Div([
-        html.Div([
-            html.P("", id="report-dialog-message", className="report-dialog-message"),
-            html.Div([
-                html.Button("Cancel", id="report-dialog-cancel", className="report-chrome-btn", type="button"),
-                html.Button("OK", id="report-dialog-ok", className="report-chrome-btn report-dialog-ok", type="button"),
-            ], className="report-dialog-actions"),
-        ], className="report-dialog-card"),
-    ], id="report-dialog", className="report-dialog no-print", hidden=True)
-
-
-def render_item_templates(bs_dict, lineup_store_data, match_info):
-    templates = [
-        render_grid_item(
-            {'id': 'tpl-text', 'type': 'text', 'content': '', 'x': 0, 'y': 0, 'w': 5, 'h': 2},
-            bs_dict, lineup_store_data, match_info,
-            item_id='report-tpl-item-text', hidden=True,
-        ),
-        render_grid_item(
-            {'id': 'tpl-image', 'type': 'image', 'src': '', 'x': 0, 'y': 0, 'w': 6, 'h': 5},
-            bs_dict, lineup_store_data, match_info,
-            item_id='report-tpl-item-image', hidden=True,
-        ),
-        render_grid_item(
-            {'id': 'tpl-spacer', 'type': 'spacer', 'x': 0, 'y': 0, 'w': 12, 'h': 4},
-            bs_dict, lineup_store_data, match_info,
-            item_id='report-tpl-item-spacer', hidden=True,
-        ),
-    ]
-    for key in ALLOWED_TABLE_KEYS:
-        templates.append(render_grid_item(
-            {'id': 'tpl-{0}'.format(key), 'type': 'builtin_table', 'table_key': key, 'x': 0, 'y': 0, 'w': 12, 'h': 4},
-            bs_dict, lineup_store_data, match_info,
-            item_id='report-tpl-item-table-{0}'.format(key), hidden=True,
-        ))
-    return html.Div(templates, id="report-templates", hidden=True)
+    return dmc.Modal(
+        [
+            dmc.Text("", id="report-dialog-message", className="report-dialog-message"),
+            dmc.Group(
+                [
+                    dmc.Button("Cancel", id="report-dialog-cancel", variant="default", radius="sm"),
+                    dmc.Button("OK", id="report-dialog-ok", className="report-dialog-ok", radius="sm"),
+                ],
+                justify="flex-end",
+                mt="md",
+                className="report-dialog-actions",
+            ),
+        ],
+        id="report-dialog",
+        opened=False,
+        keepMounted=True,
+        className="report-dialog no-print",
+        title="Confirm",
+        centered=True,
+        radius="md",
+    )
 
 
 def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game_id):
@@ -489,6 +506,10 @@ def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game
     pages = layout.get('pages') or []
     papers = []
     page_count = max(1, len(pages))
+    table_json = json.dumps(
+        report_table_payload(bs_dict, lineup_store_data, match_info),
+        ensure_ascii=False,
+    )
     for index, page in enumerate(pages):
         papers.append(render_paper(page, index, bs_dict, lineup_store_data, match_info, page_count))
     default_json = json.dumps(layout, ensure_ascii=False)
@@ -497,7 +518,10 @@ def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game
         html.Div(default_json, id="report-default-layout-json", hidden=True),
         html.Div(game_id or '', id="report-game-id", hidden=True),
         html.Div(pdf_filename(match_info), id="report-pdf-filename", hidden=True),
-        render_item_templates(bs_dict, lineup_store_data, match_info),
+        html.Div(table_json, id="report-table-data", hidden=True),
+        dcc.Store(id="report-page-ids", data=[page.get('id') or f'page-{i+1}' for i, page in enumerate(pages)]),
+        dcc.Store(id="report-page-cmd", data=None),
+        dcc.Store(id="report-dialog-opened", data=False),
         html.Div([
             html.Div([
                 render_toolbar(),
@@ -508,3 +532,80 @@ def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game
         render_dialog(),
     ], className="report-workspace", id="report-workspace")
     return workspace
+
+
+def _child_component_id(child):
+    if child is None:
+        return None
+    if isinstance(child, dict):
+        return (child.get('props') or {}).get('id')
+    return getattr(child, 'id', None)
+
+
+def _child_children(child):
+    if child is None or isinstance(child, (str, bytes, int, float, bool)):
+        return None
+    if isinstance(child, dict):
+        return (child.get('props') or {}).get('children')
+    return getattr(child, 'children', None)
+
+
+def report_workspace_mounted(children):
+    items = children if isinstance(children, (list, tuple)) else ([children] if children else [])
+    for item in items:
+        if _child_component_id(item) == 'report-workspace':
+            return True
+        nested = _child_children(item)
+        if nested and report_workspace_mounted(nested):
+            return True
+    return False
+
+
+def existing_paper_ids(children):
+    ids = []
+    prefix = 'report-paper-'
+    for child in children or []:
+        cid = _child_component_id(child)
+        if isinstance(cid, str) and cid.startswith(prefix):
+            ids.append(cid[len(prefix):])
+    return ids
+
+
+def paper_shells(page_ids, match_info):
+    ids = list(page_ids or ['page-1'])
+    if not ids:
+        ids = ['page-1']
+    n = len(ids)
+    return [
+        render_paper(empty_page(pid), index, {}, {}, match_info or {}, n)
+        for index, pid in enumerate(ids)
+    ]
+
+
+def apply_page_cmd(cmd, match_info):
+    if not isinstance(cmd, dict) or not cmd.get('op'):
+        return no_update, no_update
+    ids = list(cmd.get('ids') or [])
+    if not ids:
+        ids = ['page-1']
+    n = len(ids)
+    buttons = page_list_buttons(n)
+    op = cmd.get('op')
+    if op == 'add':
+        patched = Patch()
+        new_id = cmd.get('id') or ids[-1]
+        patched.append(render_paper(empty_page(new_id), n - 1, {}, {}, match_info or {}, n))
+        return patched, buttons
+    if op == 'delete':
+        try:
+            index = int(cmd.get('index'))
+        except (TypeError, ValueError):
+            return no_update, buttons
+        if index < 0:
+            return no_update, buttons
+        patched = Patch()
+        del patched[index]
+        return patched, buttons
+    if op == 'reset':
+        return paper_shells(ids, match_info), buttons
+    return no_update, buttons

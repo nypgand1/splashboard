@@ -66,6 +66,7 @@ def process_lineup_stats(df):
         lineup_df['STL'] = np.where(is_team & (event == 'steal'), 1, np.nan)
         lineup_df['BLK'] = np.where(is_team & (event == 'block'), 1, np.nan)
         lineup_df['PF'] = np.where(is_team & (event == 'foul') & (subtype != 'drawn'), 1, np.nan)
+        lineup_df['FD'] = np.where(is_team & (event == 'foul') & (subtype == 'drawn'), 1, np.nan)
         lineup_df['PTS'] = 2 * lineup_df['2M'] + 3 * lineup_df['3M'] + lineup_df['1M']
 
         lineup_df['Opp_POSS'] = (is_opp & (event == 'possession')).astype(int)
@@ -79,7 +80,7 @@ def process_lineup_stats(df):
 
         lineup_df[t] = lineup_df[t].apply(lambda x: json.dumps(sorted(list(x))))
         col_list = [t, 'duration', 'POSS', 'Opp_POSS', '2M', '2A', '3M', '3A', '1M', '1A',
-                    'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'PTS', 'Opp_PTS']
+                    'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'FD', 'PTS', 'Opp_PTS']
         lineup_df_t = lineup_df[col_list]
 
         team_lineup_df = lineup_df_t.groupby(t, as_index=False).sum(min_count=1)

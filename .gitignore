@@ -1,8 +1,9 @@
 .env
 *.sqlite
-Streaming_API.pdf
-basketball_rest.json
-token_openapi.yml
+docs/api_reference/
+scratch/
+.codebase-memory/
+.agents/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
