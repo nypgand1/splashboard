@@ -45,6 +45,7 @@ ROTATION_TITLE = 'Rotation'
 ROTATION_DEFAULT_H = 11
 ROTATION_EMPTY = 'No rotation chart for this game.'
 ROTATION_ERROR = 'Could not load rotation.'
+HEADER_CREDIT = 'Design by Wei-Hao Lin'
 
 
 def layout_storage_key(game_id):
@@ -94,6 +95,9 @@ def pdf_export_spec():
         'font_styles': ('normal',),
         'scale': 'axis_separate',
         'cell_text_baseline': 'middle',
+        'cell_clip': 'item_box',
+        'pdf_reveal_paper': True,
+        'pdf_refit_after_reveal': True,
         'bold': 'offset_duplicate',
         'bold_offset_mm': 0.15,
         'bold_min_weight': 600,
@@ -222,6 +226,11 @@ def chrome_spec():
         'notes_dynamic_mount': 'execCommand',
         'header_size': 'compact',
         'header_line_gap': 'loose',
+        'header_credit': HEADER_CREDIT,
+        'paper_padding_top': '4mm',
+        'header_padding_bottom': '2mm',
+        'header_credit_size': '9px',
+        'header_credit_align': 'table_content_right',
         'sticky_selectors': ['report-toolbar', 'report-page-list'],
         'table_menu_order': ALLOWED_TABLE_KEYS,
         'rail_bg': '#f1f5f9',

@@ -120,6 +120,14 @@ def _split(frame):
     return frame.to_json(orient='split')
 
 
+REPORT_HOME_PLAYERS = (
+    'Lin', 'WuMing', 'HoKai', 'KuoWei', 'YehAn', 'HsuPo', 'TsaiYu', 'HuangBo',
+)
+REPORT_AWAY_PLAYERS = (
+    'Chen', 'LiuJun', 'ChangYi', 'WangHao', 'ChouWei', 'LiaoAn', 'FangYu', 'TsaoBo',
+)
+
+
 def _player_frame(name, starter, plus_minus):
     row = {col: 0 for col in PLAYER_COLS}
     row.update({
@@ -154,6 +162,15 @@ def _player_frame(name, starter, plus_minus):
     return pd.DataFrame([row])
 
 
+def _player_book(names, plus_minus=5):
+    frames = []
+    for index, name in enumerate(names):
+        frame = _player_frame(name, index == 0, plus_minus - index)
+        frame.loc[0, '#'] = index + 1
+        frames.append(frame)
+    return pd.concat(frames, ignore_index=True)
+
+
 class FakeReport:
     def get_period_team_pts_df(self):
         return pd.DataFrame({'Team': [HOME, AWAY], '1Q': [20, 18], '2Q': [22, 19]})
@@ -177,7 +194,8 @@ class FakeReport:
         return pd.DataFrame({'Team': [HOME, AWAY], 'PIP': [20, 18]})
 
     def get_player_stats_json_dict(self):
-        away = _player_frame('Chen', True, -3)
+        home = _player_book(REPORT_HOME_PLAYERS, 5)
+        away = _player_book(REPORT_AWAY_PLAYERS, -3)
         away.loc[0, '2M'] = ''
         away.loc[0, '2A'] = 4
         away.loc[0, '2FG%'] = '0.0%'
@@ -189,7 +207,7 @@ class FakeReport:
         away.loc[0, 'FT%'] = '0.0%'
         away.loc[0, 'eFG%'] = '0.0%'
         return {
-            HOME: _split(_player_frame('Lin', True, 5)),
+            HOME: _split(home),
             AWAY: _split(away),
         }
 
@@ -213,7 +231,7 @@ class FakeReport:
         ])
 
     def get_all_lineup_stats_json_dict(self, sizes=(5,)):
-        home_rows = [{'Lineup': f'Lin-{i}', 'PTS': 10 - i, 'Min': '8:21'} for i in range(8)]
+        home_rows = [{'Lineup': f'Lin-{i}', 'PTS': 10 - i, 'Min': '8:21'} for i in range(40)]
         away_rows = [{'Lineup': f'Chen-{i}', 'PTS': 8 - i, 'Min': '7:10'} for i in range(8)]
         payload = {}
         for size in sizes:

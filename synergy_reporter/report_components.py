@@ -8,6 +8,7 @@ import dash_mantine_components as dmc
 from ui_kit import icon as dmc_icon
 
 from synergy_reporter.report_layout import (
+    HEADER_CREDIT,
     TABLE_TITLES,
     empty_page,
     normalize_layout,
@@ -156,7 +157,11 @@ def render_header(match_info):
     )
     return html.Div([
         html.Div(score_line, className="report-header-title"),
-        html.Div(meta_line, className="report-header-meta"),
+        html.Div([
+            html.Div(className="report-header-side"),
+            html.Div(meta_line, className="report-header-meta"),
+            html.Div(HEADER_CREDIT, className="report-header-credit"),
+        ], className="report-header-meta-row"),
     ], className="report-header")
 
 

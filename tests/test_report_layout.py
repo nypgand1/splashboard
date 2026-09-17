@@ -271,6 +271,9 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(spec['font_styles'], ('normal',))
         self.assertEqual(spec['scale'], 'axis_separate')
         self.assertEqual(spec['cell_text_baseline'], 'middle')
+        self.assertEqual(spec['cell_clip'], 'item_box')
+        self.assertTrue(spec['pdf_reveal_paper'])
+        self.assertTrue(spec['pdf_refit_after_reveal'])
         self.assertEqual(spec['bold'], 'offset_duplicate')
         self.assertEqual(spec['bold_offset_mm'], 0.15)
         self.assertEqual(spec['bold_min_weight'], 600)
@@ -345,6 +348,27 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertIn("pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'F')", js)
         self.assertIn("pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'S')", js)
         self.assertNotIn("pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'bold')", js)
+        self.assertIn('function boxOutsideClip', js)
+        self.assertIn('function clipBoxIsUsable', js)
+        self.assertIn('drawTableCell(pdf, cell, paperRect, scale, clip)', js)
+        self.assertIn('revealPaperForPdf', js)
+        self.assertIn('report-header-credit', js)
+        self.assertIn('refitPaperForPdf', js)
+        self.assertIn('function resolveOverlaps', js)
+        self.assertIn('function snapshotNodeYs', js)
+        self.assertIn('return b.y - a.y', js)
+        self.assertIn('report-block-title-row', js)
+        self.assertIn('fitTableBlocksOnGrid', js)
+        self.assertIn('function measureTableBlockPx', js)
+        self.assertIn('function tableHugH', js)
+        self.assertIn('function gridContentInsetY', js)
+        self.assertNotIn('bodyRows >= 6', js)
+        self.assertIn('clone.scrollHeight', js)
+        self.assertIn("paper.scrollIntoView({ block: 'start'", js)
+        self.assertNotIn(
+            "item.querySelector('.grid-stack-item-content') || item",
+            js,
+        )
 
 
 class ReportTableComponentTests(unittest.TestCase):
@@ -394,7 +418,10 @@ class ReportTableComponentTests(unittest.TestCase):
         })
         self.assertEqual(len(header.children), 2)
         title = header.children[0].children
-        meta = header.children[1].children
+        meta_row = header.children[1].children
+        meta = meta_row[1].children
+        credit = meta_row[2].children
+        self.assertEqual(credit, 'Design by Wei-Hao Lin')
         self.assertIn('Braves', title)
         self.assertIn('Lions', title)
         self.assertIn('88', title)
@@ -712,6 +739,11 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertNotIn('mantine_provider_scope', chrome)
         self.assertEqual(chrome['header_size'], 'compact')
         self.assertEqual(chrome['header_line_gap'], 'loose')
+        self.assertEqual(chrome['header_credit'], 'Design by Wei-Hao Lin')
+        self.assertEqual(chrome['paper_padding_top'], '4mm')
+        self.assertEqual(chrome['header_padding_bottom'], '2mm')
+        self.assertEqual(chrome['header_credit_size'], '9px')
+        self.assertEqual(chrome['header_credit_align'], 'table_content_right')
         self.assertEqual(chrome['table_menu_order'], ALLOWED_TABLE_KEYS)
         self.assertIn('report-toolbar', chrome['sticky_selectors'])
         self.assertIn('report-page-list', chrome['sticky_selectors'])

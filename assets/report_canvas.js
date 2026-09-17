@@ -1039,6 +1039,17 @@
             try {
             var layout = parseLayoutJson('report-layout-json') || { pages: [] };
             var page = layoutPageForPaper(layout, paper);
+            if (!(page.blocks || []).length) {
+                var idx = Array.prototype.indexOf.call(
+                    document.querySelectorAll('#report-papers .report-paper'),
+                    paper
+                );
+                var fallback = (layout.pages && layout.pages[idx])
+                    || layoutPageForPaper(parseLayoutJson('report-default-layout-json') || { pages: [] }, paper);
+                if (fallback && (fallback.blocks || []).length) {
+                    page = fallback;
+                }
+            }
             var grid = initOneGrid(paper);
             var gridEl = paper.querySelector('.report-grid');
             if (grid) {
@@ -1068,8 +1079,15 @@
             paper.setAttribute('data-hydrated', '1');
             bindTextBlocks(paper);
             return paintRotationBlocks(paper).then(function () {
+                var originY = snapshotNodeYs(grid);
+                if (grid && grid.el) {
+                    grid.el._splashboardOriginY = originY;
+                }
                 fitAllTableBlocks();
                 fitAllRotationBlocks();
+                if (grid) {
+                    resolveOverlaps(grid, originY);
+                }
                 if (opts.compact && grid) {
                     compactGrid(grid);
                     syncPageOneSideNote(grid);
@@ -1078,6 +1096,9 @@
                 hydrating = false;
                 window.setTimeout(function () {
                     clampGridToPaper(grid);
+                    if (grid && grid.el) {
+                        resolveOverlaps(grid, grid.el._splashboardOriginY || {});
+                    }
                     markPaperOverflow();
                     syncPageListSticky();
                 }, 300);
@@ -1226,13 +1247,47 @@
     }
 
     function cellPx(grid) {
-        if (grid && grid.getCellHeight) {
-            return grid.getCellHeight(true) || 42;
-        }
         if (grid && grid.opts && grid.opts.cellHeight) {
-            return grid.opts.cellHeight + 6;
+            return grid.opts.cellHeight;
         }
-        return 42;
+        if (grid && grid.getCellHeight) {
+            return grid.getCellHeight(true) || 36;
+        }
+        return 36;
+    }
+
+    function gridContentInsetY(grid) {
+        var opts = (grid && grid.opts) || {};
+        var top = parseFloat(opts.marginTop);
+        var bottom = parseFloat(opts.marginBottom);
+        if (isNaN(top)) {
+            top = parseFloat(opts.margin);
+        }
+        if (isNaN(bottom)) {
+            bottom = parseFloat(opts.margin);
+        }
+        if (isNaN(top)) {
+            top = 6;
+        }
+        if (isNaN(bottom)) {
+            bottom = 6;
+        }
+        return top + bottom;
+    }
+
+    function tableBodyPadY(item) {
+        var body = item && item.querySelector('.report-block-body');
+        if (!body) {
+            return 0;
+        }
+        var cs = window.getComputedStyle(body);
+        return (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    }
+
+    function tableHugH(grid, item) {
+        var cell = cellPx(grid);
+        var needed = measureTableBlockPx(item) + tableBodyPadY(item) + gridContentInsetY(grid);
+        return Math.max(1, Math.ceil(needed / cell));
     }
 
     function paperMaxRows(grid) {
@@ -1362,6 +1417,31 @@
         return height;
     }
 
+    function measureTableBlockPx(item) {
+        var table = item.querySelector('.report-js-table');
+        if (!table) {
+            return measureContentPx(item);
+        }
+        var title = item.querySelector('.report-block-title-row');
+        var titleH = title ? (title.getBoundingClientRect().height || title.offsetHeight || 0) : 0;
+        var clone = table.cloneNode(true);
+        var liveW = Math.max(table.getBoundingClientRect().width || 0, table.offsetWidth || 0, 400);
+        clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:' + liveW + 'px;max-width:none;height:auto;max-height:none;table-layout:auto;visibility:hidden;overflow:visible;';
+        document.body.appendChild(clone);
+        var cloneH = Math.max(clone.scrollHeight || 0, clone.offsetHeight || 0);
+        document.body.removeChild(clone);
+        var liveH = Math.max(table.getBoundingClientRect().height || 0, table.scrollHeight || 0);
+        var headH = 0;
+        Array.prototype.forEach.call(table.querySelectorAll('thead tr'), function (tr) {
+            headH += tr.getBoundingClientRect().height || 0;
+        });
+        var bodySample = table.querySelector('tbody tr');
+        var bodyH = bodySample ? (bodySample.getBoundingClientRect().height || 0) : 0;
+        var nBody = table.querySelectorAll('tbody tr').length;
+        var fromRows = headH + bodyH * nBody;
+        return titleH + Math.max(cloneH, liveH, fromRows);
+    }
+
     function measureBlockH(block, grid, node) {
         var fallback = block.h || 3;
         if (grid && block.type === 'rotation') {
@@ -1378,7 +1458,7 @@
         node.style.top = '0';
         node.style.width = host.clientWidth + 'px';
         host.appendChild(node);
-        var h = Math.max(1, Math.ceil(measureContentPx(node) / cellPx(grid)));
+        var h = tableHugH({ opts: grid.opts, getCellHeight: grid.getCellHeight }, node);
         host.removeChild(node);
         node.style.position = '';
         node.style.visibility = '';
@@ -1416,53 +1496,130 @@
         return null;
     }
 
-    function fitAllTableBlocks() {
+    function fitTableBlocksOnGrid(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
         var updates = [];
-        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
-            var grid = el.gridstack;
-            if (!grid) {
-                return;
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
+            var h = tableHugH(grid, item);
+            if (h !== currentH) {
+                updates.push({ item: item, h: h });
             }
-            var cell = cellPx(grid);
-            el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
-                var node = item.gridstackNode || {};
-                var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
-                var h = Math.max(1, Math.ceil(measureContentPx(item) / cell));
-                if (h !== currentH) {
-                    updates.push({ grid: grid, item: item, h: h });
-                }
-            });
         });
         updates.forEach(function (u) {
-            u.grid.update(u.item, { h: u.h });
+            grid.update(u.item, { h: u.h });
+        });
+    }
+
+    function fitAllTableBlocks() {
+        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
+            fitTableBlocksOnGrid(el.gridstack);
+        });
+    }
+
+    function fitRotationBlocksOnGrid(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
+        var cell = cellPx(grid);
+        var updates = [];
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="rotation"]').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
+            var frame = item.querySelector('.report-rotation-scale');
+            var plotH = frame
+                ? frame.offsetHeight
+                : Math.round(rotationNativeHeightPx() * ROTATION_FONT_SCALE);
+            var h = Math.max(1, Math.ceil((plotH + 8) / cell));
+            if (h !== currentH) {
+                updates.push({ item: item, h: h });
+            }
+            item.setAttribute('data-min-h', String(h));
+            item.setAttribute('data-min-w', String(node.w || GRID_COLUMNS));
+        });
+        updates.forEach(function (u) {
+            grid.update(u.item, { h: u.h, noResize: true, minH: u.h });
         });
     }
 
     function fitAllRotationBlocks() {
-        var updates = [];
         document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
-            var grid = el.gridstack;
-            if (!grid) {
-                return;
-            }
-            var cell = cellPx(grid);
-            el.querySelectorAll('.grid-stack-item[data-block-type="rotation"]').forEach(function (item) {
-                var node = item.gridstackNode || {};
-                var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
-                var frame = item.querySelector('.report-rotation-scale');
-                var plotH = frame
-                    ? frame.offsetHeight
-                    : Math.round(rotationNativeHeightPx() * ROTATION_FONT_SCALE);
-                var h = Math.max(1, Math.ceil((plotH + 8) / cell));
-                if (h !== currentH) {
-                    updates.push({ grid: grid, item: item, h: h });
-                }
-                item.setAttribute('data-min-h', String(h));
-                item.setAttribute('data-min-w', String(node.w || GRID_COLUMNS));
-            });
+            fitRotationBlocksOnGrid(el.gridstack);
         });
-        updates.forEach(function (u) {
-            u.grid.update(u.item, { h: u.h, noResize: true, minH: u.h });
+    }
+
+    function snapshotNodeYs(grid) {
+        var origin = {};
+        if (!grid || !grid.engine) {
+            return origin;
+        }
+        (grid.engine.nodes || []).forEach(function (n, i) {
+            var key = nodeOriginKey(n, i);
+            origin[key] = n.y || 0;
+        });
+        return origin;
+    }
+
+    function nodeOriginKey(n, i) {
+        if (n.el) {
+            return n.el.getAttribute('gs-id') || n.el.id || String(i);
+        }
+        return n.id || String(i);
+    }
+
+    function resolveOverlaps(grid, originY) {
+        if (!grid || !grid.engine) {
+            return;
+        }
+        originY = originY || {};
+        var nodes = (grid.engine.nodes || []).slice().sort(function (a, b) {
+            var ay = originY[nodeOriginKey(a, 0)];
+            var by = originY[nodeOriginKey(b, 1)];
+            if (ay === undefined) {
+                ay = a.y || 0;
+            }
+            if (by === undefined) {
+                by = b.y || 0;
+            }
+            return ay - by || (a.x || 0) - (b.x || 0);
+        });
+        var placed = [];
+        var moves = [];
+        nodes.forEach(function (n, i) {
+            var x = n.x || 0;
+            var key = nodeOriginKey(n, i);
+            var y = originY[key];
+            if (y === undefined) {
+                y = n.y || 0;
+            }
+            var w = n.w || 1;
+            var h = Math.max(1, n.h || 1);
+            var guard = 0;
+            var moved = true;
+            while (moved && guard < 64) {
+                moved = false;
+                guard += 1;
+                for (var j = 0; j < placed.length; j++) {
+                    var p = placed[j];
+                    if (x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y) {
+                        y = p.y + p.h;
+                        moved = true;
+                    }
+                }
+            }
+            if (n.el) {
+                moves.push({ el: n.el, y: y });
+            }
+            placed.push({ x: x, y: y, w: w, h: h });
+        });
+        moves.sort(function (a, b) {
+            return b.y - a.y;
+        });
+        moves.forEach(function (m) {
+            grid.update(m.el, { y: m.y });
         });
     }
 
@@ -1564,7 +1721,7 @@
         var minH = 1;
         var minW = 1;
         if (type === 'builtin_table') {
-            minH = Math.max(1, Math.ceil(measureContentPx(item) / cell));
+            minH = tableHugH(grid, item);
             var nodeX = (item.gridstackNode && item.gridstackNode.x) || 0;
             minW = Math.max(1, Math.min(
                 GRID_COLUMNS - nodeX,
@@ -1847,6 +2004,21 @@
         return box.y >= A4_HEIGHT_MM || box.x >= A4_WIDTH_MM || box.w <= 0 || box.h <= 0;
     }
 
+    function clipBoxIsUsable(clip) {
+        return !!(clip && clip.w >= 1 && clip.h >= 1);
+    }
+
+    function boxOutsideClip(box, clip) {
+        if (!box || !clipBoxIsUsable(clip)) {
+            return false;
+        }
+        var eps = 0.2;
+        return box.x >= clip.x + clip.w - eps
+            || box.y >= clip.y + clip.h - eps
+            || box.x + box.w <= clip.x + eps
+            || box.y + box.h <= clip.y + eps;
+    }
+
     function scaleXY(scale) {
         if (scale && typeof scale === 'object') {
             return { x: scale.x || 1, y: scale.y || 1 };
@@ -1937,6 +2109,7 @@
     function drawHeader(pdf, paper, paperRect, scale) {
         var title = paper.querySelector('.report-header-title');
         var meta = paper.querySelector('.report-header-meta');
+        var credit = paper.querySelector('.report-header-credit');
         [title, meta].forEach(function (el) {
             if (!el) {
                 return;
@@ -1956,11 +2129,29 @@
                 bold: fontWeightNum(style) >= 600
             });
         });
+        if (credit) {
+            var creditText = (credit.textContent || '').trim();
+            if (creditText) {
+                var creditStyle = window.getComputedStyle(credit);
+                var creditBox = boxMm(paperRect, credit, scale);
+                var creditColor = parseRgb(creditStyle.color) || [148, 163, 184];
+                pdf.setTextColor(creditColor[0], creditColor[1], creditColor[2]);
+                pdf.setFontSize(pxToPt(parseFloat(creditStyle.fontSize) || 8, scale));
+                drawPdfText(pdf, creditText, creditBox.x + creditBox.w, creditBox.y + creditBox.h / 2, {
+                    baseline: 'middle',
+                    align: 'right',
+                    bold: false
+                });
+            }
+        }
     }
 
     function drawFilledCircle(pdf, box, rgb) {
+        if (!box || !rgb) {
+            return;
+        }
         var radius = Math.min(box.w, box.h) / 2;
-        if (radius <= 0) {
+        if (!(radius > 0) || !isFinite(box.x) || !isFinite(box.y) || !isFinite(radius)) {
             return;
         }
         pdf.setFillColor(rgb[0], rgb[1], rgb[2]);
@@ -1989,9 +2180,9 @@
         drawFilledCircle(pdf, box, fill);
     }
 
-    function drawTableCell(pdf, cell, paperRect, scale) {
+    function drawTableCell(pdf, cell, paperRect, scale, clip) {
         var box = boxMm(paperRect, cell, scale);
-        if (paperOffsheet(box)) {
+        if (paperOffsheet(box) || boxOutsideClip(box, clip)) {
             return;
         }
         var style = window.getComputedStyle(cell);
@@ -2438,23 +2629,36 @@
         var scale = paperScale(paperRect);
         pdf.setFillColor(255, 255, 255);
         pdf.rect(0, 0, A4_WIDTH_MM, A4_HEIGHT_MM, 'F');
+        try {
         drawHeader(pdf, paper, paperRect, scale);
         paper.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            if (item.hidden) {
+            if (item.classList.contains('grid-stack-placeholder')) {
                 return;
             }
+            try {
             var title = item.querySelector('.report-block-title');
             if (title) {
                 var titleText = (title.textContent || '').trim();
-                var tBox = boxMm(paperRect, title, scale);
+                var titleRow = item.querySelector('.report-block-title-row');
+                var tBox = boxMm(paperRect, titleRow || title, scale);
                 var tStyle = window.getComputedStyle(title);
                 var tColor = parseRgb(tStyle.color) || [15, 23, 42];
-                var textX = tBox.x;
+                var padL = 0;
+                if (titleRow) {
+                    padL = parseFloat(window.getComputedStyle(titleRow).paddingLeft) || 0;
+                }
+                var textX = tBox.x + padL * scaleXY(scale).x;
                 var dot = title.querySelector('.report-block-title-dot');
                 if (dot) {
-                    drawTitleDot(pdf, dot, paperRect, scale);
                     var dBox = boxMm(paperRect, dot, scale);
-                    textX = dBox.x + dBox.w + 2;
+                    var shifted = {
+                        x: textX,
+                        y: tBox.y + Math.max(0, (tBox.h - dBox.h) / 2),
+                        w: dBox.w,
+                        h: dBox.h
+                    };
+                    drawFilledCircle(pdf, shifted, parseRgb(window.getComputedStyle(dot).backgroundColor) || [0, 119, 182]);
+                    textX = shifted.x + shifted.w + 1.2;
                 }
                 if (titleText) {
                     pdf.setTextColor(tColor[0], tColor[1], tColor[2]);
@@ -2465,8 +2669,24 @@
                     });
                 }
             }
+            var clip = boxMm(paperRect, item, scale);
+            var tableEl = item.querySelector('.report-js-table');
+            if (tableEl && clipBoxIsUsable(clip)) {
+                var tableBox = boxMm(paperRect, tableEl, scale);
+                var top = Math.min(clip.y, tableBox.y);
+                var bottom = Math.max(clip.y + clip.h, tableBox.y + tableBox.h);
+                clip = {
+                    x: clip.x,
+                    y: top,
+                    w: clip.w,
+                    h: bottom - top
+                };
+            }
+            if (!clipBoxIsUsable(clip)) {
+                clip = null;
+            }
             item.querySelectorAll('th, td').forEach(function (cell) {
-                drawTableCell(pdf, cell, paperRect, scale);
+                drawTableCell(pdf, cell, paperRect, scale, clip);
             });
             var note = item.querySelector('[data-text-block]');
             if (note) {
@@ -2476,6 +2696,9 @@
             if (img) {
                 drawImageBlock(pdf, img, paperRect, scale);
             }
+            } catch (itemErr) {
+                console.warn('PDF item skipped', itemErr);
+            }
         });
         var rotationChain = Promise.resolve();
         paper.querySelectorAll('.grid-stack-item[data-block-type="rotation"] .report-rotation-plot').forEach(function (gd) {
@@ -2484,6 +2707,10 @@
             });
         });
         return rotationChain;
+        } catch (err) {
+            console.warn('PDF paper skipped', err);
+            return Promise.resolve();
+        }
     }
 
     function drawRotationPlot(pdf, gd, paperRect, scale) {
@@ -2495,11 +2722,19 @@
         if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
             return Promise.resolve();
         }
-        return window.Plotly.toImage(gd, {
+        var toImage = window.Plotly.toImage(gd, {
             format: 'png',
             scale: 2
-        }).then(function (dataUrl) {
-            pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
+        });
+        var timed = new Promise(function (resolve) {
+            window.setTimeout(function () {
+                resolve(null);
+            }, 8000);
+        });
+        return Promise.race([toImage, timed]).then(function (dataUrl) {
+            if (dataUrl) {
+                pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
+            }
         }).catch(function (err) {
             console.warn('PDF rotation skipped', err);
         });
@@ -2518,6 +2753,86 @@
         }
     }
 
+    function waitPdfFrame() {
+        return new Promise(function (resolve) {
+            var done = false;
+            function finish() {
+                if (done) {
+                    return;
+                }
+                done = true;
+                resolve();
+            }
+            window.requestAnimationFrame(function () {
+                window.requestAnimationFrame(finish);
+            });
+            window.setTimeout(finish, 120);
+        });
+    }
+
+    function capturePdfScroll() {
+        var workspace = document.getElementById('report-workspace');
+        var papersEl = document.querySelector('.report-papers');
+        var main = document.querySelector('.report-main');
+        return {
+            x: window.scrollX,
+            y: window.scrollY,
+            workspace: workspace ? workspace.scrollTop : 0,
+            papers: papersEl ? papersEl.scrollTop : 0,
+            main: main ? main.scrollTop : 0
+        };
+    }
+
+    function restorePdfScroll(saved) {
+        if (!saved) {
+            return;
+        }
+        window.scrollTo(saved.x, saved.y);
+        var workspace = document.getElementById('report-workspace');
+        var papersEl = document.querySelector('.report-papers');
+        var main = document.querySelector('.report-main');
+        if (workspace) {
+            workspace.scrollTop = saved.workspace;
+        }
+        if (papersEl) {
+            papersEl.scrollTop = saved.papers;
+        }
+        if (main) {
+            main.scrollTop = saved.main;
+        }
+    }
+
+    function revealPaperForPdf(paper) {
+        if (!paper) {
+            return Promise.resolve();
+        }
+        paper.scrollIntoView({ block: 'start', inline: 'nearest' });
+        void paper.offsetHeight;
+        return waitPdfFrame();
+    }
+
+    function refitPaperForPdf(paper) {
+        var gridEl = paper && paper.querySelector('.report-grid');
+        var grid = gridEl && gridEl.gridstack;
+        if (grid) {
+            var originY = snapshotNodeYs(grid);
+            if (grid.el) {
+                grid.el._splashboardOriginY = originY;
+            }
+            fitTableBlocksOnGrid(grid);
+            fitRotationBlocksOnGrid(grid);
+            resolveOverlaps(grid, originY);
+        }
+        if (paper) {
+            void paper.offsetHeight;
+        }
+        return new Promise(function (resolve) {
+            window.setTimeout(function () {
+                waitPdfFrame().then(resolve);
+            }, 50);
+        });
+    }
+
     function exportPapersToPdf() {
         var btn = document.getElementById('btn-export-pdf');
         if (btn && btn.getAttribute('aria-busy') === 'true') {
@@ -2528,6 +2843,7 @@
             window.print();
             return Promise.resolve();
         }
+        var savedScroll = capturePdfScroll();
         setPdfBusy(true);
         return ensureReportLibs().then(function () {
             if (!window.jspdf || !window.jspdf.jsPDF) {
@@ -2541,12 +2857,18 @@
             var chain = Promise.resolve();
             Array.prototype.forEach.call(papers, function (paper, index) {
                 chain = chain.then(function () {
-                    return hydratePage(index);
-                }).then(function () {
-                    if (index > 0) {
-                        pdf.addPage('a4', 'portrait');
-                    }
-                    return drawPaper(pdf, paper);
+                    return Promise.resolve(hydratePage(index)).then(function () {
+                        return revealPaperForPdf(paper);
+                    }).then(function () {
+                        return refitPaperForPdf(paper);
+                    }).then(function () {
+                        if (index > 0) {
+                            pdf.addPage('a4', 'portrait');
+                        }
+                        return drawPaper(pdf, paper);
+                    }).catch(function (err) {
+                        console.warn('PDF page failed', err);
+                    });
                 });
             });
             return chain.then(function () {
@@ -2558,6 +2880,7 @@
             console.warn('PDF export failed, using print()', err && (err.message || String(err)));
             window.print();
         }).then(function () {
+            restorePdfScroll(savedScroll);
             setPdfBusy(false);
         });
     }
@@ -2853,6 +3176,9 @@
         skipFourFactorsGroup: skipFourFactorsGroup,
         groupedHeader: groupedHeader,
         paperScale: paperScale,
+        boxOutsideClip: boxOutsideClip,
+        clipBoxIsUsable: clipBoxIsUsable,
+        resolveOverlaps: resolveOverlaps,
         loadStored: loadStored,
         readLayoutFromDom: readLayoutFromDom,
         persist: persistLocal,
