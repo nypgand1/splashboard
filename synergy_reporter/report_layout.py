@@ -6,7 +6,7 @@ import re
 A4_WIDTH_MM = 210
 A4_HEIGHT_MM = 297
 GRID_COLUMNS = 12
-LAYOUT_VERSION = 1
+LAYOUT_VERSION = 2
 STORAGE_KEY_PREFIX = 'splashboard.report.layout.'
 IMAGE_MAX_BYTES = 1_000_000
 ALLOWED_IMAGE_MIMES = frozenset({'image/jpeg', 'image/png', 'image/webp'})
@@ -40,6 +40,11 @@ TABLE_TITLES = {
     'lineup_home': 'Home Lineup Stats',
     'lineup_away': 'Away Lineup Stats',
 }
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation')
+ROTATION_TITLE = 'Rotation'
+ROTATION_DEFAULT_H = 11
+ROTATION_EMPTY = 'No rotation chart for this game.'
+ROTATION_ERROR = 'Could not load rotation.'
 
 
 def layout_storage_key(game_id):
@@ -141,9 +146,19 @@ def chrome_spec():
         'add_note_icon': 'tabler:notebook',
         'add_image_icon': 'tabler:photo',
         'add_table_icon': 'tabler:table',
+        'add_rotation_icon': 'tabler:chart-bar',
         'add_note_label': 'Add note',
         'add_image_label': 'Add image',
         'add_table_label': 'Add table',
+        'add_rotation_label': 'Add rotation',
+        'rotation_resize': False,
+        'rotation_title': None,
+        'rotation_scale': 0.75,
+        'rotation_drag_handle': 'overlay',
+        'rotation_camera': 'all_no_dnp_no_playhead',
+        'rotation_place': 'native_or_new_page',
+        'rotation_empty': ROTATION_EMPTY,
+        'rotation_error': ROTATION_ERROR,
         'add_table_control': 'icon_menu',
         'editor_chrome': 'dmc',
         'dialog': 'dmc.Modal',
@@ -264,6 +279,8 @@ def paint_spec():
         'player_stats_sort': '+/-_desc',
         'new_page_blocks': (),
         'image_validate': 'clientside',
+        'rotation_figure': 'workspace_json',
+        'rotation_store_on_load': True,
     }
 
 
@@ -288,6 +305,10 @@ def _text(block_id, x, y, w, h):
     return _block(block_id, 'text', x, y, w, h, content='')
 
 
+def _rotation(block_id, x, y, w, h):
+    return _block(block_id, 'rotation', x, y, w, h)
+
+
 def default_layout(match_info=None):
     del match_info
     half = GRID_COLUMNS // 2
@@ -300,6 +321,7 @@ def default_layout(match_info=None):
                     _table('p1-score', 'score_group', 0, 0, half, 3),
                     _table('p1-four', 't_adv_df', 0, 3, half, 3),
                     _text('p1-notes', half, 0, half, 6),
+                    _rotation('p1-rotation', 0, 6, GRID_COLUMNS, ROTATION_DEFAULT_H),
                 ],
             },
             {
@@ -337,6 +359,8 @@ def empty_page(page_id):
 
 def normalize_layout(layout):
     if not isinstance(layout, dict) or not layout.get('pages'):
+        return default_layout()
+    if layout.get('version') != LAYOUT_VERSION:
         return default_layout()
     pages = layout.get('pages') or []
     if not pages:

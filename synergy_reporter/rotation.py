@@ -1111,3 +1111,16 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     fig.update_annotations(font=dict(size=14, color='#1e293b'))
     return fig
 
+
+def report_rotation_figure(payload):
+    fig = build_rotation_figure(
+        payload,
+        playhead=None,
+        x_range=None,
+        show_dnp=False,
+    )
+    fig.update_layout(font=dict(size=12, color='#334155'))
+    fig.update_annotations(font=dict(size=12, color='#1e293b'))
+    fig.update_yaxes(tickfont=dict(size=12), row=2, col=1)
+    return fig
+

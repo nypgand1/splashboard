@@ -5,7 +5,18 @@
 
     var IMAGE_MAX_BYTES = 1000000;
     var GRID_COLUMNS = 12;
+    var LAYOUT_VERSION = 2;
     var DESKTOP_MIN_PX = 1280;
+    var ROTATION_EMPTY = 'No rotation chart for this game.';
+    var ROTATION_ERROR = 'Could not load rotation.';
+    var ROTATION_FONT_SCALE = 0.75;
+    var ROTATION_STATIC_CONFIG = {
+        staticPlot: true,
+        displayModeBar: false,
+        responsive: false,
+        scrollZoom: false,
+        doubleClick: false
+    };
     var A4_WIDTH_MM = 210;
     var A4_HEIGHT_MM = 297;
     var GRIDSTACK_CSS = '/assets/gridstack.min.css';
@@ -67,7 +78,7 @@
             }
         }
         if (!layout || !layout.pages) {
-            layout = { version: 1, pages: [] };
+            layout = { version: LAYOUT_VERSION, pages: [] };
         }
         var papers = document.querySelectorAll('#report-papers .report-paper');
         var pages = [];
@@ -119,7 +130,7 @@
             });
         });
         layout.pages = pages;
-        layout.version = 1;
+        layout.version = LAYOUT_VERSION;
         return layout;
     }
 
@@ -240,6 +251,86 @@
             return rec;
         });
         return { columns: obj.columns.slice(), rows: rows };
+    }
+
+    function rotationFigure() {
+        var el = document.getElementById('report-rotation-figure');
+        if (!el || !el.textContent) {
+            return { _ui: 'empty' };
+        }
+        try {
+            return JSON.parse(el.textContent);
+        } catch (err) {
+            return { _ui: 'error' };
+        }
+    }
+
+    function rotationNativeHeightPx() {
+        var fig = rotationFigure();
+        if (!fig || fig._ui === 'empty' || fig._ui === 'error' || !fig.layout) {
+            return 120;
+        }
+        return Math.max(120, Number(fig.layout.height) || 520);
+    }
+
+    function paintRotation(host) {
+        if (!host) {
+            return Promise.resolve();
+        }
+        host.textContent = '';
+        var fig = rotationFigure();
+        if (fig && fig._ui === 'error') {
+            host.className += ' report-rotation-empty';
+            host.textContent = ROTATION_ERROR;
+            return Promise.resolve();
+        }
+        if (!fig || fig._ui === 'empty' || !fig.data) {
+            host.className += ' report-rotation-empty';
+            host.textContent = ROTATION_EMPTY;
+            return Promise.resolve();
+        }
+        if (!window.Plotly || typeof window.Plotly.react !== 'function') {
+            host.className += ' report-rotation-empty';
+            host.textContent = ROTATION_ERROR;
+            return Promise.resolve();
+        }
+        var gd = document.createElement('div');
+        gd.className = 'report-rotation-plot';
+        var hostW = Math.max(200, host.clientWidth || (host.parentElement && host.parentElement.clientWidth) || 640);
+        var innerW = Math.round(hostW / ROTATION_FONT_SCALE);
+        var innerH = rotationNativeHeightPx();
+        var frame = document.createElement('div');
+        frame.className = 'report-rotation-scale';
+        frame.style.width = hostW + 'px';
+        frame.style.height = Math.round(innerH * ROTATION_FONT_SCALE) + 'px';
+        gd.style.width = innerW + 'px';
+        gd.style.height = innerH + 'px';
+        gd.style.transform = 'scale(' + ROTATION_FONT_SCALE + ')';
+        gd.style.transformOrigin = 'top left';
+        frame.appendChild(gd);
+        host.appendChild(frame);
+        var layout = Object.assign({}, fig.layout || {}, {
+            width: innerW,
+            height: innerH,
+            autosize: false,
+            dragmode: false
+        });
+        return window.Plotly.react(gd, fig.data, layout, ROTATION_STATIC_CONFIG).catch(function (err) {
+            console.warn('Report rotation plot failed', err);
+            host.textContent = ROTATION_ERROR;
+            host.className += ' report-rotation-empty';
+        });
+    }
+
+    function paintRotationBlocks(paper) {
+        var hosts = (paper || document).querySelectorAll('.report-rotation-host');
+        var chain = Promise.resolve();
+        Array.prototype.forEach.call(hosts, function (host) {
+            chain = chain.then(function () {
+                return paintRotation(host);
+            });
+        });
+        return chain;
     }
 
     function tablePayload() {
@@ -959,32 +1050,44 @@
                     return;
                 }
                 if (grid) {
-                    grid.addWidget(node, {
+                    var widgetOpts = {
                         id: block.id,
                         x: block.x || 0,
                         y: block.y || 0,
                         w: block.w || 6,
                         h: block.h || 3
-                    });
+                    };
+                    if (block.type === 'rotation') {
+                        widgetOpts.noResize = true;
+                    }
+                    grid.addWidget(node, widgetOpts);
                 } else if (gridEl) {
                     gridEl.appendChild(node);
                 }
             });
             paper.setAttribute('data-hydrated', '1');
             bindTextBlocks(paper);
-            fitAllTableBlocks();
-            if (opts.compact && grid) {
-                compactGrid(grid);
-                syncPageOneSideNote(grid);
-            }
-            } finally {
+            return paintRotationBlocks(paper).then(function () {
+                fitAllTableBlocks();
+                fitAllRotationBlocks();
+                if (opts.compact && grid) {
+                    compactGrid(grid);
+                    syncPageOneSideNote(grid);
+                }
+            }).then(function () {
                 hydrating = false;
+                window.setTimeout(function () {
+                    clampGridToPaper(grid);
+                    markPaperOverflow();
+                    syncPageListSticky();
+                }, 300);
+            }, function () {
+                hydrating = false;
+            });
+            } catch (err) {
+                hydrating = false;
+                throw err;
             }
-            window.setTimeout(function () {
-                clampGridToPaper(grid);
-                markPaperOverflow();
-                syncPageListSticky();
-            }, 300);
         });
         return hydrateLocks[lockKey];
     }
@@ -1026,6 +1129,9 @@
             window.dash_clientside.set_props('report-pane-ready', { data: '1' });
         }
         var stored = loadStored();
+        if (stored && stored.version !== LAYOUT_VERSION) {
+            stored = null;
+        }
         if (stored && stored.pages && stored.pages.length) {
             applyStoredLayout(stored);
         } else {
@@ -1057,6 +1163,7 @@
         node.setAttribute('data-h', String(block.h || 3));
         var card = document.createElement('div');
         var isTable = block.type === 'builtin_table';
+        var isRotation = block.type === 'rotation';
         card.className = 'grid-stack-item-content report-block-card' + (isTable ? ' report-block-card-table' : '');
         var remove = document.createElement('button');
         remove.type = 'button';
@@ -1102,6 +1209,10 @@
                 body.textContent = 'Drop an image here from Add image';
                 body.className += ' report-image-placeholder';
             }
+        } else if (isRotation) {
+            var host = document.createElement('div');
+            host.className = 'report-rotation-host';
+            body.appendChild(host);
         } else if (isTable) {
             var host = document.createElement('div');
             host.className = 'report-table-host';
@@ -1253,6 +1364,9 @@
 
     function measureBlockH(block, grid, node) {
         var fallback = block.h || 3;
+        if (grid && block.type === 'rotation') {
+            return Math.max(1, Math.ceil((rotationNativeHeightPx() * ROTATION_FONT_SCALE + 8) / cellPx(grid)));
+        }
         if (!grid || block.type !== 'builtin_table') {
             return fallback;
         }
@@ -1321,6 +1435,34 @@
         });
         updates.forEach(function (u) {
             u.grid.update(u.item, { h: u.h });
+        });
+    }
+
+    function fitAllRotationBlocks() {
+        var updates = [];
+        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
+            var grid = el.gridstack;
+            if (!grid) {
+                return;
+            }
+            var cell = cellPx(grid);
+            el.querySelectorAll('.grid-stack-item[data-block-type="rotation"]').forEach(function (item) {
+                var node = item.gridstackNode || {};
+                var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
+                var frame = item.querySelector('.report-rotation-scale');
+                var plotH = frame
+                    ? frame.offsetHeight
+                    : Math.round(rotationNativeHeightPx() * ROTATION_FONT_SCALE);
+                var h = Math.max(1, Math.ceil((plotH + 8) / cell));
+                if (h !== currentH) {
+                    updates.push({ grid: grid, item: item, h: h });
+                }
+                item.setAttribute('data-min-h', String(h));
+                item.setAttribute('data-min-w', String(node.w || GRID_COLUMNS));
+            });
+        });
+        updates.forEach(function (u) {
+            u.grid.update(u.item, { h: u.h, noResize: true, minH: u.h });
         });
     }
 
@@ -1435,6 +1577,9 @@
         } else if (type === 'image') {
             minH = 1;
             minW = 1;
+        } else if (type === 'rotation') {
+            minH = Math.max(1, Math.ceil((rotationNativeHeightPx() * ROTATION_FONT_SCALE + 8) / cell));
+            minW = GRID_COLUMNS;
         }
         return { minW: minW, minH: minH };
     }
@@ -1457,6 +1602,11 @@
             } else if (type === 'builtin_table') {
                 minH = Math.max(1, node.h || 1);
                 minW = Math.max(1, node.w || 1);
+            } else if (type === 'rotation') {
+                minH = Math.max(1, node.h || 1);
+                minW = Math.max(1, node.w || GRID_COLUMNS);
+                grid.update(item, { minW: minW, minH: minH, noResize: true });
+                return;
             }
             grid.update(item, { minW: minW, minH: minH });
         });
@@ -2283,7 +2433,7 @@
     function drawPaper(pdf, paper) {
         var paperRect = paper.getBoundingClientRect();
         if (!paperRect.width) {
-            return;
+            return Promise.resolve();
         }
         var scale = paperScale(paperRect);
         pdf.setFillColor(255, 255, 255);
@@ -2326,6 +2476,32 @@
             if (img) {
                 drawImageBlock(pdf, img, paperRect, scale);
             }
+        });
+        var rotationChain = Promise.resolve();
+        paper.querySelectorAll('.grid-stack-item[data-block-type="rotation"] .report-rotation-plot').forEach(function (gd) {
+            rotationChain = rotationChain.then(function () {
+                return drawRotationPlot(pdf, gd, paperRect, scale);
+            });
+        });
+        return rotationChain;
+    }
+
+    function drawRotationPlot(pdf, gd, paperRect, scale) {
+        if (!gd || !window.Plotly || typeof window.Plotly.toImage !== 'function') {
+            return Promise.resolve();
+        }
+        var frame = gd.closest('.report-rotation-scale') || gd;
+        var box = boxMm(paperRect, frame, scale);
+        if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
+            return Promise.resolve();
+        }
+        return window.Plotly.toImage(gd, {
+            format: 'png',
+            scale: 2
+        }).then(function (dataUrl) {
+            pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
+        }).catch(function (err) {
+            console.warn('PDF rotation skipped', err);
         });
     }
 
@@ -2370,7 +2546,7 @@
                     if (index > 0) {
                         pdf.addPage('a4', 'portrait');
                     }
-                    drawPaper(pdf, paper);
+                    return drawPaper(pdf, paper);
                 });
             });
             return chain.then(function () {
@@ -2612,42 +2788,64 @@
                             return;
                         }
                         slot = findFit(grid, w, h, paperMaxRows(grid)) || { x: 0, y: 0 };
-                        grid.addWidget(node, {
+                        var newOpts = {
                             id: block.id,
                             x: slot.x,
                             y: slot.y,
                             w: w,
                             h: h,
-                            minW: block.type === 'builtin_table' ? w : 1,
+                            minW: block.type === 'builtin_table' || block.type === 'rotation' ? w : 1,
                             minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
-                        });
+                        };
+                        if (block.type === 'rotation') {
+                            newOpts.noResize = true;
+                        }
+                        grid.addWidget(node, newOpts);
                         bindTextBlocks(node);
                         node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-                        node.setAttribute('data-min-w', block.type === 'builtin_table' ? String(w) : '1');
-                        clampItemToPaper(grid, node);
-                        persistLocal(readLayoutFromDom());
-                        window.setTimeout(markPaperOverflow, 0);
-                        if (paper) {
-                            paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
+                        node.setAttribute('data-min-w', block.type === 'builtin_table' || block.type === 'rotation' ? String(w) : '1');
+                        var afterNew = block.type === 'rotation'
+                            ? paintRotation(node.querySelector('.report-rotation-host')).then(function () {
+                                fitAllRotationBlocks();
+                            })
+                            : Promise.resolve();
+                        return afterNew.then(function () {
+                            clampItemToPaper(grid, node);
+                            persistLocal(readLayoutFromDom());
+                            window.setTimeout(markPaperOverflow, 0);
+                            if (paper) {
+                                paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                        });
                     });
                 });
             }
-            grid.addWidget(node, {
+            var placeOpts = {
                 id: block.id,
                 x: slot.x,
                 y: slot.y,
                 w: w,
                 h: h,
-                minW: block.type === 'builtin_table' ? w : 1,
+                minW: block.type === 'builtin_table' || block.type === 'rotation' ? w : 1,
                 minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
-            });
+            };
+            if (block.type === 'rotation') {
+                placeOpts.noResize = true;
+            }
+            grid.addWidget(node, placeOpts);
             bindTextBlocks(node);
             node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-            node.setAttribute('data-min-w', block.type === 'builtin_table' ? String(w) : '1');
-            clampItemToPaper(grid, node);
-            persistLocal(readLayoutFromDom());
-            window.setTimeout(markPaperOverflow, 0);
+            node.setAttribute('data-min-w', block.type === 'builtin_table' || block.type === 'rotation' ? String(w) : '1');
+            var afterPlace = block.type === 'rotation'
+                ? paintRotation(node.querySelector('.report-rotation-host')).then(function () {
+                    fitAllRotationBlocks();
+                })
+                : Promise.resolve();
+            afterPlace.then(function () {
+                clampItemToPaper(grid, node);
+                persistLocal(readLayoutFromDom());
+                window.setTimeout(markPaperOverflow, 0);
+            });
         });
     }
 
@@ -2739,6 +2937,15 @@
                 table_key: tableKey,
                 w: 12,
                 h: 4
+            });
+            return readLayoutFromDom();
+        },
+        addRotation: function () {
+            addWidgetToActive({
+                id: uniqueId('rotation'),
+                type: 'rotation',
+                w: 12,
+                h: 11
             });
             return readLayoutFromDom();
         },
@@ -2875,6 +3082,10 @@
         }
         if (event.target.closest('#report-add-text')) {
             window.splashboardReport.addText();
+            return;
+        }
+        if (event.target.closest('#report-add-rotation')) {
+            window.splashboardReport.addRotation();
             return;
         }
         if (event.target.closest('#report-add-page')) {

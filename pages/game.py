@@ -32,6 +32,7 @@ from synergy_reporter.rotation import (
     build_rotation_figure,
     format_run_label,
     live_playhead_t,
+    report_rotation_figure,
 )
 from ui_kit import (
     EMPTY_GAME,
@@ -411,14 +412,11 @@ def update_lineup_store(n, game_id):
     Output('rotation_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('tabs', 'value'),
      Input('match_info_store', 'data')],
 )
-def update_rotation_store(n, game_id, active_tab, match_info_store):
+def update_rotation_store(n, game_id, match_info_store):
     if not game_id:
         return json.dumps({})
-    if active_tab != 'tab-rotation':
-        return no_update
     try:
         report = get_cached_report(game_id)
     except Exception as exc:
@@ -1493,6 +1491,25 @@ def render_lineup_children(lineup_store, lineup_size=5):
     return children
 
 
+def _report_rotation_figure_json(game_id, match_info):
+    if not game_id:
+        return json.dumps({'_ui': 'empty'})
+    try:
+        report = get_cached_report(game_id)
+        payload = report.get_rotation_payload(
+            home_team_id=(match_info or {}).get('home_team_id'),
+            away_team_id=(match_info or {}).get('away_team_id'),
+        )
+        if not isinstance(payload, dict) or payload.get('_ui') == 'error':
+            return json.dumps({'_ui': 'error'})
+        if not payload.get('teams'):
+            return json.dumps({'_ui': 'empty'})
+        return report_rotation_figure(payload).to_json()
+    except Exception as exc:
+        print(f"Error building report rotation: {exc}")
+        return json.dumps({'_ui': 'error'})
+
+
 def render_report_children(bs_store, lineup_store, match_info_store, game_id=None):
     bs_dict = safe_loads(bs_store) if bs_store else {}
     match_info = safe_loads(match_info_store) if match_info_store else {}
@@ -1503,7 +1520,14 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
         return [_empty_view()]
     return [
         _last_update_span(),
-        render_report_workspace(layout, bs_dict, lineup_store, match_info, game_id),
+        render_report_workspace(
+            layout,
+            bs_dict,
+            lineup_store,
+            match_info,
+            game_id,
+            rotation_json=_report_rotation_figure_json(game_id, match_info),
+        ),
     ]
 
 

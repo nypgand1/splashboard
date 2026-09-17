@@ -15,7 +15,7 @@ ALLOWED_TABLE_KEYS = (
     'lineup_home',
     'lineup_away',
 )
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation')
 
 
 def _layout():
@@ -39,7 +39,7 @@ def _occupied_rows(blocks):
 class DefaultLayoutTests(unittest.TestCase):
     def test_version_and_four_pages(self):
         layout = _layout()
-        self.assertEqual(layout['version'], 1)
+        self.assertEqual(layout['version'], 2)
         self.assertEqual(len(layout['pages']), 4)
 
     def test_header_is_not_a_block(self):
@@ -115,6 +115,15 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(four.get('w'), 6)
         self.assertEqual(four.get('y'), score.get('y') + score.get('h'))
         self.assertEqual(texts[0].get('h'), score.get('h') + four.get('h'))
+        rotations = [b for b in page1 if b.get('type') == 'rotation']
+        self.assertEqual(len(rotations), 1)
+        rotation = rotations[0]
+        self.assertEqual(rotation.get('x'), 0)
+        self.assertEqual(rotation.get('w'), 12)
+        self.assertEqual(rotation.get('y'), score.get('h') + four.get('h'))
+        self.assertGreaterEqual(rotation.get('h'), 1)
+        self.assertNotIn('src', rotation)
+        self.assertNotIn('figure', rotation)
 
     def test_page_two_team_and_key_only(self):
         self.assertEqual(
@@ -347,12 +356,30 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertEqual(host.className, 'report-table-host')
 
     def test_workspace_is_shell_without_hidden_table_templates(self):
+        from dash import html as dash_html
         from synergy_reporter.report_components import render_report_workspace
-        markup = str(render_report_workspace(None, {}, {}, {}, 'gid'))
+        ws = render_report_workspace(None, {}, {}, {}, 'gid', rotation_json='{"data":[1]}')
+        markup = str(ws)
         self.assertIn('report-table-data', markup)
+        self.assertIn('report-rotation-figure', markup)
         self.assertIn('report-workspace', markup)
         self.assertNotIn('report-tpl-item-table', markup)
         self.assertNotIn('report-templates', markup)
+
+        def _walk(node, acc=None):
+            acc = acc or []
+            acc.append(node)
+            children = getattr(node, 'children', None)
+            if isinstance(children, (list, tuple)):
+                for child in children:
+                    _walk(child, acc)
+            elif children is not None and not isinstance(children, str):
+                _walk(children, acc)
+            return acc
+
+        fig_el = next(n for n in _walk(ws) if getattr(n, 'id', None) == 'report-rotation-figure')
+        self.assertEqual(type(fig_el).__name__, type(dash_html.Div()).__name__)
+        self.assertEqual(fig_el.children, '{"data":[1]}')
 
     def test_header_renders_two_lines_with_venue_after_time(self):
         from synergy_reporter.report_components import render_header
@@ -398,6 +425,17 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('syncPageListSticky', js)
         self.assertIn('markPaperOverflow', js)
         self.assertIn('function clampItemToPaper', js)
+        self.assertIn("type === 'rotation'", js)
+        self.assertIn('staticPlot: true', js)
+        self.assertIn('Plotly.toImage', js)
+        self.assertIn('Plotly.react', js)
+        self.assertIn('noResize: true', js)
+        self.assertIn('var LAYOUT_VERSION = 2', js)
+        self.assertIn('var ROTATION_FONT_SCALE = 0.75', js)
+        self.assertNotIn("title.textContent = ROTATION_TITLE", js)
+        self.assertIn('No rotation chart for this game.', js)
+        self.assertIn('Could not load rotation.', js)
+        self.assertIn("stored.version !== LAYOUT_VERSION", js)
         self.assertIn("event.key === 'Enter'", js)
         self.assertIn('naturalWidth', js)
         self.assertIn('This export will crop content that sits outside A4.', js)
@@ -427,6 +465,10 @@ class ReportTableComponentTests(unittest.TestCase):
         markup = str(toolbar)
         self.assertIn('tabler:table', markup)
         self.assertIn('Add table', markup)
+        self.assertIn('tabler:chart-bar', markup)
+        self.assertNotIn('tabler:timeline', markup)
+        self.assertIn('Add rotation', markup)
+        self.assertIn('report-add-rotation', markup)
         self.assertIn('report-table-menu', markup)
         self.assertIn('Reset layout', markup)
         self.assertIn('tabler:restore', markup)
@@ -474,6 +516,18 @@ class ReportTableComponentTests(unittest.TestCase):
         empty, empty_btns = apply_page_cmd(None, {})
         self.assertIs(empty, no_update)
         self.assertIs(empty_btns, no_update)
+
+    def test_stale_layout_version_returns_default(self):
+        if report_layout is None:
+            raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
+        stale = {
+            'version': 1,
+            'pages': [{'id': 'old', 'blocks': [_blocks(_layout(), 0)[0]]}],
+        }
+        fresh = report_layout.normalize_layout(stale)
+        self.assertEqual(fresh['version'], 2)
+        types = [b.get('type') for b in fresh['pages'][0]['blocks']]
+        self.assertIn('rotation', types)
 
     def test_empty_page_has_no_blocks(self):
         if report_layout is None:
@@ -569,9 +623,19 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['add_note_icon'], 'tabler:notebook')
         self.assertEqual(chrome['add_image_icon'], 'tabler:photo')
         self.assertEqual(chrome['add_table_icon'], 'tabler:table')
+        self.assertEqual(chrome['add_rotation_icon'], 'tabler:chart-bar')
         self.assertEqual(chrome['add_note_label'], 'Add note')
         self.assertEqual(chrome['add_image_label'], 'Add image')
         self.assertEqual(chrome['add_table_label'], 'Add table')
+        self.assertEqual(chrome['add_rotation_label'], 'Add rotation')
+        self.assertFalse(chrome['rotation_resize'])
+        self.assertIsNone(chrome['rotation_title'])
+        self.assertEqual(chrome['rotation_scale'], 0.75)
+        self.assertEqual(chrome['rotation_drag_handle'], 'overlay')
+        self.assertEqual(chrome['rotation_camera'], 'all_no_dnp_no_playhead')
+        self.assertEqual(chrome['rotation_place'], 'native_or_new_page')
+        self.assertEqual(chrome['rotation_empty'], 'No rotation chart for this game.')
+        self.assertEqual(chrome['rotation_error'], 'Could not load rotation.')
         self.assertEqual(chrome['add_table_control'], 'icon_menu')
         self.assertEqual(chrome['reset_icon'], 'tabler:restore')
         self.assertEqual(chrome['reset_label'], 'Reset layout')
@@ -698,6 +762,9 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(paint['desktop_min_px'], 1280)
         self.assertEqual(paint['player_stats_sort'], '+/-_desc')
         self.assertEqual(paint['image_validate'], 'clientside')
+        self.assertEqual(paint['rotation_figure'], 'workspace_json')
+        self.assertTrue(paint['rotation_store_on_load'])
+        self.assertNotIn('rotation_store', paint['python_inputs'])
         self.assertNotIn('report_layout_store', paint['python_inputs'])
         self.assertNotIn('lineup_store', paint['python_inputs'])
 

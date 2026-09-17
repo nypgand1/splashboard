@@ -229,11 +229,38 @@ def test_report_player_zero_made_shows_zero_pct(page, e2e_server):
     assert 'Player Stats' in text
 
 
+def test_report_page_one_has_static_rotation(page, e2e_server):
+    _open_report(page, e2e_server)
+    first = page.locator('#report-papers .report-paper').first
+    first.locator('.grid-stack-item[data-block-type="rotation"]').wait_for(
+        state='attached', timeout=20000,
+    )
+    rot = first.locator('.grid-stack-item[data-block-type="rotation"]')
+    assert rot.locator('.report-block-title').count() == 0
+    assert rot.locator('.grid-stack-item-handle').count() >= 1
+    page.locator('#report-add-rotation').wait_for(state='attached')
+    page.wait_for_function(
+        '''() => {
+            const host = document.querySelector(
+                '#report-papers .grid-stack-item[data-block-type="rotation"] .report-rotation-host'
+            );
+            return !!(host && host.querySelector('.js-plotly-plot, .report-rotation-plot'));
+        }''',
+        timeout=20000,
+    )
+    host_text = page.locator(
+        '#report-papers .grid-stack-item[data-block-type="rotation"] .report-rotation-host'
+    ).inner_text()
+    assert 'No rotation chart' not in host_text
+    assert 'Could not load rotation' not in host_text
+
+
 def test_report_survives_leaving_and_returning_to_tab(page, e2e_server):
     _open_report(page, e2e_server)
     first = page.locator('#report-papers .report-paper').first
     assert first.locator('.report-js-table').count() >= 1
     assert 'Score' in (first.inner_text() or '')
+    assert first.locator('.grid-stack-item[data-block-type="rotation"]').count() >= 1
     _select_game_tab(page, 'Box Score', 'wrap-bs')
     page.locator('#wrap-bs').wait_for(state='visible', timeout=15000)
     page.locator('#wrap-report').wait_for(state='hidden', timeout=15000)
@@ -246,6 +273,7 @@ def test_report_survives_leaving_and_returning_to_tab(page, e2e_server):
     first = page.locator('#report-papers .report-paper').first
     assert first.locator('.report-js-table').count() >= 1
     assert 'Score' in (first.inner_text() or '')
+    assert first.locator('.grid-stack-item[data-block-type="rotation"]').count() >= 1
 
 
 def test_report_toolbar_sticks_and_pm_is_plain(page, e2e_server):

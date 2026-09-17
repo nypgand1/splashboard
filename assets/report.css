@@ -470,6 +470,28 @@ body {
     overflow: hidden;
 }
 
+.report-rotation-host {
+    width: 100%;
+}
+
+.report-rotation-scale {
+    overflow: hidden;
+}
+
+.report-rotation-plot {
+    transform-origin: top left;
+}
+
+.report-rotation-empty {
+    font-size: 12px;
+    color: #64748b;
+    padding: 8px 4px;
+}
+
+.grid-stack-item[data-block-type="rotation"] .ui-resizable-handle {
+    display: none !important;
+}
+
 .report-block-title,
 .report-table-caption {
     display: flex;
