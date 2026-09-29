@@ -2,6 +2,7 @@
 import json
 import pandas as pd
 import numpy as np
+from synergy_inbounder.possessions import annotate_possessions
 from synergy_inbounder.settings import LOGGER
 
 def process_lineup_pbp(df, starter_dict):
@@ -44,13 +45,16 @@ def process_lineup_stats(df):
     entity = lineup_df['entityId']
     subtype = lineup_df['subType']
     made = lineup_df['success'] == 1
+    annotated = annotate_possessions(lineup_df)
+    poss_end = annotated['poss_end'].fillna(False)
+    poss_team = annotated['poss_team_id']
 
     lineup_df_dict = dict()
     for t in entity.dropna().unique():
         is_team = entity == t
         is_opp = entity.notna() & (entity != t)
 
-        lineup_df['POSS'] = (is_team & (event == 'possession')).astype(int)
+        lineup_df['POSS'] = (poss_end & (poss_team == t)).astype(int)
         lineup_df['2M'] = (is_team & (event == '2pt') & made).astype(int)
         lineup_df['2A'] = (is_team & (event == '2pt')).astype(int)
         lineup_df['3M'] = (is_team & (event == '3pt') & made).astype(int)
@@ -69,7 +73,7 @@ def process_lineup_stats(df):
         lineup_df['FD'] = np.where(is_team & (event == 'foul') & (subtype == 'drawn'), 1, np.nan)
         lineup_df['PTS'] = 2 * lineup_df['2M'] + 3 * lineup_df['3M'] + lineup_df['1M']
 
-        lineup_df['Opp_POSS'] = (is_opp & (event == 'possession')).astype(int)
+        lineup_df['Opp_POSS'] = (poss_end & poss_team.notna() & (poss_team != t)).astype(int)
         lineup_df['Opp_2M'] = (is_opp & (event == '2pt') & made).astype(int)
         lineup_df['Opp_2A'] = (is_opp & (event == '2pt')).astype(int)
         lineup_df['Opp_3M'] = (is_opp & (event == '3pt') & made).astype(int)

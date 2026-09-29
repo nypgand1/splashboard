@@ -1,6 +1,9 @@
 import json
 import unittest
+from unittest.mock import patch
 
+import dash_mantine_components as dmc
+import pandas as pd
 from dash import no_update
 
 import app  # noqa: F401
@@ -29,7 +32,10 @@ class IntervalGateTests(unittest.TestCase):
 
 class HiddenTabTests(unittest.TestCase):
     def test_hidden_tabs_do_not_rebuild(self):
-        self.assertIs(game_page.update_pane_bs('{}', 'tab-lineup'), no_update)
+        self.assertEqual(
+            game_page.update_pane_bs('{}', 'tab-lineup'),
+            (no_update, no_update),
+        )
         self.assertIs(game_page.update_pane_rotation('{}', 'tab-bs'), no_update)
         self.assertEqual(
             game_page.update_rotation_graph('{}', {}, 'tab-bs'),
@@ -237,6 +243,176 @@ class RotationViewTests(unittest.TestCase):
         )
         self.assertNotEqual(style_live.get('display'), 'none')
         self.assertEqual(variant_live, 'filled')
+
+
+def _split(frame):
+    return frame.to_json(orient='split')
+
+
+def _walk_text(node, found):
+    if isinstance(node, (list, tuple)):
+        for child in node:
+            _walk_text(child, found)
+        return
+    children = getattr(node, 'children', None)
+    if isinstance(children, str):
+        found.append(children)
+    elif children is not None:
+        _walk_text(children, found)
+
+
+class BoxScorePeriodUiTests(unittest.TestCase):
+    def _payload(self):
+        teams = ['Home', 'Away']
+        return {
+            'qt_pts_df': _split(pd.DataFrame({'Team': teams, '1Q': [20, 18], '2Q': [22, 16]})),
+            'qt_foul_df': _split(pd.DataFrame({'Team': teams, '1Q': [2, 3]})),
+            'qt_tout_df': _split(pd.DataFrame({'Team': teams, '1Q': [1, 0]})),
+            't_adv_df': _split(pd.DataFrame({'Team': teams, 'Pace': [70.0, 68.0], 'PPP': [1.1, 1.0]})),
+            't_df': _split(pd.DataFrame({'Team': teams, 'PTS': [88, 79]})),
+            'k_df': _split(pd.DataFrame({'Team': teams, 'PIP': [20, 18]})),
+            'p_df_dict': {
+                'Home': _split(pd.DataFrame({'Player': ['Lin'], 'PTS': [10]})),
+                'Away': _split(pd.DataFrame({'Player': ['Chen'], 'PTS': [8]})),
+            },
+            'p_summary_dict': {},
+            'period_chips': [
+                {'label': 'All', 'value': 'all'},
+                {'label': '1Q', 'value': '1'},
+            ],
+            'slices': {
+                '1': {
+                    't_adv_df': _split(pd.DataFrame({
+                        'Team': teams, 'Pace': ['4.0', '4.0'], 'PPP': ['1.20', ''],
+                    })),
+                    't_df': _split(pd.DataFrame({'Team': teams, 'PTS': [41, 33]})),
+                    'k_df': _split(pd.DataFrame({'Team': teams, 'PIP': [9, 8]})),
+                    'p_df_dict': {
+                        'Home': _split(pd.DataFrame({'Player': ['Lin'], 'PTS': [4]})),
+                        'Away': _split(pd.DataFrame({'Player': ['Chen'], 'PTS': [3]})),
+                    },
+                    'p_summary_dict': {},
+                },
+            },
+        }
+
+    def test_chip_filters_box_tables_and_keeps_score(self):
+        tree = game_page.render_bs_children(json.dumps(self._payload()), '1')
+        self.assertFalse(any(
+            isinstance(node, dmc.SegmentedControl) and getattr(node, 'id', None) == 'bs-period-control'
+            for node in _nodes(tree)
+        ))
+        texts = []
+        _walk_text(tree, texts)
+        self.assertLess(texts.index('SCORE'), texts.index('PACE & 4 FACTORS'))
+        self.assertIn('22', texts)
+        self.assertIn('41', texts)
+        self.assertNotIn('88', texts)
+
+    def test_period_control_is_in_the_initial_layout(self):
+        tree = game_page.layout('g1')
+        pane = next(node for node in _nodes(tree) if getattr(node, 'id', None) == 'pane-bs')
+        self.assertEqual(
+            [getattr(child, 'id', None) for child in pane.children],
+            ['bs-matrix', 'bs-period-bar', 'bs-detail'],
+        )
+        bar = pane.children[1]
+        control = bar.children[0]
+        self.assertEqual(control.id, 'bs-period-control')
+        self.assertEqual(control.data, [{'label': 'All', 'value': 'all'}])
+        self.assertEqual(control.value, 'all')
+        self.assertEqual(control.radius, 'md')
+        self.assertEqual(control.size, 'xs')
+        self.assertEqual(bar.style, {'display': 'none'})
+        controls = [
+            node for node in _nodes(tree)
+            if isinstance(node, dmc.SegmentedControl) and node.id == 'bs-period-control'
+        ]
+        self.assertEqual(len(controls), 1)
+
+    def test_period_bar_shows_store_chips_after_the_box_arrives(self):
+        data, style = game_page.period_bar_state(self._payload())
+        self.assertEqual([item['label'] for item in data], ['All', '1Q'])
+        self.assertEqual(style, {'display': 'flex'})
+        hidden_data, hidden_style = game_page.period_bar_state({})
+        self.assertEqual(hidden_data, [{'label': 'All', 'value': 'all'}])
+        self.assertEqual(hidden_style, {'display': 'none'})
+        error_data, error_style = game_page.period_bar_state({'_ui': 'error'})
+        self.assertEqual(error_data, [{'label': 'All', 'value': 'all'}])
+        self.assertEqual(error_style, {'display': 'none'})
+
+    def test_missing_chips_keep_the_current_box_score(self):
+        payload = self._payload()
+        payload.pop('period_chips')
+        payload.pop('slices')
+        tree = game_page.render_bs_children(json.dumps(payload))
+        texts = []
+        _walk_text(tree, texts)
+        self.assertNotIn('41', texts)
+        self.assertIn('88', texts)
+        self.assertFalse(any(
+            isinstance(node, dmc.SegmentedControl) and getattr(node, 'id', None) == 'bs-period-control'
+            for node in _nodes(tree)
+        ))
+
+    def test_game_change_resets_the_chip_and_the_interval_does_not(self):
+        self.assertEqual(game_page.resolve_bs_period('game_id', '1'), 'all')
+        self.assertEqual(game_page.resolve_bs_period('bs-period-control', 'h1'), 'h1')
+        self.assertEqual(game_page.resolve_bs_period('bs-period-control', None), 'all')
+        self.assertEqual(game_page.resolve_bs_period('interval-component', '2'), '2')
+
+    def test_store_keeps_full_game_tables_beside_slices(self):
+        class _Report:
+            def get_period_team_pts_df(self):
+                return pd.DataFrame({'Team': ['Home'], '1Q': [20]})
+
+            def get_period_team_fouls_df(self):
+                return pd.DataFrame({'Team': ['Home'], '1Q': [2]})
+
+            def get_period_team_timeout_df(self):
+                return pd.DataFrame({'Team': ['Home'], '1Q': [1]})
+
+            def get_team_advance_stats_df(self):
+                return pd.DataFrame({'Team': ['Home'], 'Pace': [70.0]})
+
+            def get_team_stats_df(self):
+                return pd.DataFrame({'Team': ['Home'], 'PTS': [88]})
+
+            def get_team_key_stats_df(self):
+                return pd.DataFrame({'Team': ['Home'], 'PIP': [20]})
+
+            def get_player_stats_json_dict(self):
+                return {'Home': _split(pd.DataFrame({'Player': ['Lin'], 'PTS': [10]}))}
+
+            def get_player_box_score_summary_json_dict(self):
+                return {}
+
+            def box_score_period_chips(self):
+                return [{'label': 'All', 'value': 'all'}, {'label': '1Q', 'value': '1'}]
+
+            def box_score_slice_json(self):
+                return {'1': {'t_df': 'slice-frame'}}
+
+        with patch.object(game_page, 'get_cached_report', return_value=_Report()):
+            payload = json.loads(game_page.update_bs_store(1, 'g1'))
+        self.assertIn('88', payload['t_df'])
+        self.assertNotIn('slice-frame', payload['t_df'])
+        self.assertEqual(payload['slices']['1']['t_df'], 'slice-frame')
+        self.assertEqual(payload['period_chips'][0]['value'], 'all')
+
+
+def _nodes(node):
+    if isinstance(node, (list, tuple)):
+        for child in node:
+            yield from _nodes(child)
+        return
+    yield node
+    children = getattr(node, 'children', None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            yield from _nodes(child)
+    elif children is not None:
+        yield from _nodes(children)
 
     def test_game_id_resets_view(self):
         view = game_page.apply_rotation_view_event(

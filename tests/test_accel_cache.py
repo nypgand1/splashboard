@@ -201,6 +201,26 @@ class LiveRouteTests(unittest.TestCase):
 
         self.assertTrue(any(url.endswith('/playbyplay/live') for url in seen))
 
+    def test_person_period_request_sends_limit_without_is_player(self):
+        seen = []
+
+        def get(url, params=None, headers=None, **kwargs):
+            seen.append((url, params))
+            return FakeResponse(200, {'data': []})
+
+        with patch.object(Communicator, 'post_synergy_for_token',
+                          return_value=FakeResponse(200, {'data': {'token': 'abc', 'expiresIn': 3600}})), \
+                patch.object(Communicator, 'get', side_effect=get):
+            Communicator.get_game_player_stats_periods_synergy('org', 'game', live=False)
+            Communicator.get_game_player_stats_periods_synergy('org', 'game', live=True)
+            Communicator.get_game_player_stats_synergy('org', 'game', live=False)
+
+        self.assertTrue(seen[0][0].endswith('/periods'))
+        self.assertEqual(seen[0][1], {'limit': 1000})
+        self.assertTrue(seen[1][0].endswith('/periods/live'))
+        self.assertEqual(seen[1][1], {'limit': 1000})
+        self.assertEqual(seen[2][1], {'limit': 1000, 'isPlayer': 'true'})
+
 
 class RosterMergeTests(unittest.TestCase):
     def test_fixture_bib_wins_over_stats_shirt(self):
@@ -363,7 +383,10 @@ class PaneRenderGateTests(unittest.TestCase):
         import app  # noqa: F401
         from dash import no_update
         from pages import game as game_page
-        self.assertIs(game_page.update_pane_bs('{}', 'tab-lineup'), no_update)
+        self.assertEqual(
+            game_page.update_pane_bs('{}', 'tab-lineup'),
+            (no_update, no_update),
+        )
         self.assertIs(game_page.update_pane_rotation('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_pbp('{}', 'tab-bs'), no_update)
         self.assertIs(game_page.update_pane_lineup(5, 'tab-bs', '{}', None), no_update)

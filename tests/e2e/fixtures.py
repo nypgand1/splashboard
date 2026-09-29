@@ -214,6 +214,24 @@ class FakeReport:
     def get_player_box_score_summary_json_dict(self):
         return {}
 
+    def box_score_period_chips(self):
+        return [
+            {'label': 'All', 'value': 'all'},
+            {'label': '1Q', 'value': '1'},
+            {'label': '1H', 'value': 'h1'},
+        ]
+
+    def box_score_slice_json(self):
+        teams = [HOME, AWAY]
+        one = {
+            't_adv_df': _split(pd.DataFrame({'Team': teams, 'Pace': [90.0, 90.0], 'PPP': [1.2, 1.0]})),
+            't_df': _split(pd.DataFrame({'Team': teams, 'PTS': [41, 33], 'Min': ['12:00', '12:00']})),
+            'k_df': _split(pd.DataFrame({'Team': teams, 'PIP': [9, 8]})),
+            'p_df_dict': self.get_player_stats_json_dict(),
+            'p_summary_dict': {},
+        }
+        return {'1': one, 'h1': one}
+
     def get_play_by_play_df(self):
         return pd.DataFrame([
             {

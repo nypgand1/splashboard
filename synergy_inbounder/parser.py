@@ -6,6 +6,7 @@ import numpy as np
 import json
 
 from synergy_inbounder.communicator import Communicator
+from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.runtime_cache import (
     get_cached_id_table,
     get_cached_season_df,
@@ -159,16 +160,18 @@ class Parser:
     @staticmethod
     def parse_game_bundle(org_id, game_id):
         live = should_use_live_endpoints(game_id=game_id)
-        with ThreadPoolExecutor(max_workers=6) as pool:
+        with ThreadPoolExecutor(max_workers=7) as pool:
             f_team = pool.submit(Communicator.get_game_team_stats_synergy, org_id, game_id, live)
             f_periods = pool.submit(Communicator.get_game_team_stats_periods_synergy, org_id, game_id, live)
             f_player = pool.submit(Communicator.get_game_player_stats_synergy, org_id, game_id, live)
+            f_player_periods = pool.submit(Parser._load_player_periods, org_id, game_id, live)
             f_pbp = pool.submit(Communicator.get_game_play_by_play_synergy, org_id, game_id, None, live)
             f_roster = pool.submit(Communicator.get_fixture_roster_synergy, org_id, game_id)
             f_ids = pool.submit(Parser.parse_id_tables, org_id)
             team_json = f_team.result()
             periods_json = f_periods.result()
             player_json = f_player.result()
+            player_periods_json = f_player_periods.result()
             pbp_json = f_pbp.result()
             try:
                 roster_json = f_roster.result()
@@ -191,7 +194,30 @@ class Parser:
             }
             if any(roster_starters.values()):
                 starter_dict = roster_starters
-        return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict, playbyplay_df, id_table, roster
+        player_periods_df = Parser._player_periods_from_json(player_periods_json)
+        return (
+            team_stats_df, team_stats_periods_df, player_stats_df, starter_dict,
+            playbyplay_df, id_table, roster, player_periods_df,
+        )
+
+    @staticmethod
+    def _load_player_periods(org_id, game_id, live):
+        try:
+            return Communicator.get_game_player_stats_periods_synergy(org_id, game_id, live)
+        except Exception:
+            LOGGER.warning('player period stats unavailable')
+            return {'data': []}
+
+    @staticmethod
+    def _player_periods_from_json(payload):
+        rows = []
+        for item in (payload or {}).get('data') or []:
+            stats = dict(item.get('statistics') or {})
+            stats['entityId'] = item.get('entityId')
+            stats['personId'] = item.get('personId')
+            stats['periodId'] = item.get('periodId')
+            rows.append(stats)
+        return pd.DataFrame(rows)
 
     @staticmethod
     def parse_id_tables(org_id):

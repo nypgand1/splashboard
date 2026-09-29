@@ -11,6 +11,7 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
         SYNERGY_PLAY_BY_PLAY_URL, SYNERGY_PLAY_BY_PLAY_LIVE_URL, \
         SYNERGY_PLAYER_STATS_URL, SYNERGY_PLAYER_STATS_LIVE_URL, \
+        SYNERGY_PLAYER_STATS_PERIODS_URL, SYNERGY_PLAYER_STATS_PERIODS_LIVE_URL, \
         SYNERGY_TEAM_STATS_URL, SYNERGY_TEAM_STATS_LIVE_URL, \
         SYNERGY_TEAM_STATS_PERIODS_URL, SYNERGY_TEAM_STATS_PERIODS_LIVE_URL, \
         SYNERGY_FIXTURE_ROSTER_URL, \
@@ -182,6 +183,18 @@ class Communicator:
         url = Communicator._stats_url(SYNERGY_PLAYER_STATS_URL, SYNERGY_PLAYER_STATS_LIVE_URL, live)
         url = url.format(organizationId=org_id, fixtureId=game_id)
         params = {'limit': 1000, 'isPlayer': 'true'}
+        r = Communicator.get_synergy(url, params=params)
+        return payload_from_response(r, url=url)
+
+    @staticmethod
+    def get_game_player_stats_periods_synergy(org_id, game_id, live=True):
+        url = Communicator._stats_url(
+            SYNERGY_PLAYER_STATS_PERIODS_URL,
+            SYNERGY_PLAYER_STATS_PERIODS_LIVE_URL,
+            live,
+        )
+        url = url.format(organizationId=org_id, fixtureId=game_id)
+        params = {'limit': 1000}
         r = Communicator.get_synergy(url, params=params)
         return payload_from_response(r, url=url)
 

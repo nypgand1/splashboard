@@ -28,6 +28,7 @@ def _bundle():
         pd.DataFrame(),
         {'home': 'Braves', 'away': 'Visitors', 'p1': 'Starter'},
         [],
+        pd.DataFrame(),
     )
 
 
@@ -115,6 +116,7 @@ class MinutesFormatTests(unittest.TestCase):
             pd.DataFrame(),
             {'home': 'Braves', 'p1': 'Starter'},
             [],
+            pd.DataFrame(),
         )
         with patch.object(Parser, 'parse_game_bundle', return_value=bundle):
             report = PostGameReport('game-1')
@@ -184,6 +186,7 @@ class ShotPctDisplayTests(unittest.TestCase):
             pd.DataFrame(),
             {'home': 'Braves', 'p1': 'Bench'},
             [],
+            pd.DataFrame(),
         )
         with patch.object(Parser, 'parse_game_bundle', return_value=bundle):
             report = PostGameReport('game-1')
