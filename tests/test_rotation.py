@@ -7,6 +7,7 @@ from synergy_reporter.rotation import (
     apply_camera_relayout,
     build_rotation_figure,
     build_rotation_payload,
+    report_rotation_figure,
     clamp_time_window,
     clock_to_seconds,
     contrast_text_color,
@@ -435,6 +436,26 @@ class RotationFigureTests(unittest.TestCase):
         self.assertTrue(fig.layout.yaxis.fixedrange)
         self.assertTrue(fig.layout.yaxis2.fixedrange)
         self.assertTrue(fig.layout.yaxis3.fixedrange)
+
+    def test_report_rotation_figure_has_no_playhead(self):
+        fig = report_rotation_figure(self._payload())
+        bar_y = [trace.y[0] for trace in fig.data if trace.type == 'bar']
+        self.assertFalse(any(str(label).startswith('● ') for label in bar_y))
+        vlines = [
+            shape for shape in (fig.layout.shapes or [])
+            if abs(float(getattr(shape, 'x0', -1)) - float(getattr(shape, 'x1', -2))) < 1e-6
+        ]
+        self.assertEqual(vlines, [])
+        opacities = [
+            trace.marker.opacity for trace in fig.data
+            if trace.type == 'bar' and getattr(trace, 'marker', None)
+        ]
+        self.assertTrue(opacities)
+        self.assertTrue(all(opacity == 1.0 for opacity in opacities))
+        self.assertEqual(fig.layout.font.size, 12)
+        for ann in fig.layout.annotations or []:
+            self.assertEqual(ann.font.size, 12)
+        self.assertEqual(fig.layout.yaxis2.tickfont.size, 12)
 
     def test_playhead_dims_bench_and_marks_on_court(self):
         payload = self._payload()

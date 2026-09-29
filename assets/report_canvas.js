@@ -5,7 +5,18 @@
 
     var IMAGE_MAX_BYTES = 1000000;
     var GRID_COLUMNS = 12;
+    var LAYOUT_VERSION = 2;
     var DESKTOP_MIN_PX = 1280;
+    var ROTATION_EMPTY = 'No rotation chart for this game.';
+    var ROTATION_ERROR = 'Could not load rotation.';
+    var ROTATION_FONT_SCALE = 0.75;
+    var ROTATION_STATIC_CONFIG = {
+        staticPlot: true,
+        displayModeBar: false,
+        responsive: false,
+        scrollZoom: false,
+        doubleClick: false
+    };
     var A4_WIDTH_MM = 210;
     var A4_HEIGHT_MM = 297;
     var GRIDSTACK_CSS = '/assets/gridstack.min.css';
@@ -67,7 +78,7 @@
             }
         }
         if (!layout || !layout.pages) {
-            layout = { version: 1, pages: [] };
+            layout = { version: LAYOUT_VERSION, pages: [] };
         }
         var papers = document.querySelectorAll('#report-papers .report-paper');
         var pages = [];
@@ -119,7 +130,7 @@
             });
         });
         layout.pages = pages;
-        layout.version = 1;
+        layout.version = LAYOUT_VERSION;
         return layout;
     }
 
@@ -240,6 +251,86 @@
             return rec;
         });
         return { columns: obj.columns.slice(), rows: rows };
+    }
+
+    function rotationFigure() {
+        var el = document.getElementById('report-rotation-figure');
+        if (!el || !el.textContent) {
+            return { _ui: 'empty' };
+        }
+        try {
+            return JSON.parse(el.textContent);
+        } catch (err) {
+            return { _ui: 'error' };
+        }
+    }
+
+    function rotationNativeHeightPx() {
+        var fig = rotationFigure();
+        if (!fig || fig._ui === 'empty' || fig._ui === 'error' || !fig.layout) {
+            return 120;
+        }
+        return Math.max(120, Number(fig.layout.height) || 520);
+    }
+
+    function paintRotation(host) {
+        if (!host) {
+            return Promise.resolve();
+        }
+        host.textContent = '';
+        var fig = rotationFigure();
+        if (fig && fig._ui === 'error') {
+            host.className += ' report-rotation-empty';
+            host.textContent = ROTATION_ERROR;
+            return Promise.resolve();
+        }
+        if (!fig || fig._ui === 'empty' || !fig.data) {
+            host.className += ' report-rotation-empty';
+            host.textContent = ROTATION_EMPTY;
+            return Promise.resolve();
+        }
+        if (!window.Plotly || typeof window.Plotly.react !== 'function') {
+            host.className += ' report-rotation-empty';
+            host.textContent = ROTATION_ERROR;
+            return Promise.resolve();
+        }
+        var gd = document.createElement('div');
+        gd.className = 'report-rotation-plot';
+        var hostW = Math.max(200, host.clientWidth || (host.parentElement && host.parentElement.clientWidth) || 640);
+        var innerW = Math.round(hostW / ROTATION_FONT_SCALE);
+        var innerH = rotationNativeHeightPx();
+        var frame = document.createElement('div');
+        frame.className = 'report-rotation-scale';
+        frame.style.width = hostW + 'px';
+        frame.style.height = Math.round(innerH * ROTATION_FONT_SCALE) + 'px';
+        gd.style.width = innerW + 'px';
+        gd.style.height = innerH + 'px';
+        gd.style.transform = 'scale(' + ROTATION_FONT_SCALE + ')';
+        gd.style.transformOrigin = 'top left';
+        frame.appendChild(gd);
+        host.appendChild(frame);
+        var layout = Object.assign({}, fig.layout || {}, {
+            width: innerW,
+            height: innerH,
+            autosize: false,
+            dragmode: false
+        });
+        return window.Plotly.react(gd, fig.data, layout, ROTATION_STATIC_CONFIG).catch(function (err) {
+            console.warn('Report rotation plot failed', err);
+            host.textContent = ROTATION_ERROR;
+            host.className += ' report-rotation-empty';
+        });
+    }
+
+    function paintRotationBlocks(paper) {
+        var hosts = (paper || document).querySelectorAll('.report-rotation-host');
+        var chain = Promise.resolve();
+        Array.prototype.forEach.call(hosts, function (host) {
+            chain = chain.then(function () {
+                return paintRotation(host);
+            });
+        });
+        return chain;
     }
 
     function tablePayload() {
@@ -948,6 +1039,17 @@
             try {
             var layout = parseLayoutJson('report-layout-json') || { pages: [] };
             var page = layoutPageForPaper(layout, paper);
+            if (!(page.blocks || []).length) {
+                var idx = Array.prototype.indexOf.call(
+                    document.querySelectorAll('#report-papers .report-paper'),
+                    paper
+                );
+                var fallback = (layout.pages && layout.pages[idx])
+                    || layoutPageForPaper(parseLayoutJson('report-default-layout-json') || { pages: [] }, paper);
+                if (fallback && (fallback.blocks || []).length) {
+                    page = fallback;
+                }
+            }
             var grid = initOneGrid(paper);
             var gridEl = paper.querySelector('.report-grid');
             if (grid) {
@@ -959,32 +1061,54 @@
                     return;
                 }
                 if (grid) {
-                    grid.addWidget(node, {
+                    var widgetOpts = {
                         id: block.id,
                         x: block.x || 0,
                         y: block.y || 0,
                         w: block.w || 6,
                         h: block.h || 3
-                    });
+                    };
+                    if (block.type === 'rotation') {
+                        widgetOpts.noResize = true;
+                    }
+                    grid.addWidget(node, widgetOpts);
                 } else if (gridEl) {
                     gridEl.appendChild(node);
                 }
             });
             paper.setAttribute('data-hydrated', '1');
             bindTextBlocks(paper);
-            fitAllTableBlocks();
-            if (opts.compact && grid) {
-                compactGrid(grid);
-                syncPageOneSideNote(grid);
-            }
-            } finally {
+            return paintRotationBlocks(paper).then(function () {
+                var originY = snapshotNodeYs(grid);
+                if (grid && grid.el) {
+                    grid.el._splashboardOriginY = originY;
+                }
+                fitAllTableBlocks();
+                fitAllRotationBlocks();
+                if (grid) {
+                    resolveOverlaps(grid, originY);
+                }
+                if (opts.compact && grid) {
+                    compactGrid(grid);
+                    syncPageOneSideNote(grid);
+                }
+            }).then(function () {
                 hydrating = false;
+                window.setTimeout(function () {
+                    clampGridToPaper(grid);
+                    if (grid && grid.el) {
+                        resolveOverlaps(grid, grid.el._splashboardOriginY || {});
+                    }
+                    markPaperOverflow();
+                    syncPageListSticky();
+                }, 300);
+            }, function () {
+                hydrating = false;
+            });
+            } catch (err) {
+                hydrating = false;
+                throw err;
             }
-            window.setTimeout(function () {
-                clampGridToPaper(grid);
-                markPaperOverflow();
-                syncPageListSticky();
-            }, 300);
         });
         return hydrateLocks[lockKey];
     }
@@ -1026,6 +1150,9 @@
             window.dash_clientside.set_props('report-pane-ready', { data: '1' });
         }
         var stored = loadStored();
+        if (stored && stored.version !== LAYOUT_VERSION) {
+            stored = null;
+        }
         if (stored && stored.pages && stored.pages.length) {
             applyStoredLayout(stored);
         } else {
@@ -1057,6 +1184,7 @@
         node.setAttribute('data-h', String(block.h || 3));
         var card = document.createElement('div');
         var isTable = block.type === 'builtin_table';
+        var isRotation = block.type === 'rotation';
         card.className = 'grid-stack-item-content report-block-card' + (isTable ? ' report-block-card-table' : '');
         var remove = document.createElement('button');
         remove.type = 'button';
@@ -1102,6 +1230,10 @@
                 body.textContent = 'Drop an image here from Add image';
                 body.className += ' report-image-placeholder';
             }
+        } else if (isRotation) {
+            var host = document.createElement('div');
+            host.className = 'report-rotation-host';
+            body.appendChild(host);
         } else if (isTable) {
             var host = document.createElement('div');
             host.className = 'report-table-host';
@@ -1115,13 +1247,47 @@
     }
 
     function cellPx(grid) {
-        if (grid && grid.getCellHeight) {
-            return grid.getCellHeight(true) || 42;
-        }
         if (grid && grid.opts && grid.opts.cellHeight) {
-            return grid.opts.cellHeight + 6;
+            return grid.opts.cellHeight;
         }
-        return 42;
+        if (grid && grid.getCellHeight) {
+            return grid.getCellHeight(true) || 36;
+        }
+        return 36;
+    }
+
+    function gridContentInsetY(grid) {
+        var opts = (grid && grid.opts) || {};
+        var top = parseFloat(opts.marginTop);
+        var bottom = parseFloat(opts.marginBottom);
+        if (isNaN(top)) {
+            top = parseFloat(opts.margin);
+        }
+        if (isNaN(bottom)) {
+            bottom = parseFloat(opts.margin);
+        }
+        if (isNaN(top)) {
+            top = 6;
+        }
+        if (isNaN(bottom)) {
+            bottom = 6;
+        }
+        return top + bottom;
+    }
+
+    function tableBodyPadY(item) {
+        var body = item && item.querySelector('.report-block-body');
+        if (!body) {
+            return 0;
+        }
+        var cs = window.getComputedStyle(body);
+        return (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    }
+
+    function tableHugH(grid, item) {
+        var cell = cellPx(grid);
+        var needed = measureTableBlockPx(item) + tableBodyPadY(item) + gridContentInsetY(grid);
+        return Math.max(1, Math.ceil(needed / cell));
     }
 
     function paperMaxRows(grid) {
@@ -1251,8 +1417,36 @@
         return height;
     }
 
+    function measureTableBlockPx(item) {
+        var table = item.querySelector('.report-js-table');
+        if (!table) {
+            return measureContentPx(item);
+        }
+        var title = item.querySelector('.report-block-title-row');
+        var titleH = title ? (title.getBoundingClientRect().height || title.offsetHeight || 0) : 0;
+        var clone = table.cloneNode(true);
+        var liveW = Math.max(table.getBoundingClientRect().width || 0, table.offsetWidth || 0, 400);
+        clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:' + liveW + 'px;max-width:none;height:auto;max-height:none;table-layout:auto;visibility:hidden;overflow:visible;';
+        document.body.appendChild(clone);
+        var cloneH = Math.max(clone.scrollHeight || 0, clone.offsetHeight || 0);
+        document.body.removeChild(clone);
+        var liveH = Math.max(table.getBoundingClientRect().height || 0, table.scrollHeight || 0);
+        var headH = 0;
+        Array.prototype.forEach.call(table.querySelectorAll('thead tr'), function (tr) {
+            headH += tr.getBoundingClientRect().height || 0;
+        });
+        var bodySample = table.querySelector('tbody tr');
+        var bodyH = bodySample ? (bodySample.getBoundingClientRect().height || 0) : 0;
+        var nBody = table.querySelectorAll('tbody tr').length;
+        var fromRows = headH + bodyH * nBody;
+        return titleH + Math.max(cloneH, liveH, fromRows);
+    }
+
     function measureBlockH(block, grid, node) {
         var fallback = block.h || 3;
+        if (grid && block.type === 'rotation') {
+            return Math.max(1, Math.ceil((rotationNativeHeightPx() * ROTATION_FONT_SCALE + 8) / cellPx(grid)));
+        }
         if (!grid || block.type !== 'builtin_table') {
             return fallback;
         }
@@ -1264,7 +1458,7 @@
         node.style.top = '0';
         node.style.width = host.clientWidth + 'px';
         host.appendChild(node);
-        var h = Math.max(1, Math.ceil(measureContentPx(node) / cellPx(grid)));
+        var h = tableHugH({ opts: grid.opts, getCellHeight: grid.getCellHeight }, node);
         host.removeChild(node);
         node.style.position = '';
         node.style.visibility = '';
@@ -1302,25 +1496,130 @@
         return null;
     }
 
-    function fitAllTableBlocks() {
+    function fitTableBlocksOnGrid(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
         var updates = [];
-        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
-            var grid = el.gridstack;
-            if (!grid) {
-                return;
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
+            var h = tableHugH(grid, item);
+            if (h !== currentH) {
+                updates.push({ item: item, h: h });
             }
-            var cell = cellPx(grid);
-            el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
-                var node = item.gridstackNode || {};
-                var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
-                var h = Math.max(1, Math.ceil(measureContentPx(item) / cell));
-                if (h !== currentH) {
-                    updates.push({ grid: grid, item: item, h: h });
-                }
-            });
         });
         updates.forEach(function (u) {
-            u.grid.update(u.item, { h: u.h });
+            grid.update(u.item, { h: u.h });
+        });
+    }
+
+    function fitAllTableBlocks() {
+        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
+            fitTableBlocksOnGrid(el.gridstack);
+        });
+    }
+
+    function fitRotationBlocksOnGrid(grid) {
+        if (!grid || !grid.el) {
+            return;
+        }
+        var cell = cellPx(grid);
+        var updates = [];
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="rotation"]').forEach(function (item) {
+            var node = item.gridstackNode || {};
+            var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
+            var frame = item.querySelector('.report-rotation-scale');
+            var plotH = frame
+                ? frame.offsetHeight
+                : Math.round(rotationNativeHeightPx() * ROTATION_FONT_SCALE);
+            var h = Math.max(1, Math.ceil((plotH + 8) / cell));
+            if (h !== currentH) {
+                updates.push({ item: item, h: h });
+            }
+            item.setAttribute('data-min-h', String(h));
+            item.setAttribute('data-min-w', String(node.w || GRID_COLUMNS));
+        });
+        updates.forEach(function (u) {
+            grid.update(u.item, { h: u.h, noResize: true, minH: u.h });
+        });
+    }
+
+    function fitAllRotationBlocks() {
+        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
+            fitRotationBlocksOnGrid(el.gridstack);
+        });
+    }
+
+    function snapshotNodeYs(grid) {
+        var origin = {};
+        if (!grid || !grid.engine) {
+            return origin;
+        }
+        (grid.engine.nodes || []).forEach(function (n, i) {
+            var key = nodeOriginKey(n, i);
+            origin[key] = n.y || 0;
+        });
+        return origin;
+    }
+
+    function nodeOriginKey(n, i) {
+        if (n.el) {
+            return n.el.getAttribute('gs-id') || n.el.id || String(i);
+        }
+        return n.id || String(i);
+    }
+
+    function resolveOverlaps(grid, originY) {
+        if (!grid || !grid.engine) {
+            return;
+        }
+        originY = originY || {};
+        var nodes = (grid.engine.nodes || []).slice().sort(function (a, b) {
+            var ay = originY[nodeOriginKey(a, 0)];
+            var by = originY[nodeOriginKey(b, 1)];
+            if (ay === undefined) {
+                ay = a.y || 0;
+            }
+            if (by === undefined) {
+                by = b.y || 0;
+            }
+            return ay - by || (a.x || 0) - (b.x || 0);
+        });
+        var placed = [];
+        var moves = [];
+        nodes.forEach(function (n, i) {
+            var x = n.x || 0;
+            var key = nodeOriginKey(n, i);
+            var y = originY[key];
+            if (y === undefined) {
+                y = n.y || 0;
+            }
+            var w = n.w || 1;
+            var h = Math.max(1, n.h || 1);
+            var guard = 0;
+            var moved = true;
+            while (moved && guard < 64) {
+                moved = false;
+                guard += 1;
+                for (var j = 0; j < placed.length; j++) {
+                    var p = placed[j];
+                    if (x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y) {
+                        y = p.y + p.h;
+                        moved = true;
+                    }
+                }
+            }
+            if (n.el) {
+                moves.push({ el: n.el, y: y });
+            }
+            placed.push({ x: x, y: y, w: w, h: h });
+        });
+        moves.sort(function (a, b) {
+            return b.y - a.y;
+        });
+        moves.forEach(function (m) {
+            grid.update(m.el, { y: m.y });
         });
     }
 
@@ -1422,7 +1721,7 @@
         var minH = 1;
         var minW = 1;
         if (type === 'builtin_table') {
-            minH = Math.max(1, Math.ceil(measureContentPx(item) / cell));
+            minH = tableHugH(grid, item);
             var nodeX = (item.gridstackNode && item.gridstackNode.x) || 0;
             minW = Math.max(1, Math.min(
                 GRID_COLUMNS - nodeX,
@@ -1435,6 +1734,9 @@
         } else if (type === 'image') {
             minH = 1;
             minW = 1;
+        } else if (type === 'rotation') {
+            minH = Math.max(1, Math.ceil((rotationNativeHeightPx() * ROTATION_FONT_SCALE + 8) / cell));
+            minW = GRID_COLUMNS;
         }
         return { minW: minW, minH: minH };
     }
@@ -1457,6 +1759,11 @@
             } else if (type === 'builtin_table') {
                 minH = Math.max(1, node.h || 1);
                 minW = Math.max(1, node.w || 1);
+            } else if (type === 'rotation') {
+                minH = Math.max(1, node.h || 1);
+                minW = Math.max(1, node.w || GRID_COLUMNS);
+                grid.update(item, { minW: minW, minH: minH, noResize: true });
+                return;
             }
             grid.update(item, { minW: minW, minH: minH });
         });
@@ -1697,6 +2004,21 @@
         return box.y >= A4_HEIGHT_MM || box.x >= A4_WIDTH_MM || box.w <= 0 || box.h <= 0;
     }
 
+    function clipBoxIsUsable(clip) {
+        return !!(clip && clip.w >= 1 && clip.h >= 1);
+    }
+
+    function boxOutsideClip(box, clip) {
+        if (!box || !clipBoxIsUsable(clip)) {
+            return false;
+        }
+        var eps = 0.2;
+        return box.x >= clip.x + clip.w - eps
+            || box.y >= clip.y + clip.h - eps
+            || box.x + box.w <= clip.x + eps
+            || box.y + box.h <= clip.y + eps;
+    }
+
     function scaleXY(scale) {
         if (scale && typeof scale === 'object') {
             return { x: scale.x || 1, y: scale.y || 1 };
@@ -1787,6 +2109,7 @@
     function drawHeader(pdf, paper, paperRect, scale) {
         var title = paper.querySelector('.report-header-title');
         var meta = paper.querySelector('.report-header-meta');
+        var credit = paper.querySelector('.report-header-credit');
         [title, meta].forEach(function (el) {
             if (!el) {
                 return;
@@ -1806,11 +2129,29 @@
                 bold: fontWeightNum(style) >= 600
             });
         });
+        if (credit) {
+            var creditText = (credit.textContent || '').trim();
+            if (creditText) {
+                var creditStyle = window.getComputedStyle(credit);
+                var creditBox = boxMm(paperRect, credit, scale);
+                var creditColor = parseRgb(creditStyle.color) || [148, 163, 184];
+                pdf.setTextColor(creditColor[0], creditColor[1], creditColor[2]);
+                pdf.setFontSize(pxToPt(parseFloat(creditStyle.fontSize) || 8, scale));
+                drawPdfText(pdf, creditText, creditBox.x + creditBox.w, creditBox.y + creditBox.h / 2, {
+                    baseline: 'middle',
+                    align: 'right',
+                    bold: false
+                });
+            }
+        }
     }
 
     function drawFilledCircle(pdf, box, rgb) {
+        if (!box || !rgb) {
+            return;
+        }
         var radius = Math.min(box.w, box.h) / 2;
-        if (radius <= 0) {
+        if (!(radius > 0) || !isFinite(box.x) || !isFinite(box.y) || !isFinite(radius)) {
             return;
         }
         pdf.setFillColor(rgb[0], rgb[1], rgb[2]);
@@ -1839,9 +2180,9 @@
         drawFilledCircle(pdf, box, fill);
     }
 
-    function drawTableCell(pdf, cell, paperRect, scale) {
+    function drawTableCell(pdf, cell, paperRect, scale, clip) {
         var box = boxMm(paperRect, cell, scale);
-        if (paperOffsheet(box)) {
+        if (paperOffsheet(box) || boxOutsideClip(box, clip)) {
             return;
         }
         var style = window.getComputedStyle(cell);
@@ -2283,28 +2624,41 @@
     function drawPaper(pdf, paper) {
         var paperRect = paper.getBoundingClientRect();
         if (!paperRect.width) {
-            return;
+            return Promise.resolve();
         }
         var scale = paperScale(paperRect);
         pdf.setFillColor(255, 255, 255);
         pdf.rect(0, 0, A4_WIDTH_MM, A4_HEIGHT_MM, 'F');
+        try {
         drawHeader(pdf, paper, paperRect, scale);
         paper.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            if (item.hidden) {
+            if (item.classList.contains('grid-stack-placeholder')) {
                 return;
             }
+            try {
             var title = item.querySelector('.report-block-title');
             if (title) {
                 var titleText = (title.textContent || '').trim();
-                var tBox = boxMm(paperRect, title, scale);
+                var titleRow = item.querySelector('.report-block-title-row');
+                var tBox = boxMm(paperRect, titleRow || title, scale);
                 var tStyle = window.getComputedStyle(title);
                 var tColor = parseRgb(tStyle.color) || [15, 23, 42];
-                var textX = tBox.x;
+                var padL = 0;
+                if (titleRow) {
+                    padL = parseFloat(window.getComputedStyle(titleRow).paddingLeft) || 0;
+                }
+                var textX = tBox.x + padL * scaleXY(scale).x;
                 var dot = title.querySelector('.report-block-title-dot');
                 if (dot) {
-                    drawTitleDot(pdf, dot, paperRect, scale);
                     var dBox = boxMm(paperRect, dot, scale);
-                    textX = dBox.x + dBox.w + 2;
+                    var shifted = {
+                        x: textX,
+                        y: tBox.y + Math.max(0, (tBox.h - dBox.h) / 2),
+                        w: dBox.w,
+                        h: dBox.h
+                    };
+                    drawFilledCircle(pdf, shifted, parseRgb(window.getComputedStyle(dot).backgroundColor) || [0, 119, 182]);
+                    textX = shifted.x + shifted.w + 1.2;
                 }
                 if (titleText) {
                     pdf.setTextColor(tColor[0], tColor[1], tColor[2]);
@@ -2315,8 +2669,24 @@
                     });
                 }
             }
+            var clip = boxMm(paperRect, item, scale);
+            var tableEl = item.querySelector('.report-js-table');
+            if (tableEl && clipBoxIsUsable(clip)) {
+                var tableBox = boxMm(paperRect, tableEl, scale);
+                var top = Math.min(clip.y, tableBox.y);
+                var bottom = Math.max(clip.y + clip.h, tableBox.y + tableBox.h);
+                clip = {
+                    x: clip.x,
+                    y: top,
+                    w: clip.w,
+                    h: bottom - top
+                };
+            }
+            if (!clipBoxIsUsable(clip)) {
+                clip = null;
+            }
             item.querySelectorAll('th, td').forEach(function (cell) {
-                drawTableCell(pdf, cell, paperRect, scale);
+                drawTableCell(pdf, cell, paperRect, scale, clip);
             });
             var note = item.querySelector('[data-text-block]');
             if (note) {
@@ -2326,6 +2696,47 @@
             if (img) {
                 drawImageBlock(pdf, img, paperRect, scale);
             }
+            } catch (itemErr) {
+                console.warn('PDF item skipped', itemErr);
+            }
+        });
+        var rotationChain = Promise.resolve();
+        paper.querySelectorAll('.grid-stack-item[data-block-type="rotation"] .report-rotation-plot').forEach(function (gd) {
+            rotationChain = rotationChain.then(function () {
+                return drawRotationPlot(pdf, gd, paperRect, scale);
+            });
+        });
+        return rotationChain;
+        } catch (err) {
+            console.warn('PDF paper skipped', err);
+            return Promise.resolve();
+        }
+    }
+
+    function drawRotationPlot(pdf, gd, paperRect, scale) {
+        if (!gd || !window.Plotly || typeof window.Plotly.toImage !== 'function') {
+            return Promise.resolve();
+        }
+        var frame = gd.closest('.report-rotation-scale') || gd;
+        var box = boxMm(paperRect, frame, scale);
+        if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
+            return Promise.resolve();
+        }
+        var toImage = window.Plotly.toImage(gd, {
+            format: 'png',
+            scale: 2
+        });
+        var timed = new Promise(function (resolve) {
+            window.setTimeout(function () {
+                resolve(null);
+            }, 8000);
+        });
+        return Promise.race([toImage, timed]).then(function (dataUrl) {
+            if (dataUrl) {
+                pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
+            }
+        }).catch(function (err) {
+            console.warn('PDF rotation skipped', err);
         });
     }
 
@@ -2342,6 +2753,86 @@
         }
     }
 
+    function waitPdfFrame() {
+        return new Promise(function (resolve) {
+            var done = false;
+            function finish() {
+                if (done) {
+                    return;
+                }
+                done = true;
+                resolve();
+            }
+            window.requestAnimationFrame(function () {
+                window.requestAnimationFrame(finish);
+            });
+            window.setTimeout(finish, 120);
+        });
+    }
+
+    function capturePdfScroll() {
+        var workspace = document.getElementById('report-workspace');
+        var papersEl = document.querySelector('.report-papers');
+        var main = document.querySelector('.report-main');
+        return {
+            x: window.scrollX,
+            y: window.scrollY,
+            workspace: workspace ? workspace.scrollTop : 0,
+            papers: papersEl ? papersEl.scrollTop : 0,
+            main: main ? main.scrollTop : 0
+        };
+    }
+
+    function restorePdfScroll(saved) {
+        if (!saved) {
+            return;
+        }
+        window.scrollTo(saved.x, saved.y);
+        var workspace = document.getElementById('report-workspace');
+        var papersEl = document.querySelector('.report-papers');
+        var main = document.querySelector('.report-main');
+        if (workspace) {
+            workspace.scrollTop = saved.workspace;
+        }
+        if (papersEl) {
+            papersEl.scrollTop = saved.papers;
+        }
+        if (main) {
+            main.scrollTop = saved.main;
+        }
+    }
+
+    function revealPaperForPdf(paper) {
+        if (!paper) {
+            return Promise.resolve();
+        }
+        paper.scrollIntoView({ block: 'start', inline: 'nearest' });
+        void paper.offsetHeight;
+        return waitPdfFrame();
+    }
+
+    function refitPaperForPdf(paper) {
+        var gridEl = paper && paper.querySelector('.report-grid');
+        var grid = gridEl && gridEl.gridstack;
+        if (grid) {
+            var originY = snapshotNodeYs(grid);
+            if (grid.el) {
+                grid.el._splashboardOriginY = originY;
+            }
+            fitTableBlocksOnGrid(grid);
+            fitRotationBlocksOnGrid(grid);
+            resolveOverlaps(grid, originY);
+        }
+        if (paper) {
+            void paper.offsetHeight;
+        }
+        return new Promise(function (resolve) {
+            window.setTimeout(function () {
+                waitPdfFrame().then(resolve);
+            }, 50);
+        });
+    }
+
     function exportPapersToPdf() {
         var btn = document.getElementById('btn-export-pdf');
         if (btn && btn.getAttribute('aria-busy') === 'true') {
@@ -2352,6 +2843,7 @@
             window.print();
             return Promise.resolve();
         }
+        var savedScroll = capturePdfScroll();
         setPdfBusy(true);
         return ensureReportLibs().then(function () {
             if (!window.jspdf || !window.jspdf.jsPDF) {
@@ -2365,12 +2857,18 @@
             var chain = Promise.resolve();
             Array.prototype.forEach.call(papers, function (paper, index) {
                 chain = chain.then(function () {
-                    return hydratePage(index);
-                }).then(function () {
-                    if (index > 0) {
-                        pdf.addPage('a4', 'portrait');
-                    }
-                    drawPaper(pdf, paper);
+                    return Promise.resolve(hydratePage(index)).then(function () {
+                        return revealPaperForPdf(paper);
+                    }).then(function () {
+                        return refitPaperForPdf(paper);
+                    }).then(function () {
+                        if (index > 0) {
+                            pdf.addPage('a4', 'portrait');
+                        }
+                        return drawPaper(pdf, paper);
+                    }).catch(function (err) {
+                        console.warn('PDF page failed', err);
+                    });
                 });
             });
             return chain.then(function () {
@@ -2382,6 +2880,7 @@
             console.warn('PDF export failed, using print()', err && (err.message || String(err)));
             window.print();
         }).then(function () {
+            restorePdfScroll(savedScroll);
             setPdfBusy(false);
         });
     }
@@ -2612,42 +3111,64 @@
                             return;
                         }
                         slot = findFit(grid, w, h, paperMaxRows(grid)) || { x: 0, y: 0 };
-                        grid.addWidget(node, {
+                        var newOpts = {
                             id: block.id,
                             x: slot.x,
                             y: slot.y,
                             w: w,
                             h: h,
-                            minW: block.type === 'builtin_table' ? w : 1,
+                            minW: block.type === 'builtin_table' || block.type === 'rotation' ? w : 1,
                             minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
-                        });
+                        };
+                        if (block.type === 'rotation') {
+                            newOpts.noResize = true;
+                        }
+                        grid.addWidget(node, newOpts);
                         bindTextBlocks(node);
                         node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-                        node.setAttribute('data-min-w', block.type === 'builtin_table' ? String(w) : '1');
-                        clampItemToPaper(grid, node);
-                        persistLocal(readLayoutFromDom());
-                        window.setTimeout(markPaperOverflow, 0);
-                        if (paper) {
-                            paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
+                        node.setAttribute('data-min-w', block.type === 'builtin_table' || block.type === 'rotation' ? String(w) : '1');
+                        var afterNew = block.type === 'rotation'
+                            ? paintRotation(node.querySelector('.report-rotation-host')).then(function () {
+                                fitAllRotationBlocks();
+                            })
+                            : Promise.resolve();
+                        return afterNew.then(function () {
+                            clampItemToPaper(grid, node);
+                            persistLocal(readLayoutFromDom());
+                            window.setTimeout(markPaperOverflow, 0);
+                            if (paper) {
+                                paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                        });
                     });
                 });
             }
-            grid.addWidget(node, {
+            var placeOpts = {
                 id: block.id,
                 x: slot.x,
                 y: slot.y,
                 w: w,
                 h: h,
-                minW: block.type === 'builtin_table' ? w : 1,
+                minW: block.type === 'builtin_table' || block.type === 'rotation' ? w : 1,
                 minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
-            });
+            };
+            if (block.type === 'rotation') {
+                placeOpts.noResize = true;
+            }
+            grid.addWidget(node, placeOpts);
             bindTextBlocks(node);
             node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-            node.setAttribute('data-min-w', block.type === 'builtin_table' ? String(w) : '1');
-            clampItemToPaper(grid, node);
-            persistLocal(readLayoutFromDom());
-            window.setTimeout(markPaperOverflow, 0);
+            node.setAttribute('data-min-w', block.type === 'builtin_table' || block.type === 'rotation' ? String(w) : '1');
+            var afterPlace = block.type === 'rotation'
+                ? paintRotation(node.querySelector('.report-rotation-host')).then(function () {
+                    fitAllRotationBlocks();
+                })
+                : Promise.resolve();
+            afterPlace.then(function () {
+                clampItemToPaper(grid, node);
+                persistLocal(readLayoutFromDom());
+                window.setTimeout(markPaperOverflow, 0);
+            });
         });
     }
 
@@ -2655,6 +3176,9 @@
         skipFourFactorsGroup: skipFourFactorsGroup,
         groupedHeader: groupedHeader,
         paperScale: paperScale,
+        boxOutsideClip: boxOutsideClip,
+        clipBoxIsUsable: clipBoxIsUsable,
+        resolveOverlaps: resolveOverlaps,
         loadStored: loadStored,
         readLayoutFromDom: readLayoutFromDom,
         persist: persistLocal,
@@ -2739,6 +3263,15 @@
                 table_key: tableKey,
                 w: 12,
                 h: 4
+            });
+            return readLayoutFromDom();
+        },
+        addRotation: function () {
+            addWidgetToActive({
+                id: uniqueId('rotation'),
+                type: 'rotation',
+                w: 12,
+                h: 11
             });
             return readLayoutFromDom();
         },
@@ -2875,6 +3408,10 @@
         }
         if (event.target.closest('#report-add-text')) {
             window.splashboardReport.addText();
+            return;
+        }
+        if (event.target.closest('#report-add-rotation')) {
+            window.splashboardReport.addRotation();
             return;
         }
         if (event.target.closest('#report-add-page')) {

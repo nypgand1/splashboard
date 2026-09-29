@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from tests.e2e.fixtures import FINISHED_ID
+from tests.e2e.fixtures import AWAY, FINISHED_ID, HOME, REPORT_HOME_PLAYERS
 
 
 def _wait(page, selector, timeout=30000):
@@ -90,6 +90,20 @@ def _open_report(page, e2e_server):
     )
 
 
+def _confirm_pdf_crop_if_shown(page):
+    try:
+        page.wait_for_function(
+            '''() => {
+                const ok = document.getElementById('report-dialog-ok');
+                return !!(ok && ok.offsetParent && (ok.innerText || '').trim() === 'Export');
+            }''',
+            timeout=8000,
+        )
+        page.locator('#report-dialog-ok').click()
+    except Exception:
+        pass
+
+
 def test_report_note_and_pdf_export(page, e2e_server):
     _open_report(page, e2e_server)
     note = page.locator('#report-papers [data-text-block]').first
@@ -117,13 +131,7 @@ def test_report_note_and_pdf_export(page, e2e_server):
 
     with page.expect_download(timeout=60000) as download_info:
         page.locator('#btn-export-pdf').click()
-        dialog_ok = page.locator('#report-dialog-ok')
-        try:
-            dialog_ok.wait_for(state='visible', timeout=1500)
-            if (dialog_ok.inner_text() or '').strip() == 'Export':
-                dialog_ok.click()
-        except Exception:
-            pass
+        _confirm_pdf_crop_if_shown(page)
     download = download_info.value
     assert download.suggested_filename.endswith('.pdf')
 
@@ -150,13 +158,7 @@ def test_report_pdf_keeps_last_note_line(page, e2e_server):
 
     with page.expect_download(timeout=60000) as download_info:
         page.locator('#btn-export-pdf').click()
-        dialog_ok = page.locator('#report-dialog-ok')
-        try:
-            dialog_ok.wait_for(state='visible', timeout=1500)
-            if (dialog_ok.inner_text() or '').strip() == 'Export':
-                dialog_ok.click()
-        except Exception:
-            pass
+        _confirm_pdf_crop_if_shown(page)
     reader = PdfReader(str(download_info.value.path()))
     text = '\n'.join((pdf_page.extract_text() or '') for pdf_page in reader.pages)
     assert 'ZedLastNoteLine' in text
@@ -220,6 +222,70 @@ def test_report_table_block_hugs_table_not_viewport(page, e2e_server):
     assert geom['blockH'] - geom['contentH'] <= 48
 
 
+def test_report_pdf_clip_skips_cells_outside_block(page, e2e_server):
+    _open_report(page, e2e_server)
+    verdict = page.evaluate(
+        '''() => {
+            const fn = window.splashboardReport && window.splashboardReport.boxOutsideClip;
+            if (!fn) return { missing: true };
+            const clip = { x: 0, y: 40, w: 210, h: 80 };
+            const tiny = { x: 0, y: 0, w: 0.5, h: 80 };
+            return {
+                missing: false,
+                inside: fn({ x: 10, y: 50, w: 20, h: 10 }, clip),
+                below: fn({ x: 10, y: 120, w: 20, h: 10 }, clip),
+                above: fn({ x: 10, y: 0, w: 20, h: 10 }, clip),
+                right: fn({ x: 210, y: 50, w: 20, h: 10 }, clip),
+                tiny: fn({ x: 10, y: 50, w: 20, h: 10 }, tiny),
+            };
+        }'''
+    )
+    assert not verdict.get('missing')
+    assert verdict['inside'] is False
+    assert verdict['below'] is True
+    assert verdict['above'] is True
+    assert verdict['right'] is True
+    assert verdict['tiny'] is False
+
+
+def test_report_page_four_home_lineup_stays_above_away(page, e2e_server):
+    _open_report(page, e2e_server)
+    _hydrate_report_page(page, 3)
+    page.locator('#report-paper-page-4 .report-js-table').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    order = page.evaluate(
+        '''() => {
+            const paper = document.getElementById('report-paper-page-4');
+            const items = [...paper.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]')];
+            if (items.length < 2) return { ok: false };
+            const home = items.find((el) => (el.getAttribute('data-table-key') || '') === 'lineup_home');
+            const away = items.find((el) => (el.getAttribute('data-table-key') || '') === 'lineup_away');
+            if (!home || !away) return { ok: false };
+            const hy = (home.gridstackNode && home.gridstackNode.y) || 0;
+            const ay = (away.gridstackNode && away.gridstackNode.y) || 0;
+            return { ok: true, homeY: hy, awayY: ay, homeH: home.gridstackNode && home.gridstackNode.h };
+        }'''
+    )
+    assert order['ok'] is True
+    assert order['homeH'] > 8, order
+    assert order['homeY'] < order['awayY'], order
+    fit = page.evaluate(
+        '''() => {
+            const paper = document.getElementById('report-paper-page-4');
+            const home = paper.querySelector('.grid-stack-item[data-table-key="lineup_home"]');
+            const last = home && home.querySelector('tbody tr:last-child');
+            const box = home && home.querySelector('.grid-stack-item-content');
+            if (!last || !box) return { ok: false };
+            const lr = last.getBoundingClientRect();
+            const br = box.getBoundingClientRect();
+            return { ok: true, lastBottom: lr.bottom, boxBottom: br.bottom, delta: lr.bottom - br.bottom };
+        }'''
+    )
+    assert fit['ok'] is True
+    assert fit['delta'] <= 1, fit
+
+
 def test_report_player_zero_made_shows_zero_pct(page, e2e_server):
     _open_report(page, e2e_server)
     _hydrate_report_page(page, 2)
@@ -229,11 +295,38 @@ def test_report_player_zero_made_shows_zero_pct(page, e2e_server):
     assert 'Player Stats' in text
 
 
+def test_report_page_one_has_static_rotation(page, e2e_server):
+    _open_report(page, e2e_server)
+    first = page.locator('#report-papers .report-paper').first
+    first.locator('.grid-stack-item[data-block-type="rotation"]').wait_for(
+        state='attached', timeout=20000,
+    )
+    rot = first.locator('.grid-stack-item[data-block-type="rotation"]')
+    assert rot.locator('.report-block-title').count() == 0
+    assert rot.locator('.grid-stack-item-handle').count() >= 1
+    page.locator('#report-add-rotation').wait_for(state='attached')
+    page.wait_for_function(
+        '''() => {
+            const host = document.querySelector(
+                '#report-papers .grid-stack-item[data-block-type="rotation"] .report-rotation-host'
+            );
+            return !!(host && host.querySelector('.js-plotly-plot, .report-rotation-plot'));
+        }''',
+        timeout=20000,
+    )
+    host_text = page.locator(
+        '#report-papers .grid-stack-item[data-block-type="rotation"] .report-rotation-host'
+    ).inner_text()
+    assert 'No rotation chart' not in host_text
+    assert 'Could not load rotation' not in host_text
+
+
 def test_report_survives_leaving_and_returning_to_tab(page, e2e_server):
     _open_report(page, e2e_server)
     first = page.locator('#report-papers .report-paper').first
     assert first.locator('.report-js-table').count() >= 1
     assert 'Score' in (first.inner_text() or '')
+    assert first.locator('.grid-stack-item[data-block-type="rotation"]').count() >= 1
     _select_game_tab(page, 'Box Score', 'wrap-bs')
     page.locator('#wrap-bs').wait_for(state='visible', timeout=15000)
     page.locator('#wrap-report').wait_for(state='hidden', timeout=15000)
@@ -246,6 +339,7 @@ def test_report_survives_leaving_and_returning_to_tab(page, e2e_server):
     first = page.locator('#report-papers .report-paper').first
     assert first.locator('.report-js-table').count() >= 1
     assert 'Score' in (first.inner_text() or '')
+    assert first.locator('.grid-stack-item[data-block-type="rotation"]').count() >= 1
 
 
 def test_report_toolbar_sticks_and_pm_is_plain(page, e2e_server):
@@ -280,7 +374,7 @@ def test_report_toolbar_sticks_and_pm_is_plain(page, e2e_server):
 
 def _hydrate_report_page(page, index):
     page.locator(f'#report-page-list [data-page-index="{index}"]').click()
-    page.wait_for_timeout(700)
+    page.wait_for_timeout(1000)
 
 
 def test_report_delete_x_removes_that_a4_sheet(page, e2e_server):
@@ -488,6 +582,41 @@ def test_report_pdf_warns_when_paper_overflows(page, e2e_server):
     assert page.locator('#report-dialog-ok').inner_text().strip() == 'Export'
     page.locator('#report-dialog-cancel').click()
     assert native == []
+
+
+def test_report_pdf_after_reset_keeps_player_rows_without_scroll(page, e2e_server):
+    from pypdf import PdfReader
+
+    _open_report(page, e2e_server)
+    page.evaluate('window.scrollTo(0, 0)')
+    page.locator('#report-reset-layout').click()
+    page.locator('#report-dialog-ok').wait_for(state='visible', timeout=10000)
+    page.locator('#report-dialog-ok').click()
+    page.locator('#report-papers .report-js-table').first.wait_for(state='attached', timeout=20000)
+    page.wait_for_timeout(400)
+    page.evaluate('window.scrollTo(0, 0)')
+    item_counts = page.evaluate(
+        '''() => [...document.querySelectorAll('#report-papers .report-paper')].map(
+            (p) => p.querySelectorAll('.grid-stack-item').length
+        )'''
+    )
+    assert item_counts and item_counts[0] >= 1, item_counts
+
+    with page.expect_download(timeout=60000) as download_info:
+        page.locator('#btn-export-pdf').click()
+        _confirm_pdf_crop_if_shown(page)
+    reader = PdfReader(str(download_info.value.path()))
+    pages = [(pdf_page.extract_text() or '') for pdf_page in reader.pages]
+    joined = '\n'.join(pages)
+    assert len(pages) >= 4, pages
+    assert 'Team Stats' in joined, pages
+    assert '40:00' in joined, pages
+    assert 'PIP' in joined, pages
+    missing = [name for name in REPORT_HOME_PLAYERS if name not in joined]
+    assert missing == [], joined
+    missing_lineup = [f'Lin-{i}' for i in range(8) if f'Lin-{i}' not in joined]
+    assert missing_lineup == [], joined
+    assert 'Design by Wei-Hao Lin' in pages[0]
 
 
 @pytest.mark.pdf_text

@@ -8,6 +8,7 @@ import dash_mantine_components as dmc
 from ui_kit import icon as dmc_icon
 
 from synergy_reporter.report_layout import (
+    HEADER_CREDIT,
     TABLE_TITLES,
     empty_page,
     normalize_layout,
@@ -156,7 +157,11 @@ def render_header(match_info):
     )
     return html.Div([
         html.Div(score_line, className="report-header-title"),
-        html.Div(meta_line, className="report-header-meta"),
+        html.Div([
+            html.Div(className="report-header-side"),
+            html.Div(meta_line, className="report-header-meta"),
+            html.Div(HEADER_CREDIT, className="report-header-credit"),
+        ], className="report-header-meta-row"),
     ], className="report-header")
 
 
@@ -415,6 +420,7 @@ def render_toolbar():
             ], position="bottom-start"),
             className="report-table-picker",
         ),
+        _chrome_icon("tabler:chart-bar", "report-add-rotation", "Add rotation"),
         
         # Note formatting toolbar (visible when a note is focused)
         html.Div([
@@ -501,7 +507,7 @@ def render_dialog():
     )
 
 
-def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game_id):
+def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game_id, rotation_json=None):
     layout = normalize_layout(layout)
     pages = layout.get('pages') or []
     papers = []
@@ -519,6 +525,7 @@ def render_report_workspace(layout, bs_dict, lineup_store_data, match_info, game
         html.Div(game_id or '', id="report-game-id", hidden=True),
         html.Div(pdf_filename(match_info), id="report-pdf-filename", hidden=True),
         html.Div(table_json, id="report-table-data", hidden=True),
+        html.Div(rotation_json or json.dumps({'_ui': 'empty'}), id="report-rotation-figure", hidden=True),
         dcc.Store(id="report-page-ids", data=[page.get('id') or f'page-{i+1}' for i, page in enumerate(pages)]),
         dcc.Store(id="report-page-cmd", data=None),
         dcc.Store(id="report-dialog-opened", data=False),

@@ -303,11 +303,20 @@ def test_report_first_paint_on_desktop(page, e2e_server):
         }''',
         timeout=10000,
     )
-    _select_tab(page, 'Report')
-    for _ in range(4):
-        if page.locator('#wrap-report').is_visible():
+    for _ in range(8):
+        page.evaluate(
+            '''() => {
+                if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
+                    window.dash_clientside.set_props('tabs', {value: 'tab-report'});
+                }
+            }'''
+        )
+        try:
+            page.locator('#report-tab').click(force=True, timeout=2000)
+        except Exception:
+            _select_tab(page, 'Report')
+        if page.locator('#wrap-report').is_visible() and page.locator('#report-workspace').count():
             break
-        _select_tab(page, 'Report')
         time.sleep(0.4)
     page.locator('#report-workspace').wait_for(state='attached', timeout=20000)
     page.locator('#wrap-report').wait_for(state='visible', timeout=20000)
