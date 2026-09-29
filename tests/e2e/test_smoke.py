@@ -1,3 +1,4 @@
+import base64
 import time
 
 from tests.e2e.fixtures import (
@@ -125,7 +126,7 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
 
     tabs = page.locator('[role="tab"]')
     labels = [tabs.nth(i).inner_text().strip() for i in range(tabs.count())]
-    assert labels[:5] == ['Box Score', 'Rotation', 'Lineup Stats', 'Play-By-Play', 'Report']
+    assert labels[:6] == ['Box Score', 'Rotation', 'Shot Chart', 'Lineup Stats', 'Play-By-Play', 'Report']
 
     for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
@@ -341,7 +342,7 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
     page.locator('#pane-bs').get_by_text('41', exact=True).first.wait_for(timeout=10000)
     body = page.locator('#pane-bs').inner_text()
     assert '22' in body
-    assert '88' not in body
+    assert page.locator('#pane-bs').get_by_text('88', exact=True).count() == 0
     _select_tab(page, 'Lineup Stats')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs').get_by_text('41', exact=True).first.wait_for(timeout=10000)
@@ -425,3 +426,119 @@ def test_box_score_paint_and_table_pan(page, e2e_server):
     )
     assert not pan_1280.get('missing')
     assert pan_1280['scrollbar'] == 'none'
+
+
+def _chart_svg(page, court_id):
+    src = page.locator(f'#{court_id} img').get_attribute('src')
+    return base64.b64decode(src.split(',', 1)[1]).decode('utf-8')
+
+
+def _court_boxes(page):
+    return page.evaluate(
+        '''() => {
+            const box = (id) => {
+                const node = document.getElementById(id);
+                const rect = node.getBoundingClientRect();
+                return {x: rect.x, y: rect.y, w: rect.width, h: rect.height};
+            };
+            return {away: box('shot-chart-court-away'), home: box('shot-chart-court-home')};
+        }'''
+    )
+
+
+def test_shot_chart_tab(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Shot Chart')
+    page.locator('#shot-chart-court-home img').wait_for(state='visible', timeout=20000)
+    page.locator('#shot-chart-court-away img').wait_for(state='visible', timeout=20000)
+    home = _chart_svg(page, 'shot-chart-court-home')
+    away = _chart_svg(page, 'shot-chart-court-away')
+    assert '66.7' in home and ' %' in home and '2 / 3' in home and '#dc2626' in home
+    assert '0.0' in away and ' %' in away and '0 / 1' in away and '#0077b6' in away
+    assert 'rotate(90)' in home and 'stroke="#f8fafc"' not in home
+    assert 'id="shot-rim-line"' in home and 'stroke="#ffffff"' in home and 'stroke-width="0.5"' in home
+    assert 'stroke-width="2"' not in home and 'fill-opacity="0.45"' in home
+    assert 'fill-opacity="0.45"' in away
+    update = page.locator('#shot-chart-last-update')
+    assert update.is_visible()
+    assert 'Last Update' in update.inner_text()
+    assert page.locator('#shot-chart-card').locator('#shot-chart-last-update').count() == 0
+    update_box = update.bounding_box()
+    card = page.locator('#shot-chart-card').bounding_box()
+    assert update_box['y'] + update_box['height'] <= card['y'] + 2
+    assert update_box['x'] < card['x']
+    assert card['width'] <= 820
+    assert card['x'] > 40
+    wrap_text = page.locator('#wrap-shot-chart').inner_text()
+    assert HOME in wrap_text and AWAY in wrap_text
+    assert '1H' in wrap_text and '1Q' in wrap_text
+    assert 'No shots' not in wrap_text
+    wide = _court_boxes(page)
+    assert wide['away']['x'] < wide['home']['x']
+    assert abs(wide['away']['y'] - wide['home']['y']) < 80
+    assert 300 < wide['home']['w'] <= 380
+
+    page.locator('#shot-chart-player-home').click()
+    page.get_by_text('#7 Lin').wait_for(state='visible', timeout=5000)
+    page.wait_for_function(
+        '''() => {
+            const input = document.querySelector('#shot-chart-player-home');
+            const list = document.getElementById(input.getAttribute('aria-controls') || '');
+            if (!list) return false;
+            const options = [...list.querySelectorAll('[role="option"]')];
+            const capped = [...list.querySelectorAll('*')].filter((node) => node.style && node.style.maxHeight);
+            if (!options.length || !capped.length) return false;
+            const dropdown = list.closest('.mantine-Select-dropdown, .mantine-Popover-dropdown');
+            if (!dropdown) return false;
+            const style = getComputedStyle(dropdown);
+            const padTop = parseFloat(style.paddingTop) || 0;
+            const padBottom = parseFloat(style.paddingBottom) || 0;
+            const heights = options.map((node) => node.getBoundingClientRect().height);
+            const plan = window.splashboardShotMenuPlan(
+                input.getBoundingClientRect(), window.innerHeight, heights, heights.length, padTop, padBottom
+            );
+            const drop = dropdown.getBoundingClientRect();
+            const inputRect = input.getBoundingClientRect();
+            const onSide = plan.side === 'top'
+                ? drop.bottom <= inputRect.top + 8
+                : drop.top >= inputRect.bottom - 8;
+            const first = options[0].getBoundingClientRect();
+            const last = options[options.length - 1].getBoundingClientRect();
+            const inside = first.top >= drop.top + padTop - 1
+                && last.bottom <= drop.bottom - padBottom + 1;
+            const innerOk = capped.every((node) => node.style.maxHeight === plan.inner + 'px');
+            const outerOk = dropdown.style.maxHeight === plan.height + 'px';
+            return onSide && inside && innerOk && outerOk;
+        }'''
+    )
+    assert page.evaluate(
+        '''() => {
+            const fit = window.splashboardShotMenuPlan({top: 100, bottom: 140}, 800, 32, 10);
+            const up = window.splashboardShotMenuPlan({top: 700, bottom: 740}, 800, 32, 10);
+            const tiny = window.splashboardShotMenuPlan({top: 10, bottom: 40}, 80, 32, 2);
+            const padded = window.splashboardShotMenuPlan({top: 100, bottom: 140}, 800, 32, 10, 4, 4);
+            const snapped = window.splashboardShotMenuPlan({top: 500, bottom: 540}, 700, 32, 20, 4, 4);
+            return fit.side === 'bottom' && fit.height === 320 && fit.inner === 320
+                && up.side === 'top' && up.height === 320
+                && tiny.side === 'bottom' && tiny.height === 128
+                && padded.height === 328 && padded.inner === 320
+                && snapped.side === 'top' && snapped.height === 488 && snapped.inner === 480;
+        }'''
+    )
+    page.keyboard.press('Escape')
+
+    _select_tab(page, 'Box Score')
+    page.locator('#wrap-bs').wait_for(state='visible', timeout=10000)
+    assert page.locator('#wrap-shot-chart').is_hidden()
+
+    page.set_viewport_size({'width': 375, 'height': 812})
+    _select_tab(page, 'Shot Chart')
+    page.locator('#shot-chart-court-home img').wait_for(state='visible', timeout=20000)
+    page.wait_for_timeout(400)
+    narrow = _court_boxes(page)
+    assert narrow['away']['y'] < narrow['home']['y']
+    assert narrow['home']['w'] > 200
+    assert page.locator('#report-tab').is_hidden()
+    assert page.get_by_role('tab', name='Shot Chart').is_visible()

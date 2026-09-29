@@ -845,7 +845,24 @@ class PostGameReport():
         for t in team_id_list:
             df[self.id_table.get(t, f"name_{t}")] = df[t].apply(lambda x: decode_lineup(x))
         
-        col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options'] 
+        shirts = {}
+        for person in self.roster or []:
+            if isinstance(person, dict) and person.get('personId') is not None:
+                shirts[str(person['personId'])] = person.get('shirtNumber')
+
+        def shirt_of(pid):
+            if pid is None or (isinstance(pid, float) and pd.isna(pid)):
+                return None
+            return shirts.get(str(pid))
+
+        if 'personId' in df.columns:
+            df['shirtNumber'] = df['personId'].map(shirt_of)
+        if 'x' not in df.columns:
+            df['x'] = float('nan')
+        if 'y' not in df.columns:
+            df['y'] = float('nan')
+
+        col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options', 'x', 'y', 'shirtNumber']
         col_list.extend(team_name_list)
         col_list.extend(team_id_list)
         if 'ERROR' in df:

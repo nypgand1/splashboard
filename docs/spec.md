@@ -67,9 +67,10 @@ Top tabs, left to right, rendered via `dmc.Tabs` with theme chrome (top radius 1
 
 1. Box Score (tab_id: `tab-bs`)
 2. Rotation (tab_id: `tab-rotation`)
-3. Lineup Stats (tab_id: `tab-lineup`)
-4. Play-By-Play (tab_id: `tab-pbp`)
-5. Report (tab_id: `tab-report`) — **finished games only** (`FINISHED`, `CONFIRMED`) **and desktop** (`viewport >= 1280px`). Every other status, and any viewport under 1280px, hides the Report tab (`display: none`). If Report is active while hidden, switch to Box Score.
+3. Shot Chart (tab_id: `tab-shot-chart`) — every status and viewport. See Shot Chart.
+4. Lineup Stats (tab_id: `tab-lineup`)
+5. Play-By-Play (tab_id: `tab-pbp`)
+6. Report (tab_id: `tab-report`) — **finished games only** (`FINISHED`, `CONFIRMED`) **and desktop** (`viewport >= 1280px`). Every other status, and any viewport under 1280px, hides the Report tab (`display: none`). If Report is active while hidden, switch to Box Score.
 
 Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab render callbacks gate on `Input('tabs', 'value')`, return `no_update`, and do not rebuild children. Report also returns `no_update` on later Report tab selects while `report-pane-ready` is `1` (empty/error may rebuild).
 - Quarter tables (points, fouls, timeouts) and team summary tables (four factors, advanced stats, key stats) are rendered via DMC `dmc.Table` (with `dmc.SimpleGrid` for responsive quarter stats layout).
@@ -94,7 +95,7 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 | Void (`ABANDONED`) | `ABANDONED` | no | off | hidden | link: `A : H` or `@` |
 
 - Finished games freeze the report cache (no TTL rebuild).
-- Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play and Rotation share that cadence.
+- Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play, Rotation, and Shot Chart share that cadence. Shot Chart keeps its period and player selections across ticks.
 - Unplayed and void use official routes and do not poll.
 
 ## Background warmup and prefetch
@@ -135,11 +136,44 @@ Chart:
 - Period labels: 1–4 → `1Q`–`4Q`; official OT `periodId` 11 → `OT`, 12 → `2OT`; legacy `periodId` 5 still reads as `OT`.
 - Stint hover: `#12 林志傑 (+7)` / `1Q 08:24 – 02:15 (06:09)`. Margin hover only on score-change events.
 
+## Shot Chart
+
+Tab immediately to the right of Rotation (`tab-shot-chart`). Shown whenever the Game page is reachable, including live-play and viewports under 1280px. It is not gated like Report.
+
+Shots come from play-by-play `2pt` and `3pt` makes and misses (every subtype, flagged shots included) that have both `x` and `y`. Free throws are ignored. Do not chart 4pt. `x` is the percent from the left baseline (0) to the right baseline (100). `y` is the percent from the top sideline (0) to the bottom sideline (100). Ignore the API zone string and `z`.
+
+Two half-courts at once, inside one `dmc.Paper` (`#shot-chart-card`, `withBorder`, `radius="md"`, `shadow="xs"`, `p="md"`, `className="braves-card-wrapper"`). The card is `width: 100%`, `max-width: 808px`, and centered. Loading, empty, and error stay inside that card. At 768px and wider, away is on the left and home is on the right (same order as the Away : Home score). Under 768px, away is above home. Each column is `width: 100%` and `max-width: 380px`, centered in the card. The team name (`14px`, weight 700) sits above that column's player `dmc.Select`, and the court image is at most 380px wide. Below that cap the image is the column width and its height follows the SVG. Each select lists `All`, then every player with a full-game 2pt or 3pt attempt, sorted by jersey (`#7 Lin`). Both default to `All`. Changing the period does not shrink the list or change the selection. Changing `game_id` resets both selects and the period to `All`. The live interval does not. An open menu opens toward the side that can show every name. The space below is used when both sides can. The panel height is the sum of each option's highlight box plus the dropdown's top and bottom padding. The inner scroll cap is only those highlight boxes, so the last visible row stays whole. When neither side can hold that panel, the menu uses the taller side minus 12px, snaps down to a complete highlight box, and still stays at least four rows tall. That cap replaces the Select scroll cap, including the inner scroll area. There is no search field. `Last Update` is `#shot-chart-last-update`, the first child of `#wrap-shot-chart` and outside `#shot-chart-card`. It is the same dimmed line as Rotation, left-aligned with the tab. It refreshes from play-by-play while this tab is open, including the 30-second live interval.
+
+One shared `dmc.SegmentedControl` inside the card, above both courts. Chips come from play-by-play `periodId`, not person-period stats, in Box Score order: `All`, `1Q`, `2Q`, `1H`, `3Q`, `4Q`, `2H`, then `OT` / `2OT` / … for periods that exist. `1H` only when periods 1 and 2 exist. `2H` only when periods 3 and 4 exist. Values are `all`, `1`, `2`, `h1`, `3`, `4`, `h2`, and the overtime period id (`11` is `OT`). Default `All`. One chip at a time. The chip filters shots. It does not zoom a Rotation camera.
+
+Court art is `assets/bg_shootchart_court.svg`. Keep the wood photo. Heat sits between the wood and the white lines. Fills use the 13 B.League zone shapes. The drawing has no restricted-area arc, so area 1's outline is an extra white line (`#shot-rim-line`, stroke-width 0.5, the same weight as the zone dividers in this drawing) above the heat and below the labels, whether or not the rim and the paint share a color. No shot dots. No make/miss toggle. No eFG legend.
+
+Fold each kept shot onto the single hoop so the shooter's left stays on the image left. The offensive basket is the majority side of that team's 2pt/3pt shots in that period (`x >= 50` is the right basket). A tie goes to the right. The player filter does not recompute the basket. All and half filters classify each shot by its own period. Shots on the other side of half court are excluded from the zones and from the opacity denominator. A shot on the half-court line stays. A point on a zone boundary counts for the zone closer to the basket.
+
+Color is that zone's eFG%, `(FGM + 0.5 × 3PM) / FGA`, compared as an exact ratio (not the rounded FG label):
+
+- 50 or above: `#dc2626`
+- 40 up to but not including 50: `#94a3b8`
+- below 40: `#0077b6`
+- 0 attempts: no fill
+
+Opacity is that zone's share of this court's currently filtered attempts: `min(0.45, max(0.20, share / 0.25))`.
+
+Labels are always visible, ink `#0f172a`, with no halo. The percent digits are 16px, a leading space and `%` are 12px, and the count is 10px. Eleven zones keep a horizontal two-line label. The two baseline corners (areas 12 and 8) use B.League `rotate(90)`: left percent `translate(6 38)`, left count `translate(6 88)`, right percent `translate(362 38)`, right count `translate(362 93)`.
+
+- Line 1 is FG% at one decimal, half-up (`2/3` → `66.7 %`, `3/4` → `75.0 %`, `0/7` → `0.0 %`).
+- Line 2 is `9 / 17`.
+- 0 attempts: `-` only, at the percent anchor.
+
+A filter that leaves a court with zero shots still shows that court and `-` in every zone. A play-by-play payload with rows but no chartable shots is the same. An empty payload uses `No data available.` / `Open another game from Home.` A load failure uses `dmc.Alert` `Failed to load this view. Please try again later.` No traceback. Live-play refreshes on the existing Game interval (30 seconds) and keeps the period and both player selections. Shots come from the play-by-play already in the bundle.
+
+Report block, not in `default_layout` yet: a static snapshot of both teams, the full game, and players `All`. It does not follow the tab filters. Default page 2, one `w=12` block under key stats; the note moves below the chart. Tables hug and push the chart down. If the stack exceeds A4, the existing overflow ring lights; do not shrink the chart. Shipping that block sets `LAYOUT_VERSION` to `3`, which discards stored v2 layouts. Toolbar icon after Add rotation: `tabler:ball-basketball`, aria-label `Add shot chart`, same slot and new-page rules as Add rotation. PDF draws the block as an image, labels inside the image. Report stays finished games and desktop only.
+
 ## Report
 
 Tests: `tests/test_report_layout.py` (Python contracts). Browser: `tests/e2e` (Home, Game tabs, Report first-paint, leave/return, delete page, notes, PDF, sticky). One Playwright path; do not keep a second Report-only tree.
 
-The Report tab is a multi-page A4 portrait canvas. Keep `PostGameReport` as the data source. Box Score, Rotation, Play-By-Play, and Lineup Stats stay as they are. Desktop only: hide the tab when `viewport < 1280px`. Default page 1 places a note beside the tables (right half) and a static Rotation Graph Paper full-width below that stack. Other default notes sit below tables. Users may drag a note beside a table on any page.
+The Report tab is a multi-page A4 portrait canvas. Keep `PostGameReport` as the data source. Box Score, Shot Chart, Rotation, Play-By-Play, and Lineup Stats stay as they are. Desktop only: hide the tab when `viewport < 1280px`. Default page 1 places a note beside the tables (right half) and a static Rotation Graph Paper full-width below that stack. Other default notes sit below tables. Users may drag a note beside a table on any page.
 
 ### Paper and chrome
 
@@ -178,7 +212,7 @@ Allowed `table_key` values: `score_group`, `t_adv_df`, `t_df`, `k_df`, `lineup_h
 
 There is no combined `lineup_dict` table_key. Home and away Player Stats are separate blocks on the same default page. Home and away Lineup Stats are separate blocks on the same default page.
 
-Out of v1: Shot Chart, play-type tables, manual cell fill/bold, auto red/green thresholds, editing builtin values.
+Out of v1: the Report shot-chart block (specified under Shot Chart; not in `default_layout` until that slice), play-type tables, manual cell fill/bold, auto red/green thresholds, editing builtin values.
 
 ### Default layout
 
