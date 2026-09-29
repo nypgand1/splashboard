@@ -28,11 +28,12 @@ Finished-game detection is in `docs/spec.md`. `Parser.parse_game_bundle` uses on
 | team stats | `.../statistics/for/entity/in/fixtures/{id}` | same + `/live` |
 | team period stats | `.../periods` | same + `/live` |
 | player stats | `.../statistics/for/person/in/fixtures/{id}` | same + `/live` |
+| player period stats | `.../periods` (`limit=1000`; no `isPlayer`) | same + `/live` |
 | fixture roster | always official `.../roster` | same |
 | org persons / entities / venues | always official, HTTP cache 8 hours | same |
 | season fixtures | always official, process cache 60 seconds | same |
 
-Official live routes are marked **2 requests per minute** per route. The 30 / 25 / 25 cadence sits on that cap, assuming one live game at a time. This spec does not require 429 `Retry-After` or serializing the live bundle.
+Official live routes are marked **2 requests per minute** per route. The 30 / 25 / 25 cadence sits on that cap, assuming one live game at a time. The live bundle adds one person-period request on that same cadence. This spec does not require 429 `Retry-After` or serializing the live bundle.
 
 ## Response envelope
 
@@ -51,6 +52,8 @@ Official live routes are marked **2 requests per minute** per route. The 30 / 25
 - Regulation: 1–4.
 - Official OT: 11, 12, …
 - Legacy data may use 5 as the first OT. The display layer reads both as `OT`.
+- Team and person period statistics have no `pace` or `possessions` field. Pace possessions are counted from play-by-play in API `data` order (see `docs/spec.md`). A missing play-by-play falls back to `FGA + 0.4*FTA + TO − ORB`.
+- Person `/periods` and `/periods/live` reject query `isPlayer` with HTTP 400. Person totals still accept `isPlayer=true`.
 
 ## Rate limits and cache
 

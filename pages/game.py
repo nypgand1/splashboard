@@ -61,6 +61,34 @@ ROTATION_GRAPH_CONFIG = {
 }
 
 
+def _box_score_wrap():
+    matrix = html.Div(id='bs-matrix', children=loading_skeleton('cards'))
+    bar = dmc.Group(
+        [
+            dmc.SegmentedControl(
+                id='bs-period-control',
+                data=[{'label': 'All', 'value': 'all'}],
+                value='all',
+                radius='md',
+                size='xs',
+            ),
+        ],
+        id='bs-period-bar',
+        mb='sm',
+        wrap='wrap',
+        gap='sm',
+        style={'display': 'none'},
+    )
+    detail = html.Div(id='bs-detail')
+    body = html.Div(id='pane-bs', children=[matrix, bar, detail])
+    if os.environ.get('SPLASHBOARD_E2E'):
+        return html.Div(body, id='wrap-bs')
+    return html.Div(
+        dcc.Loading(custom_spinner=loading_skeleton('cards'), children=body),
+        id='wrap-bs',
+    )
+
+
 def _pane(wrap_id, pane_id, kind, hidden=False):
     body = html.Div(id=pane_id, children=loading_skeleton(kind))
     style = {'display': 'none'} if hidden else {}
@@ -225,7 +253,7 @@ def layout(game_id=None):
             }
         ),
         
-        _pane('wrap-bs', 'pane-bs', 'cards'),
+        _box_score_wrap(),
         _rotation_wrap(hidden=True),
         _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
         _lineup_wrap(hidden=True),
@@ -239,6 +267,7 @@ def layout(game_id=None):
             n_intervals=0
         ),
         dcc.Store(id='bs_store'),
+        dcc.Store(id='bs-period', data='all'),
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
         dcc.Store(id='rotation_store'),
@@ -285,6 +314,8 @@ def update_bs_store(n, game_id):
         'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
         'p_df_dict': report.get_player_stats_json_dict(),
         'p_summary_dict': report.get_player_box_score_summary_json_dict(),
+        'period_chips': report.box_score_period_chips() if hasattr(report, 'box_score_period_chips') else [],
+        'slices': report.box_score_slice_json() if hasattr(report, 'box_score_slice_json') else {},
     }
     return json.dumps(bs_dict)
 
@@ -1123,25 +1154,52 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     )
 
 
-def render_bs_children(bs_store):
+def _format_metric(value, digits):
+    if value is None or value == '':
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except TypeError:
+        pass
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return ''
+
+
+def period_bar_state(bs_store):
+    payload = bs_store if isinstance(bs_store, dict) else safe_loads(bs_store)
+    ready = isinstance(payload, dict) and payload.get('_ui') != 'error' and bool(payload.get('qt_pts_df'))
+    chips = payload.get('period_chips') if isinstance(payload, dict) else None
+    data = chips or [{'label': 'All', 'value': 'all'}]
+    style = {'display': 'flex'} if ready else {'display': 'none'}
+    return data, style
+
+
+def render_bs_sections(bs_store, period='all'):
     bs_dict = safe_loads(bs_store)
     if bs_dict.get('_ui') == 'error':
-        return [_error_view(bs_dict)]
+        return [_error_view(bs_dict)], []
     if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return [_empty_view()]
+        return [_empty_view()], []
+
+    selected = str(period or 'all')
+    slices = bs_dict.get('slices') if isinstance(bs_dict.get('slices'), dict) else {}
+    view = slices.get(selected) if selected != 'all' and isinstance(slices.get(selected), dict) else bs_dict
 
     qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
     qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
     qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
 
-    t_adv_df = pd.read_json(io.StringIO(bs_dict['t_adv_df']), orient='split')
+    t_adv_df = pd.read_json(io.StringIO(view['t_adv_df']), orient='split')
     if 'Pace' in t_adv_df.columns:
-        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{float(x):.1f}")
+        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: _format_metric(x, 1))
     if 'PPP' in t_adv_df.columns:
-        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: f"{float(x):.2f}")
+        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: _format_metric(x, 2))
 
-    t_df = pd.read_json(io.StringIO(bs_dict['t_df']), orient='split')
-    k_df = pd.read_json(io.StringIO(bs_dict['k_df']), orient='split')
+    t_df = pd.read_json(io.StringIO(view['t_df']), orient='split')
+    k_df = pd.read_json(io.StringIO(view['k_df']), orient='split')
 
     # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
     row1 = dmc.SimpleGrid(
@@ -1169,15 +1227,14 @@ def render_bs_children(bs_store):
     # Row 3: Full Team Box Score
     row3 = dmc.Box(_dmc_table_from_df(t_df, is_team_summary=True), mb="sm")
 
-    children = [
+    matrix = [
         _last_update_span(),
         row1,
-        row2,
-        row3,
     ]
+    detail = [row2, row3]
 
-    p_dict = bs_dict.get('p_df_dict', {})
-    p_summary = bs_dict.get('p_summary_dict', {})
+    p_dict = view.get('p_df_dict', {})
+    p_summary = view.get('p_summary_dict', {})
     for idx, (team_name, p_json) in enumerate(sorted(p_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
         title_section = dmc.Group(
@@ -1195,11 +1252,16 @@ def render_bs_children(bs_store):
             mt="md",
             mb=10,
         )
-        children.append(title_section)
+        detail.append(title_section)
         p_df = pd.read_json(io.StringIO(p_json), orient='split')
         summary_rows = p_summary.get(team_name) if isinstance(p_summary, dict) else None
-        children.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
-    return children
+        detail.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
+    return matrix, detail
+
+
+def render_bs_children(bs_store, period='all'):
+    matrix, detail = render_bs_sections(bs_store, period)
+    return [*matrix, *detail]
 
 
 DEFAULT_ROTATION_VIEW = {
@@ -1222,6 +1284,14 @@ def _rotation_view(view_store):
             if key in data:
                 merged[key] = data[key]
     return merged
+
+
+def resolve_bs_period(triggered_id, control_value):
+    if triggered_id == 'game_id':
+        return 'all'
+    if control_value in (None, ''):
+        return 'all'
+    return str(control_value)
 
 
 def _period_control_data(periods):
@@ -1532,14 +1602,37 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
 
 
 @callback(
-    Output('pane-bs', 'children'),
+    Output('bs-matrix', 'children'),
+    Output('bs-detail', 'children'),
     Input('bs_store', 'data'),
     Input('tabs', 'value'),
+    Input('bs-period', 'data'),
 )
-def update_pane_bs(bs_store, active_tab):
+def update_pane_bs(bs_store, active_tab, period='all'):
     if active_tab != 'tab-bs':
-        return no_update
-    return render_bs_children(bs_store)
+        return no_update, no_update
+    return render_bs_sections(bs_store, period)
+
+
+@callback(
+    Output('bs-period-control', 'data'),
+    Output('bs-period-bar', 'style'),
+    Input('bs_store', 'data'),
+)
+def update_bs_period_options(bs_store):
+    return period_bar_state(bs_store)
+
+
+@callback(
+    Output('bs-period', 'data'),
+    Output('bs-period-control', 'value'),
+    Input('bs-period-control', 'value'),
+    Input('game_id', 'children'),
+    prevent_initial_call=True,
+)
+def update_bs_period(control_value, game_id):
+    period = resolve_bs_period(ctx.triggered_id, control_value)
+    return period, period
 
 
 @callback(

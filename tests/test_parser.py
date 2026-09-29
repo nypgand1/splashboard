@@ -25,6 +25,15 @@ def _player_stats():
     }]}
 
 
+def _player_periods():
+    return {'data': [{
+        'entityId': 'home',
+        'personId': 'p1',
+        'periodId': 1,
+        'statistics': {'points': 4},
+    }]}
+
+
 class PbpFrameTests(unittest.TestCase):
     def test_missing_columns_are_filled(self):
         df = Parser._pbp_df_from_json({'data': [{'periodId': 1}]})
@@ -100,6 +109,9 @@ class ParseGameBundleTests(unittest.TestCase):
                     'synergy_inbounder.parser.Communicator.get_game_player_stats_synergy',
                     side_effect=record('player', _player_stats()),
                 ), patch(
+                    'synergy_inbounder.parser.Communicator.get_game_player_stats_periods_synergy',
+                    side_effect=record('player_periods', _player_periods()),
+                ), patch(
                     'synergy_inbounder.parser.Communicator.get_game_play_by_play_synergy',
                     side_effect=lambda org, game, period_id=None, live=True: (
                         seen.append(('pbp', live)) or _empty_stats()
@@ -125,9 +137,11 @@ class ParseGameBundleTests(unittest.TestCase):
 
     def test_fixture_roster_supplies_bib_and_starters(self):
         _seen, result = self._run_bundle(False)
-        _team, _periods, _player, starter_dict, pbp_df, id_table, roster = result
+        _team, _periods, _player, starter_dict, pbp_df, id_table, roster, player_periods = result
         self.assertTrue(pbp_df.empty)
         self.assertEqual(id_table['home'], 'Home')
         self.assertEqual(roster[0]['shirtNumber'], '10')
         self.assertTrue(roster[0]['starter'])
         self.assertEqual(starter_dict.get('home'), ['p1'])
+        self.assertEqual(int(player_periods.iloc[0]['periodId']), 1)
+        self.assertEqual(player_periods.iloc[0]['points'], 4)

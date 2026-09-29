@@ -248,6 +248,24 @@ Ownership is split so each layer does what the other cannot. This is not leftove
 - Lineup table columns: `Lineup`, `Min`, `+/-`, `2M`, `2A`, `2FG%`, `3M`, `3A`, `3FG%`, `FTM`, `FTA`, `FT%`, `OR`, `DR`, `REB`, `AST`, `TO`, `ST`, `BL`, `PF`, `FD`, `PTS`, `eFG%`, `PM`.
 - Zero-value noise reduction: Except for `+/-` (which shows neutral gray `0`), numeric 0 statistics are rendered blank `''` (including shot `M` / `A`). Shot-group `%` columns (`2FG%`, `3FG%`, `FT%`) display `''` when that group has 0 attempts and `0.0%` when attempts `> 0` and made is 0. `eFG%` is `''` when `(2A+3A) == 0` and `0.0%` when `(2A+3A) > 0` and `(2M+3M) == 0`.
 
+## Box Score period slices
+
+A quiet `dmc.SegmentedControl` (`id=bs-period-control`, radius `md`, size `xs`) sits under the Score / Fouls / Timeouts row and above Pace & 4 Factors. It is part of the initial Game layout (`#bs-period-bar` between `#bs-matrix` and `#bs-detail`), not a child created by the box-score render. `data` starts as `All` and is replaced from `bs_store.period_chips` when the box arrives. The bar stays hidden on the empty and error views. It filters Pace & 4 Factors, key stats, the team box, and both player grids, including the pinned TEAM / COACHES and TOTAL rows. Score, Fouls, and Timeouts stay the full-game period matrix. Report, Rotation, and the Lineup tab stay full-game All. The Lineup tab is not period-filtered. Its POSS count uses the same play-by-play walk as Pace.
+
+Chip order is `All | 1Q | 2Q | 1H | 3Q | 4Q | 2H`, then each overtime that exists (`OT`, `2OT`, `3OT`, … from `period_label`). Values are `all`, `1`, `2`, `h1`, `3`, `4`, `h2`, and the overtime period id (`11` is `OT`). A quarter chip appears only when that `periodId` exists on the person-period or team-period rows. `1H` appears only when periods 1 and 2 both exist. `2H` appears only when periods 3 and 4 both exist. If person period stats are missing or empty, the menu is only `All`, even when team period rows exist.
+
+`dcc.Store` `bs-period` defaults to `all`. Changing `game_id` resets it to `All`. The live interval does not reset it, and the choice is not written to `localStorage`. `bs_store` keeps the full-game `t_adv_df`, `t_df`, `k_df`, `p_df_dict`, and `p_summary_dict` for Report. Non-`all` chips live under `slices`.
+
+`All` uses the full-game totals endpoints, not the sum of period rows. A single period uses that period's API row, including shot percentages, eFG%, and `usageRate`. `1H` and `2H` sum counting stats, then recompute shot percentages and eFG% from makes and attempts. Half eFG% is `100 * (2M + 1.5 * 3M) / FGA`. Half `USG%` is blank. Bench points sum `pointsFromBench`.
+
+The player list stays the full-game roster. A game-long DNP stays `DNP` on every slice. A player who played the game and has no minutes in the slice shows `0:00`. The starter mark is the game starter on every slice. Sort stays the shared player sort.
+
+Pace, PPP, TOV%, and lineup POSS share one play-by-play walk in API `data` order. Do not sort by `sequence`. Ignore `eventType == possession`. A trip ends on a made field goal unless the next ball event is that team's free throw, a made last free throw (`1Of1`, `2Of2`, `3Of3`), a turnover (the paired steal does not add another end), an opponent defensive rebound, or a period end after the trip included a shot, free throw, or turnover. An offensive rebound does not end the trip. Technical and unsportsmanlike free throws do not end the trip and do not change the offense. Count a trip only when it was used. `poss_end` is stamped on the closing row. `poss_team_id` is the offense, including when the closing row is the opponent's defensive rebound. Lineup POSS goes to the five on the floor at that row.
+
+Both teams show the mean 48-minute pace: `48 * 60 * possessions / (team minutes in seconds / 5)`. Do not switch the base to 40 minutes. Slice possessions are the ends whose `periodId` is in that chip. If play-by-play is missing, Pace falls back to `FGA + 0.4*FTA + TO − ORB` and lineup POSS stays blank. If play-by-play is present and no trip ends, the count is 0. PPP and TOV% are blank when possessions are 0.
+
+Person period stats are one GET of `.../statistics/for/person/in/fixtures/{fixtureId}/periods` (`/periods/live` when the game is live) with `limit=1000` only. Do not send `isPlayer`; that parameter belongs on the person totals endpoint and `/periods` rejects it. A failed or empty response does not fail the bundle. `All` still uses the person totals endpoint.
+
 ## Box Score DNP & Zero-Value Rules
 
 - DNP (Did Not Play) rostered players are included and sorted at the bottom of the bench.

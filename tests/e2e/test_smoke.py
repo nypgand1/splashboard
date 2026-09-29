@@ -327,6 +327,30 @@ def test_report_first_paint_on_desktop(page, e2e_server):
     assert table.locator('td').count() >= 1
 
 
+def test_box_score_period_chip_filters_team_box(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Box Score')
+    page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
+    _reveal_loading(page, 'wrap-bs')
+    control = page.locator('#bs-period-control')
+    control.wait_for(state='visible', timeout=20000)
+    page.locator('#pane-bs').get_by_text('88', exact=True).first.wait_for(timeout=10000)
+    control.get_by_text('1Q', exact=True).click()
+    page.locator('#pane-bs').get_by_text('41', exact=True).first.wait_for(timeout=10000)
+    body = page.locator('#pane-bs').inner_text()
+    assert '22' in body
+    assert '88' not in body
+    _select_tab(page, 'Lineup Stats')
+    _select_tab(page, 'Box Score')
+    page.locator('#pane-bs').get_by_text('41', exact=True).first.wait_for(timeout=10000)
+    page.set_viewport_size({'width': 375, 'height': 800})
+    assert control.is_visible()
+    control.get_by_text('All', exact=True).click()
+    page.locator('#pane-bs').get_by_text('88', exact=True).first.wait_for(timeout=10000)
+
+
 def test_box_score_paint_and_table_pan(page, e2e_server):
     page.set_viewport_size({'width': 500, 'height': 900})
     page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
