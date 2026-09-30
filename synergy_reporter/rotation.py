@@ -1054,6 +1054,12 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             line_color='#94a3b8',
             line_dash='solid',
         )
+    fig.add_vline(
+        x=game_end,
+        line_width=1,
+        line_color='#94a3b8',
+        line_dash='solid',
+    )
     if playhead is not None:
         fig.add_vline(
             x=playhead,
@@ -1119,7 +1125,10 @@ def report_rotation_figure(payload):
         x_range=None,
         show_dnp=False,
     )
-    fig.update_layout(font=dict(size=12, color='#334155'))
+    fig.update_layout(
+        font=dict(size=12, color='#334155'),
+        margin=dict(l=112, r=112, t=40, b=48),
+    )
     fig.update_annotations(font=dict(size=12, color='#1e293b'))
     fig.update_yaxes(tickfont=dict(size=12), row=2, col=1)
     return fig

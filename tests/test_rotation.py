@@ -445,7 +445,11 @@ class RotationFigureTests(unittest.TestCase):
             shape for shape in (fig.layout.shapes or [])
             if abs(float(getattr(shape, 'x0', -1)) - float(getattr(shape, 'x1', -2))) < 1e-6
         ]
-        self.assertEqual(vlines, [])
+        playhead_lines = [
+            shape for shape in vlines
+            if shape.line.color == '#0077b6' or shape.line.width == 2
+        ]
+        self.assertEqual(playhead_lines, [])
         opacities = [
             trace.marker.opacity for trace in fig.data
             if trace.type == 'bar' and getattr(trace, 'marker', None)
@@ -456,6 +460,17 @@ class RotationFigureTests(unittest.TestCase):
         for ann in fig.layout.annotations or []:
             self.assertEqual(ann.font.size, 12)
         self.assertEqual(fig.layout.yaxis2.tickfont.size, 12)
+
+    def test_report_rotation_right_margin_matches_name_lane(self):
+        report = report_rotation_figure(self._payload())
+        tab = build_rotation_figure(self._payload())
+        self.assertEqual(report.layout.margin.l, 112)
+        self.assertEqual(report.layout.margin.r, 112)
+        self.assertEqual(report.layout.margin.t, 40)
+        self.assertEqual(report.layout.margin.b, 48)
+        self.assertEqual(list(report.layout.xaxis.range), [0, 120])
+        self.assertEqual(tab.layout.margin.l, 112)
+        self.assertEqual(tab.layout.margin.r, 24)
 
     def test_playhead_dims_bench_and_marks_on_court(self):
         payload = self._payload()
@@ -486,6 +501,43 @@ class RotationFigureTests(unittest.TestCase):
     def test_zoom_range_sets_xaxis(self):
         fig = build_rotation_figure(self._payload(), x_range=(10, 50))
         self.assertEqual(list(fig.layout.xaxis.range), [10, 50])
+
+    def test_game_end_line_matches_quarter_dividers(self):
+        payload = self._payload()
+        payload['periods'] = [
+            {'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0},
+            {'id': 2, 'label': '2Q', 'seconds': 120, 'start': 120.0, 'end': 240.0},
+        ]
+        fig = build_rotation_figure(payload)
+        report = report_rotation_figure(payload)
+
+        def marks(figure):
+            found = []
+            for shape in figure.layout.shapes or []:
+                x0 = float(getattr(shape, 'x0', -1))
+                x1 = float(getattr(shape, 'x1', -2))
+                if abs(x0 - x1) >= 1e-6:
+                    continue
+                found.append((
+                    round(x0, 3),
+                    shape.line.color,
+                    shape.line.width,
+                ))
+            return found
+
+        def at(figure, x):
+            return [
+                (color, width)
+                for xpos, color, width in marks(figure)
+                if xpos == x
+            ]
+
+        for figure in (fig, report):
+            quarter = at(figure, 120.0)
+            end = at(figure, 240.0)
+            self.assertTrue(quarter)
+            self.assertEqual(end, quarter)
+            self.assertEqual(list(figure.layout.xaxis.range), [0, 240])
 
 
 class RunLabelTests(unittest.TestCase):
