@@ -919,9 +919,16 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
                     row=row,
                     col=1,
                 )
-        fig.update_yaxes(ticksuffix='  ', row=row, col=1)
+        fig.update_yaxes(
+            ticksuffix='  ',
+            categoryorder='array',
+            categoryarray=y_cats,
+            row=row,
+            col=1,
+        )
+        return y_cats
 
-    add_gantt(home, 1, home_color, home_players)
+    home_labels = add_gantt(home, 1, home_color, home_players)
 
     # 2. Score Margin Step-line with Dual-Color Fill & Rich Hover Tooltips
     margin_x = [point['t'] for point in margin] or [0]
@@ -1021,7 +1028,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     )
 
 
-    add_gantt(away, 3, away_color, away_players)
+    away_labels = add_gantt(away, 3, away_color, away_players)
 
     view_start, view_end = 0, game_end
     if x_range and len(x_range) == 2 and x_range[0] is not None and x_range[1] is not None:
@@ -1054,6 +1061,12 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             line_color='#94a3b8',
             line_dash='solid',
         )
+    fig.add_vline(
+        x=game_end,
+        line_width=1,
+        line_color='#94a3b8',
+        line_dash='solid',
+    )
     if playhead is not None:
         fig.add_vline(
             x=playhead,
@@ -1101,7 +1114,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         autosize=True,
         dragmode='pan',
         barmode='overlay',
-        margin=dict(l=112, r=24, t=40, b=48),
+        margin=dict(l=112, r=112, t=40, b=48),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#334155', size=12),
@@ -1109,6 +1122,76 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         uirevision=uirevision if uirevision is not None else f'{view_end - view_start:.3f}',
     )
     fig.update_annotations(font=dict(size=14, color='#1e293b'))
+
+    def layout_axis(ref):
+        if ref == 'y':
+            return 'yaxis'
+        return 'yaxis' + ref[1:]
+
+    def mirror_categories(dest, overlay, anchor, labels):
+        labels = list(labels or ['—'])
+        fig.update_layout(**{dest: dict(
+            overlaying=overlay,
+            side='right',
+            anchor=anchor,
+            domain=list(fig.layout[layout_axis(overlay)].domain),
+            categoryorder='array',
+            categoryarray=labels,
+            range=[-0.5, len(labels) - 0.5],
+            tickprefix='  ',
+            showgrid=False,
+            zeroline=False,
+            showline=False,
+            ticks='',
+            fixedrange=True,
+            automargin=False,
+            tickfont=dict(size=12, color='#334155'),
+        )})
+        fig.add_trace(go.Scatter(
+            x=[view_start] * len(labels),
+            y=labels,
+            xaxis=anchor,
+            yaxis=dest.replace('yaxis', 'y'),
+            mode='markers',
+            marker=dict(opacity=0, size=0),
+            hoverinfo='skip',
+            showlegend=False,
+        ))
+
+    def mirror_numbers(dest, src_name, overlay, anchor):
+        src = fig.layout[src_name]
+        fig.update_layout(**{dest: dict(
+            overlaying=overlay,
+            side='right',
+            anchor=anchor,
+            domain=list(src.domain),
+            range=list(src.range),
+            tickmode='array',
+            tickvals=list(src.tickvals),
+            ticktext=[str(value) for value in src.ticktext],
+            tickprefix='  ',
+            showgrid=False,
+            zeroline=False,
+            showline=False,
+            ticks='',
+            fixedrange=True,
+            automargin=False,
+            tickfont=dict(size=src.tickfont.size or 10, color='#334155'),
+        )})
+        fig.add_trace(go.Scatter(
+            x=[view_start],
+            y=[0],
+            xaxis=anchor,
+            yaxis=dest.replace('yaxis', 'y'),
+            mode='markers',
+            marker=dict(opacity=0, size=0),
+            hoverinfo='skip',
+            showlegend=False,
+        ))
+
+    mirror_categories('yaxis4', 'y', 'x', home_labels)
+    mirror_numbers('yaxis5', 'yaxis2', 'y2', 'x2')
+    mirror_categories('yaxis6', 'y3', 'x3', away_labels)
     return fig
 
 
@@ -1119,8 +1202,12 @@ def report_rotation_figure(payload):
         x_range=None,
         show_dnp=False,
     )
-    fig.update_layout(font=dict(size=12, color='#334155'))
+    fig.update_layout(
+        font=dict(size=12, color='#334155'),
+        margin=dict(l=112, r=112, t=40, b=48),
+    )
     fig.update_annotations(font=dict(size=12, color='#1e293b'))
     fig.update_yaxes(tickfont=dict(size=12), row=2, col=1)
+    fig.layout.yaxis5.tickfont.size = 12
     return fig
 
