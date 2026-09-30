@@ -620,6 +620,101 @@ def test_report_pdf_after_reset_keeps_player_rows_without_scroll(page, e2e_serve
     assert 'Design by Wei-Hao Lin' in pages[0]
 
 
+def test_report_page_two_shot_chart_and_pdf_image(page, e2e_server):
+    from pypdf import PdfReader
+
+    _open_report(page, e2e_server)
+    _hydrate_report_page(page, 1)
+    page.locator('#report-paper-page-2 .report-shot-chart-court').first.wait_for(
+        state='visible', timeout=15000,
+    )
+    geom = page.evaluate(
+        '''() => {
+            const paper = document.getElementById('report-paper-page-2');
+            const names = [...paper.querySelectorAll('.report-shot-chart-name')];
+            const imgs = [...paper.querySelectorAll('.report-shot-chart-court')];
+            const chart = paper.querySelector('[data-block-type="shot_chart"]');
+            const notes = [...paper.querySelectorAll('[data-text-block]')]
+                .map((el) => el.closest('.grid-stack-item'))
+                .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+            const key = [...paper.querySelectorAll('.report-block-title')].find(
+                (el) => (el.textContent || '').includes('Key Stats')
+            ).closest('.grid-stack-item');
+            const chartBox = chart.getBoundingClientRect();
+            const noteBox = notes[0].getBoundingClientRect();
+            const noteAttr = (el, name) => parseInt(el.getAttribute(name) || el.getAttribute('data-' + name.slice(3)) || '0', 10);
+            const keyBox = key.getBoundingClientRect();
+            const row = imgs[0].closest('.report-shot-chart-row').getBoundingClientRect();
+            const away = imgs[0].getBoundingClientRect();
+            const home = imgs[1].getBoundingClientRect();
+            const name = names[0].getBoundingClientRect();
+            const nameStyle = getComputedStyle(names[0]);
+            return {
+                awayName: (names[0].textContent || '').trim(),
+                homeName: (names[1].textContent || '').trim(),
+                awayX: away.left,
+                homeX: home.left,
+                courtW: away.width,
+                homeW: home.width,
+                nameW: name.width,
+                nameSize: nameStyle.fontSize,
+                nameWeight: nameStyle.fontWeight,
+                nameGap: away.top - name.bottom,
+                outerLeft: away.left - row.left,
+                outerRight: row.right - home.right,
+                gap: home.left - away.right,
+                keyBottom: keyBox.bottom,
+                chartTop: chartBox.top,
+                chartBottom: chartBox.bottom,
+                noteTop: noteBox.top,
+                noteCount: notes.length,
+                leftX: noteAttr(notes[0], 'gs-x'),
+                rightX: noteAttr(notes[1], 'gs-x'),
+                leftW: noteAttr(notes[0], 'gs-w'),
+                rightW: noteAttr(notes[1], 'gs-w'),
+                leftY: noteAttr(notes[0], 'gs-y'),
+                rightY: noteAttr(notes[1], 'gs-y'),
+                imgs: imgs.length,
+            };
+        }'''
+    )
+    assert geom['imgs'] == 2
+    assert geom['awayName'] == AWAY
+    assert geom['homeName'] == HOME
+    assert geom['homeX'] > geom['awayX']
+    assert abs(geom['courtW'] - 285.0375) < 2
+    assert abs(geom['homeW'] - geom['courtW']) < 2
+    assert abs(geom['nameW'] - geom['courtW']) < 2
+    assert geom['nameSize'] == '12px'
+    assert geom['nameWeight'] in ('700', 'bold')
+    assert 2 <= geom['nameGap'] <= 8
+    assert abs(geom['outerLeft'] - geom['outerRight']) < 3
+    assert abs(geom['gap'] - (geom['outerLeft'] + geom['outerRight'])) < 4
+    assert geom['chartTop'] >= geom['keyBottom'] - 2
+    assert geom['noteTop'] >= geom['chartBottom'] - 2
+    assert geom['noteCount'] == 2
+    assert geom['leftX'] == 0
+    assert geom['rightX'] == 6
+    assert geom['leftW'] == 6
+    assert geom['rightW'] == 6
+    assert geom['leftY'] == geom['rightY']
+
+    page.locator('#report-add-shot-chart').click()
+    page.wait_for_function(
+        'document.querySelectorAll(".report-shot-chart-host").length >= 2',
+        timeout=15000,
+    )
+
+    with page.expect_download(timeout=90000) as download_info:
+        page.locator('#btn-export-pdf').click()
+        _confirm_pdf_crop_if_shown(page)
+    reader = PdfReader(str(download_info.value.path()))
+    assert len(reader.pages) >= 2
+    images = list(reader.pages[1].images)
+    assert images
+    assert len(images[0].data) > 1000
+
+
 @pytest.mark.pdf_text
 def test_report_pdf_contains_on_screen_text(page, e2e_server):
     from pypdf import PdfReader

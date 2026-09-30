@@ -322,6 +322,31 @@ def court_data_uri(zones):
     return "data:image/svg+xml;base64," + encoded
 
 
+def report_shot_chart_payload(events, away_team_id, home_team_id, away_name, home_name):
+    """Full-game team charts for the Report block.
+
+    An empty frame is ``empty``. Rows with no chartable shots stay ``ready``
+    so both courts still draw, with a dash in every zone.
+    """
+    if events is None or (hasattr(events, "empty") and bool(events.empty)):
+        return {"_ui": "empty"}
+    if not _rows(events):
+        return {"_ui": "empty"}
+    away = away_name or "Away"
+    home = home_name or "Home"
+    return {
+        "_ui": "ready",
+        "away_name": away,
+        "home_name": home,
+        "away_src": court_data_uri(court_zones(
+            events, away_team_id, period="all", player_id="all",
+        )),
+        "home_src": court_data_uri(court_zones(
+            events, home_team_id, period="all", player_id="all",
+        )),
+    }
+
+
 def _court_text():
     global _court_text_cache
     if _court_text_cache is None:

@@ -39,6 +39,7 @@ from synergy_reporter.shot_chart import (
     court_zones,
     period_chips as shot_period_chips,
     player_options,
+    report_shot_chart_payload,
 )
 from ui_kit import (
     EMPTY_GAME,
@@ -1754,6 +1755,25 @@ def _report_rotation_figure_json(game_id, match_info):
         return json.dumps({'_ui': 'error'})
 
 
+def _report_shot_chart_json(game_id, match_info):
+    if not game_id:
+        return json.dumps({'_ui': 'empty'})
+    info = match_info or {}
+    try:
+        report = get_cached_report(game_id)
+        payload = report_shot_chart_payload(
+            report.get_play_by_play_df(),
+            info.get('away_team_id'),
+            info.get('home_team_id'),
+            info.get('away_team') or 'Away',
+            info.get('home_team') or 'Home',
+        )
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception as exc:
+        print(f"Error building report shot chart: {exc}")
+        return json.dumps({'_ui': 'error'})
+
+
 def render_report_children(bs_store, lineup_store, match_info_store, game_id=None):
     bs_dict = safe_loads(bs_store) if bs_store else {}
     match_info = safe_loads(match_info_store) if match_info_store else {}
@@ -1771,6 +1791,7 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
             match_info,
             game_id,
             rotation_json=_report_rotation_figure_json(game_id, match_info),
+            shot_chart_json=_report_shot_chart_json(game_id, match_info),
         ),
     ]
 

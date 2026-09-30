@@ -11,6 +11,7 @@ from synergy_reporter.shot_chart import (
     court_data_uri,
     court_markup,
     court_zones,
+    report_shot_chart_payload,
     format_fg_percent,
     period_chips,
     player_options,
@@ -134,6 +135,42 @@ class PeriodAndPlayerTests(unittest.TestCase):
         ]
         labels = [item["label"] for item in player_options(events, "away")]
         self.assertEqual(labels, ["All", "#4 Early", "#12 Late", "NoNum"])
+
+
+class ReportShotChartPayloadTests(unittest.TestCase):
+    def test_empty_frame_has_no_courts(self):
+        self.assertEqual(
+            report_shot_chart_payload(None, 'away', 'home', 'Dreamers', 'Braves')['_ui'],
+            'empty',
+        )
+        self.assertEqual(
+            report_shot_chart_payload(pd.DataFrame(), 'away', 'home', 'Dreamers', 'Braves')['_ui'],
+            'empty',
+        )
+
+    def test_full_game_counts_every_player_on_both_teams(self):
+        events = [
+            _shot(personId='p1', x=6, y=50),
+            _shot(personId='p2', Player='Chen', shirtNumber='8', x=6, y=50, periodId=3),
+            _shot(entityId='home', personId='h1', x=94, y=50, success=False),
+        ]
+        payload = report_shot_chart_payload(events, 'away', 'home', 'Dreamers', 'Braves')
+        self.assertEqual(payload['_ui'], 'ready')
+        self.assertEqual(payload['away_name'], 'Dreamers')
+        self.assertEqual(payload['home_name'], 'Braves')
+        away = base64.b64decode(payload['away_src'].split(',', 1)[1]).decode('utf-8')
+        home = base64.b64decode(payload['home_src'].split(',', 1)[1]).decode('utf-8')
+        self.assertIn('2 / 2', away)
+        self.assertIn('0 / 1', home)
+
+    def test_rows_without_chartable_shots_still_draw_dashes(self):
+        payload = report_shot_chart_payload(
+            pd.DataFrame([_shot(eventType='freeThrow')]),
+            'away', 'home', 'Dreamers', 'Braves',
+        )
+        self.assertEqual(payload['_ui'], 'ready')
+        svg = base64.b64decode(payload['away_src'].split(',', 1)[1]).decode('utf-8')
+        self.assertIn('font-size="16">-</text>', svg)
 
 
 class CourtZoneTests(unittest.TestCase):
