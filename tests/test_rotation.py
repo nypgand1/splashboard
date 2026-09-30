@@ -470,7 +470,35 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(report.layout.margin.b, 48)
         self.assertEqual(list(report.layout.xaxis.range), [0, 120])
         self.assertEqual(tab.layout.margin.l, 112)
-        self.assertEqual(tab.layout.margin.r, 24)
+        self.assertEqual(tab.layout.margin.r, 112)
+
+    def test_row_labels_repeat_on_the_right(self):
+        fig = build_rotation_figure(self._payload(), playhead=30)
+        report = report_rotation_figure(self._payload())
+
+        def categories(axis):
+            return list(axis.categoryarray or [])
+
+        def numbers(axis):
+            return [str(item) for item in (axis.ticktext or [])]
+
+        self.assertEqual(fig.layout.yaxis4.side, 'right')
+        self.assertEqual(fig.layout.yaxis4.overlaying, 'y')
+        self.assertEqual(categories(fig.layout.yaxis4), ['● A'])
+        self.assertEqual(fig.layout.yaxis6.side, 'right')
+        self.assertEqual(fig.layout.yaxis6.overlaying, 'y3')
+        self.assertEqual(categories(fig.layout.yaxis6), ['  B'])
+        self.assertEqual(numbers(fig.layout.yaxis5), numbers(fig.layout.yaxis2))
+        self.assertEqual(fig.layout.yaxis5.side, 'right')
+        self.assertEqual(fig.layout.yaxis5.overlaying, 'y2')
+        self.assertTrue(any(getattr(trace, 'yaxis', None) == 'y5' for trace in fig.data))
+        self.assertTrue(any(getattr(trace, 'yaxis', None) == 'y5' for trace in report.data))
+        self.assertEqual(categories(report.layout.yaxis4), ['A'])
+        self.assertEqual(categories(report.layout.yaxis6), ['B'])
+        self.assertFalse(any('●' in label for label in categories(report.layout.yaxis4)))
+        self.assertEqual(numbers(report.layout.yaxis5), numbers(report.layout.yaxis2))
+        self.assertEqual(report.layout.yaxis5.tickfont.size, 12)
+        self.assertEqual(fig.layout.yaxis5.tickfont.size, 10)
 
     def test_playhead_dims_bench_and_marks_on_court(self):
         payload = self._payload()
