@@ -1,3 +1,4 @@
+import base64
 import json
 import unittest
 from unittest.mock import patch
@@ -431,8 +432,13 @@ class TabsDmcContractTests(unittest.TestCase):
         values = [node.value for node in find_type(tree, dmc.TabsTab)]
         self.assertEqual(
             values,
-            ['tab-bs', 'tab-rotation', 'tab-lineup', 'tab-pbp', 'tab-report'],
+            ['tab-bs', 'tab-rotation', 'tab-shot-chart', 'tab-lineup', 'tab-pbp', 'tab-report'],
         )
+        ids = {getattr(node, 'id', None) for node in _nodes(tree)}
+        self.assertIn('shot-chart-period', ids)
+        self.assertIn('shot-chart-player-away', ids)
+        self.assertIn('shot-chart-player-home', ids)
+        self.assertIn('wrap-shot-chart', ids)
 
     def test_game_page_uses_dmc_tabs(self):
         import os
@@ -451,6 +457,140 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('tabler:table', code)
         self.assertNotIn('bi bi-', code)
         self.assertIn('loading_skeleton', code)
+
+
+def _shot_frame():
+    return pd.DataFrame([
+        {
+            'entityId': 'home', 'personId': 'p-home', 'Player': 'Lin', 'shirtNumber': '7',
+            'eventType': '2pt', 'periodId': 1, 'success': True, 'x': 6, 'y': 50,
+        },
+        {
+            'entityId': 'away', 'personId': 'p-away', 'Player': 'Chen', 'shirtNumber': '9',
+            'eventType': '2pt', 'periodId': 2, 'success': False, 'x': 94, 'y': 50,
+        },
+        {
+            'entityId': 'home', 'personId': 'p-home', 'Player': 'Lin', 'shirtNumber': '7',
+            'eventType': 'freeThrow', 'periodId': 1, 'success': True, 'x': 6, 'y': 50,
+        },
+    ]).to_json(orient='split')
+
+
+class ShotChartUiTests(unittest.TestCase):
+    def test_game_change_resets_filters_and_the_interval_does_not(self):
+        self.assertEqual(
+            game_page.resolve_shot_chart_filters('game_id', '1', 'p-home', 'p-away'),
+            ('all', 'all', 'all'),
+        )
+        self.assertEqual(
+            game_page.resolve_shot_chart_filters('interval-component', 'h1', 'p-home', 'p-away'),
+            ('h1', 'p-home', 'p-away'),
+        )
+
+    def test_period_chips_come_from_play_by_play(self):
+        data, style = game_page.shot_chart_period_state(_shot_frame())
+        self.assertEqual([item['label'] for item in data], ['All', '1Q', '2Q', '1H'])
+        self.assertEqual(style, {'display': 'flex'})
+        hidden, hidden_style = game_page.shot_chart_period_state(json.dumps({'_ui': 'error'}))
+        self.assertEqual(hidden, [{'label': 'All', 'value': 'all'}])
+        self.assertEqual(hidden_style, {'display': 'none'})
+
+    def test_player_menus_stay_on_full_game_attempts(self):
+        info = json.dumps({
+            'away_team_id': 'away', 'home_team_id': 'home',
+            'away_team': 'Dreamers', 'home_team': 'Braves',
+        })
+        away, home = game_page.shot_chart_player_state(_shot_frame(), info)
+        self.assertEqual([item['label'] for item in away], ['All', '#9 Chen'])
+        self.assertEqual([item['label'] for item in home], ['All', '#7 Lin'])
+
+    def test_ready_panel_draws_both_courts(self):
+        info = json.dumps({
+            'away_team_id': 'away', 'home_team_id': 'home',
+            'away_team': 'Dreamers', 'home_team': 'Braves',
+        })
+        panel = game_page.shot_chart_panel(_shot_frame(), info, 'all', 'all', 'all')
+        self.assertEqual(panel['status'], 'ready')
+        home = base64.b64decode(panel['home_src'].split(',', 1)[1]).decode('utf-8')
+        away = base64.b64decode(panel['away_src'].split(',', 1)[1]).decode('utf-8')
+        self.assertIn('100.0', home)
+        self.assertIn(' %', home)
+        self.assertNotIn('100.0%', home)
+        self.assertIn('1 / 1', home)
+        self.assertIn('0.0', away)
+        self.assertIn(' %', away)
+        self.assertIn('0 / 1', away)
+        pane, pane_style, courts_style, away_name, home_name, away_img, home_img = game_page.shot_chart_outputs(panel)
+        self.assertEqual(pane, [])
+        self.assertEqual(pane_style, {'display': 'none'})
+        self.assertEqual(courts_style, {})
+        self.assertEqual(away_name, 'Dreamers')
+        self.assertEqual(home_name, 'Braves')
+        self.assertEqual(home_img.alt, 'Braves shot chart')
+
+    def test_empty_and_error_use_the_game_copy(self):
+        from ui_kit import EMPTY_GAME, EMPTY_GAME_NEXT, ERROR_GAME
+        empty_pane, _, empty_courts, *_rest = game_page.shot_chart_outputs(
+            game_page.shot_chart_panel('{}', '{}', 'all', 'all', 'all')
+        )
+        texts = []
+        _walk_text(empty_pane, texts)
+        self.assertIn(EMPTY_GAME, texts)
+        self.assertIn(EMPTY_GAME_NEXT, texts)
+        self.assertEqual(empty_courts, {'display': 'none'})
+        error_pane, _, error_courts, *_rest = game_page.shot_chart_outputs(
+            game_page.shot_chart_panel(json.dumps({'_ui': 'error'}), '{}', 'all', 'all', 'all')
+        )
+        error_text = []
+        _walk_text(error_pane, error_text)
+        self.assertIn(ERROR_GAME, error_text)
+        self.assertEqual(error_courts, {'display': 'none'})
+        self.assertEqual(
+            game_page.shot_chart_panel(None, '{}', 'all', 'all', 'all')['status'],
+            'loading',
+        )
+
+    def test_rows_without_shots_still_show_the_court(self):
+        frame = pd.DataFrame([{
+            'entityId': 'home', 'eventType': 'substitution', 'periodId': 1,
+        }]).to_json(orient='split')
+        info = json.dumps({'home_team_id': 'home', 'away_team_id': 'away', 'home_team': 'Braves', 'away_team': 'Dreamers'})
+        panel = game_page.shot_chart_panel(frame, info, '1', 'all', 'all')
+        self.assertEqual(panel['status'], 'ready')
+        svg = base64.b64decode(panel['home_src'].split(',', 1)[1]).decode('utf-8')
+        self.assertIn('>-</text>', svg)
+        self.assertNotIn('No shots', svg)
+
+    def test_both_courts_share_one_capped_card(self):
+        import dash_mantine_components as dmc
+        tree = game_page.layout('g1')
+        papers = [node for node in _nodes(tree) if getattr(node, 'id', None) == 'shot-chart-card']
+        self.assertEqual(len(papers), 1)
+        paper = papers[0]
+        self.assertIsInstance(paper, dmc.Paper)
+        self.assertTrue(paper.withBorder)
+        self.assertEqual(paper.radius, 'md')
+        self.assertEqual(paper.shadow, 'xs')
+        self.assertEqual(paper.p, 'md')
+        self.assertEqual(paper.style.get('maxWidth'), '808px')
+        inside = list(_nodes(paper))
+        ids = {getattr(node, 'id', None) for node in inside}
+        self.assertIn('shot-chart-period', ids)
+        self.assertIn('shot-chart-courts', ids)
+        self.assertIn('pane-shot-chart', ids)
+        grid = next(node for node in inside if getattr(node, 'id', None) == 'shot-chart-courts')
+        for child in grid.children:
+            self.assertEqual(child.style['maxWidth'], '380px')
+        wrap = next(node for node in _nodes(tree) if getattr(node, 'id', None) == 'wrap-shot-chart')
+        self.assertEqual(getattr(wrap.children[0], 'id', None), 'shot-chart-last-update')
+        self.assertIn('Last Update', str(wrap.children[0]))
+        self.assertEqual(getattr(wrap.children[1], 'id', None), 'shot-chart-card')
+        self.assertIs(game_page.update_shot_chart_last_update('{}', 'tab-bs'), no_update)
+        self.assertIn('Last Update', str(game_page.update_shot_chart_last_update('{}', 'tab-shot-chart')))
+
+    def test_hidden_tab_does_not_rebuild_the_chart(self):
+        result = game_page.update_shot_chart('{}', '{}', 'all', 'all', 'all', 'tab-bs')
+        self.assertTrue(all(item is no_update for item in result))
 
 
 class GridDmcContractTests(unittest.TestCase):

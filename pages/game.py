@@ -34,6 +34,13 @@ from synergy_reporter.rotation import (
     live_playhead_t,
     report_rotation_figure,
 )
+from synergy_reporter.shot_chart import (
+    court_data_uri,
+    court_zones,
+    period_chips as shot_period_chips,
+    player_options,
+    report_shot_chart_payload,
+)
 from ui_kit import (
     EMPTY_GAME,
     EMPTY_GAME_NEXT,
@@ -179,6 +186,77 @@ def _rotation_wrap(hidden=True):
     )
 
 
+def _shot_chart_court(side):
+    return dmc.Stack(
+        [
+            dmc.Text(id=f'shot-chart-name-{side}', fw=700, ta='center', size='sm'),
+            dmc.Select(
+                id=f'shot-chart-player-{side}',
+                data=[{'label': 'All', 'value': 'all'}],
+                value='all',
+                allowDeselect=False,
+                clearable=False,
+                size='xs',
+                radius='md',
+                w='100%',
+                comboboxProps={'withinPortal': True},
+            ),
+            html.Div(
+                id=f'shot-chart-court-{side}',
+                style={'width': '100%', 'maxWidth': '380px'},
+            ),
+        ],
+        gap='xs',
+        align='center',
+        style={'width': '100%', 'maxWidth': '380px', 'marginInline': 'auto'},
+    )
+
+
+def _shot_chart_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    pane = html.Div(id='pane-shot-chart', children=loading_skeleton('chart'))
+    if not os.environ.get('SPLASHBOARD_E2E'):
+        pane = dcc.Loading(custom_spinner=loading_skeleton('chart'), children=pane)
+    return html.Div(
+        [
+            html.Div(id='shot-chart-last-update', children=_last_update_span()),
+            dmc.Paper(
+                [
+                dmc.Box(
+                    dmc.SegmentedControl(
+                        id='shot-chart-period',
+                        data=[{'label': 'All', 'value': 'all'}],
+                        value='all',
+                        radius='md',
+                        size='xs',
+                    ),
+                    id='shot-chart-period-bar',
+                    mb='sm',
+                    style={'display': 'none'},
+                ),
+                dmc.SimpleGrid(
+                    id='shot-chart-courts',
+                    cols={'base': 1, 'sm': 2},
+                    spacing='16px',
+                    style={'display': 'none'},
+                    children=[_shot_chart_court('away'), _shot_chart_court('home')],
+                ),
+                pane,
+                ],
+                id='shot-chart-card',
+                withBorder=True,
+                radius='md',
+                shadow='xs',
+                p='md',
+                className='braves-card-wrapper',
+                style={'width': '100%', 'maxWidth': '808px', 'marginInline': 'auto'},
+            ),
+        ],
+        id='wrap-shot-chart',
+        style=style,
+    )
+
+
 def _lineup_controls():
     row = filter_control(
         '',
@@ -230,6 +308,7 @@ def layout(game_id=None):
                     [
                         dmc.TabsTab("Box Score", value="tab-bs", leftSection=icon("tabler:table", width=14)),
                         dmc.TabsTab("Rotation", value="tab-rotation", leftSection=icon("tabler:chart-bar", width=14)),
+                        dmc.TabsTab("Shot Chart", value="tab-shot-chart", leftSection=icon("tabler:ball-basketball", width=14)),
                         dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=icon("tabler:users", width=14)),
                         dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
                         dmc.TabsTab(
@@ -255,6 +334,7 @@ def layout(game_id=None):
         
         _box_score_wrap(),
         _rotation_wrap(hidden=True),
+        _shot_chart_wrap(hidden=True),
         _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
         _lineup_wrap(hidden=True),
         _pane('wrap-report', 'pane-report', 'table', hidden=True),
@@ -1294,6 +1374,101 @@ def resolve_bs_period(triggered_id, control_value):
     return str(control_value)
 
 
+def _pbp_frame(pbp_store):
+    if pbp_store is None:
+        return 'loading', None
+    payload = pbp_store if isinstance(pbp_store, dict) else safe_loads(pbp_store)
+    if not isinstance(payload, dict) or not payload:
+        return 'empty', None
+    if payload.get('_ui') == 'error':
+        return 'error', None
+    if 'columns' not in payload or 'data' not in payload:
+        return 'empty', None
+    raw = pbp_store if isinstance(pbp_store, str) else json.dumps(payload)
+    try:
+        frame = pd.read_json(io.StringIO(raw), orient='split')
+    except (ValueError, TypeError):
+        return 'empty', None
+    if frame.empty:
+        return 'empty', None
+    return 'ready', frame
+
+
+def shot_chart_period_state(pbp_store):
+    status, frame = _pbp_frame(pbp_store)
+    if status != 'ready' or 'periodId' not in getattr(frame, 'columns', []):
+        return [{'label': 'All', 'value': 'all'}], {'display': 'none'}
+    return shot_period_chips(frame['periodId'].tolist()), {'display': 'flex'}
+
+
+def shot_chart_player_state(pbp_store, match_info):
+    blank = [{'label': 'All', 'value': 'all'}]
+    status, frame = _pbp_frame(pbp_store)
+    if status != 'ready':
+        return blank, blank
+    info = safe_loads(match_info)
+    return (
+        player_options(frame, info.get('away_team_id')),
+        player_options(frame, info.get('home_team_id')),
+    )
+
+
+def resolve_shot_chart_filters(triggered_id, period, away_player, home_player):
+    if triggered_id == 'game_id':
+        return 'all', 'all', 'all'
+    return period or 'all', away_player or 'all', home_player or 'all'
+
+
+def shot_chart_panel(pbp_store, match_info, period, away_player, home_player):
+    status, frame = _pbp_frame(pbp_store)
+    info = safe_loads(match_info)
+    if status == 'loading':
+        return {'status': 'loading'}
+    if status == 'error':
+        return {'status': 'error', 'message': ERROR_GAME}
+    if status != 'ready':
+        return {'status': 'empty'}
+    return {
+        'status': 'ready',
+        'away_name': info.get('away_team') or 'Away',
+        'home_name': info.get('home_team') or 'Home',
+        'away_src': court_data_uri(court_zones(
+            frame, info.get('away_team_id'), period=period or 'all', player_id=away_player or 'all',
+        )),
+        'home_src': court_data_uri(court_zones(
+            frame, info.get('home_team_id'), period=period or 'all', player_id=home_player or 'all',
+        )),
+    }
+
+
+def _court_image(src, alt):
+    return html.Img(
+        src=src,
+        alt=alt,
+        style={'width': '100%', 'maxWidth': '380px', 'height': 'auto', 'display': 'block'},
+    )
+
+
+def shot_chart_outputs(panel):
+    hide = {'display': 'none'}
+    if panel.get('status') == 'loading':
+        return loading_skeleton('chart'), {}, hide, '', '', None, None
+    if panel.get('status') == 'error':
+        view = [_error_view({'message': panel.get('message') or ERROR_GAME})]
+        return view, {}, hide, '', '', None, None
+    if panel.get('status') != 'ready':
+        return [_empty_view()], {}, hide, '', '', None, None
+    return (
+        [],
+        hide,
+        {},
+        panel['away_name'],
+        panel['home_name'],
+        _court_image(panel['away_src'], f"{panel['away_name']} shot chart"),
+        _court_image(panel['home_src'], f"{panel['home_name']} shot chart"),
+    )
+
+
 def _period_control_data(periods):
     data = [{'label': 'All', 'value': 'all'}]
     seen = {'all'}
@@ -1580,6 +1755,25 @@ def _report_rotation_figure_json(game_id, match_info):
         return json.dumps({'_ui': 'error'})
 
 
+def _report_shot_chart_json(game_id, match_info):
+    if not game_id:
+        return json.dumps({'_ui': 'empty'})
+    info = match_info or {}
+    try:
+        report = get_cached_report(game_id)
+        payload = report_shot_chart_payload(
+            report.get_play_by_play_df(),
+            info.get('away_team_id'),
+            info.get('home_team_id'),
+            info.get('away_team') or 'Away',
+            info.get('home_team') or 'Home',
+        )
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception as exc:
+        print(f"Error building report shot chart: {exc}")
+        return json.dumps({'_ui': 'error'})
+
+
 def render_report_children(bs_store, lineup_store, match_info_store, game_id=None):
     bs_dict = safe_loads(bs_store) if bs_store else {}
     match_info = safe_loads(match_info_store) if match_info_store else {}
@@ -1597,6 +1791,7 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
             match_info,
             game_id,
             rotation_json=_report_rotation_figure_json(game_id, match_info),
+            shot_chart_json=_report_shot_chart_json(game_id, match_info),
         ),
     ]
 
@@ -1653,6 +1848,62 @@ def update_pane_rotation(rotation_store, active_tab, view_store=None, match_info
 def update_rotation_period_options(rotation_store):
     payload = safe_loads(rotation_store)
     return _period_control_data(payload.get('periods') or [])
+
+
+@callback(
+    Output('shot-chart-period', 'data'),
+    Output('shot-chart-period-bar', 'style'),
+    Input('pbp_store', 'data'),
+)
+def update_shot_chart_period_options(pbp_store):
+    return shot_chart_period_state(pbp_store)
+
+
+@callback(
+    Output('shot-chart-player-away', 'data'),
+    Output('shot-chart-player-home', 'data'),
+    Input('pbp_store', 'data'),
+    Input('match_info_store', 'data'),
+)
+def update_shot_chart_players(pbp_store, match_info_store):
+    return shot_chart_player_state(pbp_store, match_info_store)
+
+
+@callback(
+    Output('shot-chart-period', 'value'),
+    Output('shot-chart-player-away', 'value'),
+    Output('shot-chart-player-home', 'value'),
+    Input('game_id', 'children'),
+    State('shot-chart-period', 'value'),
+    State('shot-chart-player-away', 'value'),
+    State('shot-chart-player-home', 'value'),
+    prevent_initial_call=True,
+)
+def reset_shot_chart_filters(game_id, period, away_player, home_player):
+    return resolve_shot_chart_filters(ctx.triggered_id, period, away_player, home_player)
+
+
+@callback(
+    Output('pane-shot-chart', 'children'),
+    Output('pane-shot-chart', 'style'),
+    Output('shot-chart-courts', 'style'),
+    Output('shot-chart-name-away', 'children'),
+    Output('shot-chart-name-home', 'children'),
+    Output('shot-chart-court-away', 'children'),
+    Output('shot-chart-court-home', 'children'),
+    Input('pbp_store', 'data'),
+    Input('match_info_store', 'data'),
+    Input('shot-chart-period', 'value'),
+    Input('shot-chart-player-away', 'value'),
+    Input('shot-chart-player-home', 'value'),
+    Input('tabs', 'value'),
+)
+def update_shot_chart(pbp_store, match_info_store, period, away_player, home_player, active_tab):
+    if active_tab != 'tab-shot-chart':
+        return (no_update,) * 7
+    return shot_chart_outputs(shot_chart_panel(
+        pbp_store, match_info_store, period, away_player, home_player,
+    ))
 
 
 @callback(
@@ -1791,6 +2042,17 @@ def update_lineup_last_update(lineup_store, active_tab):
 
 
 @callback(
+    Output('shot-chart-last-update', 'children'),
+    Input('pbp_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_shot_chart_last_update(pbp_store, active_tab):
+    if active_tab != 'tab-shot-chart':
+        return no_update
+    return _last_update_span()
+
+
+@callback(
     Output('pane-pbp', 'children'),
     Input('pbp_store', 'data'),
     Input('tabs', 'value'),
@@ -1893,6 +2155,7 @@ clientside_callback(
         return [
             active_tab === 'tab-bs' ? show : hide,
             active_tab === 'tab-rotation' ? show : hide,
+            active_tab === 'tab-shot-chart' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
             active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-report' ? show : hide
@@ -1901,6 +2164,7 @@ clientside_callback(
     """,
     Output('wrap-bs', 'style'),
     Output('wrap-rotation', 'style'),
+    Output('wrap-shot-chart', 'style'),
     Output('wrap-lineup', 'style'),
     Output('wrap-pbp', 'style'),
     Output('wrap-report', 'style'),

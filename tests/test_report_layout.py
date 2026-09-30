@@ -15,7 +15,7 @@ ALLOWED_TABLE_KEYS = (
     'lineup_home',
     'lineup_away',
 )
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
 
 
 def _layout():
@@ -39,7 +39,7 @@ def _occupied_rows(blocks):
 class DefaultLayoutTests(unittest.TestCase):
     def test_version_and_four_pages(self):
         layout = _layout()
-        self.assertEqual(layout['version'], 2)
+        self.assertEqual(layout['version'], 3)
         self.assertEqual(len(layout['pages']), 4)
 
     def test_header_is_not_a_block(self):
@@ -60,9 +60,17 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(p1_notes[0].get('w'), 6)
         self.assertEqual(p1_notes[0].get('y'), 0)
         self.assertEqual(p1_notes[0].get('h'), 6)
-        self.assertEqual(len(p2_notes), 1)
-        self.assertEqual(p2_notes[0].get('content'), '')
-        self.assertEqual(p2_notes[0].get('h'), 2)
+        self.assertEqual(len(p2_notes), 2)
+        left, right = sorted(p2_notes, key=lambda block: block.get('x'))
+        self.assertEqual(left.get('content'), '')
+        self.assertEqual(right.get('content'), '')
+        self.assertEqual(left.get('x'), 0)
+        self.assertEqual(right.get('x'), 6)
+        self.assertEqual(left.get('w'), 6)
+        self.assertEqual(right.get('w'), 6)
+        self.assertEqual(left.get('y'), right.get('y'))
+        self.assertEqual(left.get('h'), 2)
+        self.assertEqual(right.get('h'), 2)
         for index in (2, 3):
             texts = [b for b in _blocks(layout, index) if b.get('type') == 'text']
             self.assertEqual(texts, [])
@@ -73,13 +81,17 @@ class DefaultLayoutTests(unittest.TestCase):
             types = [b.get('type') for b in page['blocks']]
             self.assertNotIn('spacer', types)
 
-    def test_no_shot_chart_or_play_type(self):
+    def test_shot_chart_is_page_two_only_and_play_type_stays_out(self):
         layout = _layout()
-        for page in layout['pages']:
-            for block in page['blocks']:
-                self.assertNotEqual(block.get('type'), 'shot_chart')
-                self.assertNotEqual(block.get('table_key'), 'play_type')
         self.assertEqual(len(layout['pages']), 4)
+        for index, page in enumerate(layout['pages']):
+            charts = [b for b in page['blocks'] if b.get('type') == 'shot_chart']
+            if index == 1:
+                self.assertEqual(len(charts), 1)
+            else:
+                self.assertEqual(charts, [])
+            for block in page['blocks']:
+                self.assertNotEqual(block.get('table_key'), 'play_type')
 
     def test_builtin_keys_are_allowlisted(self):
         layout = _layout()
@@ -155,12 +167,35 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(away.get('w'), 12)
         self.assertLess(home.get('y'), away.get('y'))
 
-    def test_page_two_leaves_whitespace(self):
-        layout = _layout()
-        page2 = _blocks(layout, 1)
-        self.assertLess(_occupied_rows(page2), 12)
+    def test_page_two_chart_sits_under_key_stats_and_note_stays_short(self):
+        page2 = _blocks(_layout(), 1)
+        team = [b for b in page2 if b.get('table_key') == 't_df'][0]
+        key = [b for b in page2 if b.get('table_key') == 'k_df'][0]
+        chart = [b for b in page2 if b.get('type') == 'shot_chart'][0]
+        notes = sorted(
+            [b for b in page2 if b.get('type') == 'text'],
+            key=lambda block: block.get('x'),
+        )
+        self.assertEqual(team['y'], 0)
+        self.assertEqual(key['y'], team['y'] + team['h'])
+        self.assertEqual(chart['x'], 0)
+        self.assertEqual(chart['w'], 12)
+        self.assertEqual(chart['y'], key['y'] + key['h'])
+        self.assertEqual(chart['h'], 10)
+        self.assertNotIn('src', chart)
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(notes[0]['x'], 0)
+        self.assertEqual(notes[1]['x'], 6)
+        self.assertEqual(notes[0]['w'], 6)
+        self.assertEqual(notes[1]['w'], 6)
+        self.assertEqual(notes[0]['y'], chart['y'] + chart['h'])
+        self.assertEqual(notes[1]['y'], notes[0]['y'])
+        self.assertEqual(notes[0]['h'], 2)
+        self.assertEqual(notes[1]['h'], 2)
+        self.assertEqual(notes[0].get('content'), '')
+        self.assertEqual(notes[1].get('content'), '')
         self.assertNotIn('spacer', [b.get('type') for b in page2])
-        self.assertTrue(any(b.get('type') == 'text' for b in page2))
+        self.assertLess(_occupied_rows(page2), 28)
 
 
 class PaperAndStorageTests(unittest.TestCase):
@@ -264,6 +299,8 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(spec['text'], 'selectable')
         self.assertEqual(spec['visual'], 'approximate')
         self.assertEqual(spec['font'], 'Noto Sans TC')
+        self.assertEqual(spec['shot_chart_image'], 'png')
+        self.assertEqual(spec['shot_chart_timeout_ms'], 8000)
         self.assertEqual(spec['font_url'], '/assets/NotoSansTC-Regular.ttf')
         self.assertTrue(spec['font_url'].startswith('/assets/'))
         self.assertTrue(spec['font_url'].endswith('.ttf'))
@@ -386,6 +423,7 @@ class ReportTableComponentTests(unittest.TestCase):
         markup = str(ws)
         self.assertIn('report-table-data', markup)
         self.assertIn('report-rotation-figure', markup)
+        self.assertIn('report-shot-chart', markup)
         self.assertIn('report-workspace', markup)
         self.assertNotIn('report-tpl-item-table', markup)
         self.assertNotIn('report-templates', markup)
@@ -457,7 +495,32 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('Plotly.toImage', js)
         self.assertIn('Plotly.react', js)
         self.assertIn('noResize: true', js)
-        self.assertIn('var LAYOUT_VERSION = 2', js)
+        self.assertIn('var LAYOUT_VERSION = 3', js)
+        self.assertIn('No shot chart for this game.', js)
+        self.assertIn('Could not load shot chart.', js)
+        self.assertIn('function drawShotChartImage', js)
+        self.assertIn('report-shot-chart-host', js)
+        shot_draw = js.split('function drawShotChartImage', 1)[1].split('function setPdfBusy', 1)[0]
+        self.assertIn('8000', shot_draw)
+        self.assertIn('addImage', shot_draw)
+        raster = js.split('function rasterShotChart', 1)[1].split('function drawShotChartImage', 1)[0]
+        self.assertIn("toDataURL('image/png')", raster)
+        self.assertIn('var SHOT_COURT_SCALE = 0.75', js)
+        self.assertIn('var SHOT_NAME_BLOCK_PX = 20', js)
+        estimate = js.split('function shotChartEstimatePx', 1)[1].split('function whenImageReady', 1)[0]
+        self.assertIn('SHOT_COURT_SCALE', estimate)
+        self.assertNotIn('(width - 24) / 2', estimate)
+        css_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css'
+        )
+        with open(css_path, 'r', encoding='utf-8') as handle:
+            css = handle.read()
+        court_css = css.split('.report-shot-chart-host', 1)[1].split('.report-shot-chart-empty', 1)[0]
+        self.assertIn('--shot-court-w: 285.0375px', court_css)
+        self.assertIn('font-size: 12px', court_css)
+        self.assertIn('font-weight: 700', court_css)
+        self.assertIn('align-items: center', court_css)
+        self.assertNotIn('gap: 8px', court_css)
         self.assertIn('var ROTATION_FONT_SCALE = 0.75', js)
         self.assertNotIn("title.textContent = ROTATION_TITLE", js)
         self.assertIn('No rotation chart for this game.', js)
@@ -496,6 +559,10 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertNotIn('tabler:timeline', markup)
         self.assertIn('Add rotation', markup)
         self.assertIn('report-add-rotation', markup)
+        self.assertIn('tabler:ball-basketball', markup)
+        self.assertIn('Add shot chart', markup)
+        self.assertIn('report-add-shot-chart', markup)
+        self.assertLess(markup.find('report-add-rotation'), markup.find('report-add-shot-chart'))
         self.assertIn('report-table-menu', markup)
         self.assertIn('Reset layout', markup)
         self.assertIn('tabler:restore', markup)
@@ -552,9 +619,22 @@ class ReportTableComponentTests(unittest.TestCase):
             'pages': [{'id': 'old', 'blocks': [_blocks(_layout(), 0)[0]]}],
         }
         fresh = report_layout.normalize_layout(stale)
-        self.assertEqual(fresh['version'], 2)
+        self.assertEqual(fresh['version'], 3)
         types = [b.get('type') for b in fresh['pages'][0]['blocks']]
         self.assertIn('rotation', types)
+        replaced = report_layout.normalize_layout({
+            'version': 2,
+            'pages': [{
+                'id': 'custom',
+                'blocks': [{
+                    'id': 'n', 'type': 'text', 'x': 0, 'y': 0, 'w': 6, 'h': 2, 'content': 'keep me',
+                }],
+            }],
+        })
+        self.assertEqual(replaced['version'], 3)
+        self.assertNotIn('keep me', str(replaced))
+        page_two = [b.get('type') for b in replaced['pages'][1]['blocks']]
+        self.assertIn('shot_chart', page_two)
 
     def test_empty_page_has_no_blocks(self):
         if report_layout is None:
@@ -663,6 +743,19 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['rotation_place'], 'native_or_new_page')
         self.assertEqual(chrome['rotation_empty'], 'No rotation chart for this game.')
         self.assertEqual(chrome['rotation_error'], 'Could not load rotation.')
+        self.assertEqual(chrome['add_shot_chart_icon'], 'tabler:ball-basketball')
+        self.assertEqual(chrome['add_shot_chart_label'], 'Add shot chart')
+        self.assertFalse(chrome['shot_chart_resize'])
+        self.assertIsNone(chrome['shot_chart_title'])
+        self.assertEqual(chrome['shot_chart_drag_handle'], 'overlay')
+        self.assertEqual(chrome['shot_chart_place'], 'native_or_new_page')
+        self.assertEqual(chrome['shot_chart_filter'], 'full_game_teams_all')
+        self.assertEqual(chrome['shot_chart_scale'], 0.75)
+        self.assertEqual(chrome['shot_chart_name_px'], 12)
+        self.assertEqual(chrome['shot_chart_name_weight'], 700)
+        self.assertEqual(chrome['shot_chart_align'], 'half_centered')
+        self.assertEqual(chrome['shot_chart_empty'], 'No shot chart for this game.')
+        self.assertEqual(chrome['shot_chart_error'], 'Could not load shot chart.')
         self.assertEqual(chrome['add_table_control'], 'icon_menu')
         self.assertEqual(chrome['reset_icon'], 'tabler:restore')
         self.assertEqual(chrome['reset_label'], 'Reset layout')

@@ -51,7 +51,7 @@ class Parser:
     def _pbp_df_from_json(pbp_json):
         df = pd.DataFrame(pbp_json.get('data') or [])
         for col in ['entityId', 'personId', 'eventType', 'subType', 'timestamp',
-                    'sequence', 'periodId', 'clock', 'success', 'options', 'scores']:
+                    'sequence', 'periodId', 'clock', 'success', 'options', 'scores', 'x', 'y']:
             if col not in df.columns:
                 df[col] = np.nan
         df['options'] = df['options'].apply(lambda x: json.dumps(x) if pd.notna(x) else np.nan)

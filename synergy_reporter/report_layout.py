@@ -6,7 +6,7 @@ import re
 A4_WIDTH_MM = 210
 A4_HEIGHT_MM = 297
 GRID_COLUMNS = 12
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
 STORAGE_KEY_PREFIX = 'splashboard.report.layout.'
 IMAGE_MAX_BYTES = 1_000_000
 ALLOWED_IMAGE_MIMES = frozenset({'image/jpeg', 'image/png', 'image/webp'})
@@ -40,11 +40,14 @@ TABLE_TITLES = {
     'lineup_home': 'Home Lineup Stats',
     'lineup_away': 'Away Lineup Stats',
 }
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
 ROTATION_TITLE = 'Rotation'
 ROTATION_DEFAULT_H = 11
 ROTATION_EMPTY = 'No rotation chart for this game.'
 ROTATION_ERROR = 'Could not load rotation.'
+SHOT_CHART_DEFAULT_H = 10
+SHOT_CHART_EMPTY = 'No shot chart for this game.'
+SHOT_CHART_ERROR = 'Could not load shot chart.'
 HEADER_CREDIT = 'Design by Wei-Hao Lin'
 
 
@@ -105,6 +108,8 @@ def pdf_export_spec():
         'rich_text_notes': True,
         'nested_lists_support': True,
         'image_format': 'png',
+        'shot_chart_image': 'png',
+        'shot_chart_timeout_ms': 8000,
         'fallback': 'print',
         'export_busy': 'disable_button',
         'no_print_selectors': [
@@ -163,6 +168,19 @@ def chrome_spec():
         'rotation_place': 'native_or_new_page',
         'rotation_empty': ROTATION_EMPTY,
         'rotation_error': ROTATION_ERROR,
+        'add_shot_chart_icon': 'tabler:ball-basketball',
+        'add_shot_chart_label': 'Add shot chart',
+        'shot_chart_resize': False,
+        'shot_chart_title': None,
+        'shot_chart_drag_handle': 'overlay',
+        'shot_chart_place': 'native_or_new_page',
+        'shot_chart_filter': 'full_game_teams_all',
+        'shot_chart_scale': 0.75,
+        'shot_chart_name_px': 12,
+        'shot_chart_name_weight': 700,
+        'shot_chart_align': 'half_centered',
+        'shot_chart_empty': SHOT_CHART_EMPTY,
+        'shot_chart_error': SHOT_CHART_ERROR,
         'add_table_control': 'icon_menu',
         'editor_chrome': 'dmc',
         'dialog': 'dmc.Modal',
@@ -318,6 +336,10 @@ def _rotation(block_id, x, y, w, h):
     return _block(block_id, 'rotation', x, y, w, h)
 
 
+def _shot_chart(block_id, x, y, w, h):
+    return _block(block_id, 'shot_chart', x, y, w, h)
+
+
 def default_layout(match_info=None):
     del match_info
     half = GRID_COLUMNS // 2
@@ -338,7 +360,9 @@ def default_layout(match_info=None):
                 'blocks': [
                     _table('p2-team', 't_df', 0, 0, GRID_COLUMNS, 3),
                     _table('p2-key', 'k_df', 0, 3, GRID_COLUMNS, 3),
-                    _text('p2-notes', 0, 6, GRID_COLUMNS, 2),
+                    _shot_chart('p2-shot-chart', 0, 6, GRID_COLUMNS, SHOT_CHART_DEFAULT_H),
+                    _text('p2-notes-left', 0, 6 + SHOT_CHART_DEFAULT_H, half, 2),
+                    _text('p2-notes-right', half, 6 + SHOT_CHART_DEFAULT_H, half, 2),
                 ],
             },
             {

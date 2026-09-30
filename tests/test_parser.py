@@ -37,10 +37,18 @@ def _player_periods():
 class PbpFrameTests(unittest.TestCase):
     def test_missing_columns_are_filled(self):
         df = Parser._pbp_df_from_json({'data': [{'periodId': 1}]})
-        for col in ['entityId', 'personId', 'eventType', 'subType', 'clock', 'scores']:
+        for col in ['entityId', 'personId', 'eventType', 'subType', 'clock', 'scores', 'x', 'y']:
             self.assertIn(col, df.columns)
         self.assertEqual(len(df), 1)
         self.assertEqual(df.iloc[0]['periodId'], 1)
+
+    def test_shot_coordinates_are_kept(self):
+        df = Parser._pbp_df_from_json({'data': [{
+            'eventType': '2pt', 'x': 12.5, 'y': 40, 'periodId': 1,
+        }]})
+        self.assertEqual(df.iloc[0]['x'], 12.5)
+        self.assertEqual(df.iloc[0]['y'], 40)
+        self.assertEqual(df.iloc[0]['eventType'], '2pt')
 
     def test_empty_payload_returns_empty_frame(self):
         df = Parser._pbp_df_from_json({'data': []})
