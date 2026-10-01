@@ -29,6 +29,37 @@ def process_lineup_pbp(df, starter_dict):
             else:
                 df.at[i, t] = list(df.at[i-1, t])
 
+def _option_on(raw, name):
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return False
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text or text == 'null':
+            return False
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return False
+    if isinstance(raw, dict):
+        return bool(raw.get(name))
+    if isinstance(raw, (list, tuple)):
+        for item in raw:
+            if item == name:
+                return True
+            if isinstance(item, dict) and (item.get('name') == name or item.get(name) is True):
+                return True
+    return False
+
+
+def _flagged_points(event, made, flag):
+    shot = made & flag
+    return np.select(
+        [shot & (event == '2pt'), shot & (event == '3pt'), shot & (event == 'freeThrow')],
+        [2, 3, 1],
+        default=0,
+    )
+
+
 def process_lineup_stats(df):
     lineup_df = df.copy()
     lineup_df['clock'] = pd.to_datetime(lineup_df['clock'], format='PT%MM%SS')
@@ -72,6 +103,17 @@ def process_lineup_stats(df):
         lineup_df['PF'] = np.where(is_team & (event == 'foul') & (subtype != 'drawn'), 1, np.nan)
         lineup_df['FD'] = np.where(is_team & (event == 'foul') & (subtype == 'drawn'), 1, np.nan)
         lineup_df['PTS'] = 2 * lineup_df['2M'] + 3 * lineup_df['3M'] + lineup_df['1M']
+        if 'options' not in lineup_df.columns:
+            lineup_df['options'] = None
+        option_values = lineup_df['options']
+        for column, flag_name in (
+            ('PIP', 'pointsInThePaint'),
+            ('SCP', 'secondChance'),
+            ('FBP', 'fastBreak'),
+            ('POT', 'fromTurnover'),
+        ):
+            flag = option_values.map(lambda raw, name=flag_name: _option_on(raw, name))
+            lineup_df[column] = _flagged_points(event, made & is_team, flag)
 
         lineup_df['Opp_POSS'] = (poss_end & poss_team.notna() & (poss_team != t)).astype(int)
         lineup_df['Opp_2M'] = (is_opp & (event == '2pt') & made).astype(int)
@@ -84,7 +126,8 @@ def process_lineup_stats(df):
 
         lineup_df[t] = lineup_df[t].apply(lambda x: json.dumps(sorted(list(x))))
         col_list = [t, 'duration', 'POSS', 'Opp_POSS', '2M', '2A', '3M', '3A', '1M', '1A',
-                    'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'FD', 'PTS', 'Opp_PTS']
+                    'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'FD', 'PTS',
+                    'PIP', 'SCP', 'FBP', 'POT', 'Opp_PTS']
         lineup_df_t = lineup_df[col_list]
 
         team_lineup_df = lineup_df_t.groupby(t, as_index=False).sum(min_count=1)

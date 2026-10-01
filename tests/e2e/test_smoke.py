@@ -542,3 +542,47 @@ def test_shot_chart_tab(page, e2e_server):
     assert narrow['home']['w'] > 200
     assert page.locator('#report-tab').is_hidden()
     assert page.get_by_role('tab', name='Shot Chart').is_visible()
+
+
+def _lineup_frame(page):
+    page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    _reveal_loading(page, 'wrap-lineup')
+    return page.evaluate(
+        '''() => {
+            const wrap = document.getElementById('wrap-lineup');
+            const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="Lineup"]');
+            const viewport = document.querySelector('#pane-lineup .ag-center-cols-viewport');
+            const cs = getComputedStyle(wrap);
+            return {
+                marginLeft: cs.marginLeft,
+                marginRight: cs.marginRight,
+                headerW: header ? Math.round(header.getBoundingClientRect().width) : 0,
+                overflow: viewport ? viewport.scrollWidth > viewport.clientWidth + 2 : null,
+            };
+        }'''
+    )
+
+
+def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
+    page.set_viewport_size({'width': 1210, 'height': 834})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Lineup Stats')
+    landscape = _lineup_frame(page)
+    assert landscape['marginLeft'] == '-18px'
+    assert landscape['marginRight'] == '-18px'
+    assert 240 <= landscape['headerW'] <= 260
+
+    page.set_viewport_size({'width': 1400, 'height': 900})
+    page.wait_for_timeout(400)
+    desktop = _lineup_frame(page)
+    assert desktop['marginLeft'] == '0px'
+    assert desktop['marginRight'] == '0px'
+    assert 240 <= desktop['headerW'] <= 260
+
+    page.set_viewport_size({'width': 834, 'height': 1210})
+    page.wait_for_timeout(400)
+    portrait = _lineup_frame(page)
+    assert portrait['headerW'] == 160

@@ -36,6 +36,17 @@ def _occupied_rows(blocks):
     return max(b['y'] + b['h'] for b in blocks)
 
 
+def _leaf_widths(column_defs):
+    widths = {}
+    for col in column_defs:
+        if 'children' in col:
+            for child in col['children']:
+                widths[child['field']] = (child['minWidth'], child['width'])
+        elif 'field' in col and 'width' in col:
+            widths[col['field']] = (col['minWidth'], col['width'])
+    return widths
+
+
 class DefaultLayoutTests(unittest.TestCase):
     def test_version_and_four_pages(self):
         layout = _layout()
@@ -535,6 +546,15 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('w: currentW', js)
         self.assertIn("val.indexOf('%') !== -1", js)
         self.assertNotIn("val === '0.0%'", js)
+        self.assertIn("val.charAt(0) === '.'", js)
+        self.assertIn('function headerLabel', js)
+        self.assertIn("return 'AS'", js)
+        self.assertIn("return 'PT'", js)
+        self.assertIn("text: 'Key Stats'", js)
+        self.assertIn('report-lineup-name', js)
+        self.assertIn('function lineupNameLines', js)
+        self.assertIn('td.report-lineup-name', css)
+        self.assertIn('white-space: normal', css)
         self.assertNotIn('measureContentPx(item) + 3', js)
         self.assertIn('function syncPageOneSideNote', js)
         self.assertNotIn('clone.className = card.className', js)
@@ -1084,6 +1104,17 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         self.assertIn('.is-scrollable', css)
         self.assertIn('.braves-lineup-grid', css)
         self.assertIn('160px', css)
+        pin_at = css.find('.braves-lineup-grid .ag-pinned-left-header')
+        pin_media = css.rfind('@media', 0, pin_at)
+        self.assertIn('max-width: 1024px', css[pin_media:pin_at])
+        self.assertNotIn('768px', css[pin_media:pin_at])
+        bleed_at = css.find('#wrap-lineup')
+        bleed_media = css.rfind('@media', 0, bleed_at)
+        self.assertIn('max-width: 1280px', css[bleed_media:bleed_at])
+        self.assertIn('min-width: 1025px', css[bleed_media:bleed_at])
+        bleed_block = css[bleed_at:css.find('}', bleed_at)]
+        self.assertIn('margin-left: -18px', bleed_block)
+        self.assertIn('margin-right: -18px', bleed_block)
 
     def test_home_page_column_alignments(self):
         import os
@@ -1154,25 +1185,37 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         # Check tail standalone columns order: AST, TO, ST, BL, PF, FD, PTS, eFG%, USG%, PM
         tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('#', 'Player', 'S', 'Min', '+/-')]
         self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'])
+        headers = {c['field']: c['headerName'] for c in cdefs if 'field' in c}
+        self.assertEqual(headers['AST'], 'AS')
+        self.assertEqual(headers['PTS'], 'PT')
         for c in cdefs:
             if 'field' in c and c['field'] in tail_cols:
                 self.assertEqual(c['headerClass'], 'ag-header-align-center')
                 self.assertEqual(c['cellClass'], 'ag-cell-align-center')
+        widths = _leaf_widths(cdefs)
+        self.assertEqual(widths['Min'], (50, 56))
+        self.assertEqual(widths['+/-'], (46, 48))
+        self.assertEqual(widths['2M'], (36, 38))
+        self.assertEqual(widths['2FG%'], (52, 56))
+        self.assertEqual(widths['REB'], (36, 38))
+        self.assertEqual(widths['AST'], (42, 44))
+        self.assertEqual(widths['PTS'], (44, 46))
+        self.assertEqual(widths['eFG%'], (54, 58))
 
     def test_lineup_column_defs_structure_and_order(self):
         from pages.game import _build_stats_column_defs
         cols = [
             'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
             'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
-            'PF', 'FD', 'PTS', 'eFG%', 'PM'
+            'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP'
         ]
         cdefs = _build_stats_column_defs(cols, lineup_size=5)
         self.assertEqual(cdefs[0]['field'], 'Lineup')
         self.assertEqual(cdefs[0]['pinned'], 'left')
         self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
-        self.assertEqual(cdefs[0]['minWidth'], 260)
-        self.assertEqual(cdefs[0]['width'], 270)
+        self.assertEqual(cdefs[0]['minWidth'], 240)
+        self.assertEqual(cdefs[0]['width'], 250)
         self.assertNotIn('flex', cdefs[0])
         self.assertTrue(cdefs[0].get('wrapText'))
         self.assertTrue(cdefs[0].get('autoHeight'))
@@ -1186,8 +1229,46 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
             for ch in cdef.get('children') or []:
                 self.assertEqual(ch['headerClass'], 'ag-header-align-center')
                 self.assertEqual(ch['cellClass'], 'ag-cell-align-center')
+        group_headers = [c.get('headerName') for c in cdefs if 'children' in c]
+        self.assertEqual(group_headers, ['2PT', '3PT', 'FT', 'REB', 'Key Stats'])
+        key_stats = next(c for c in cdefs if c.get('headerName') == 'Key Stats')
+        self.assertEqual([ch['field'] for ch in key_stats['children']], ['PIP', 'SCP', 'FBP', 'POT'])
+        self.assertEqual([ch['headerName'] for ch in key_stats['children']], ['PIP', 'SCP', 'FBP', 'POT'])
         tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('Lineup', 'Min', '+/-')]
-        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'PM'])
+        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'PPP'])
+        headers = {c['field']: c['headerName'] for c in cdefs if 'field' in c}
+        self.assertEqual(headers['AST'], 'AS')
+        self.assertEqual(headers['PTS'], 'PT')
+        self.assertEqual(headers['PPP'], 'PPP')
+        self.assertNotIn('eFG%', headers)
+        self.assertNotIn('PM', headers)
+        widths = _leaf_widths(cdefs)
+        self.assertEqual(widths['Min'], (44, 48))
+        self.assertEqual(widths['+/-'], (34, 36))
+        self.assertEqual(widths['2M'], (26, 28))
+        self.assertEqual(widths['2A'], (26, 28))
+        self.assertEqual(widths['3M'], (26, 28))
+        self.assertEqual(widths['FTM'], (26, 28))
+        self.assertEqual(widths['FTA'], (26, 28))
+        self.assertEqual(widths['OR'], (26, 28))
+        self.assertEqual(widths['DR'], (26, 28))
+        self.assertEqual(widths['REB'], (26, 28))
+        self.assertEqual(widths['2FG%'], (44, 46))
+        self.assertEqual(widths['3FG%'], (44, 46))
+        self.assertEqual(widths['FT%'], (44, 46))
+        self.assertEqual(widths['AST'], (28, 30))
+        self.assertEqual(widths['TO'], (28, 30))
+        self.assertEqual(widths['ST'], (28, 30))
+        self.assertEqual(widths['BL'], (28, 30))
+        self.assertEqual(widths['PF'], (28, 30))
+        self.assertEqual(widths['FD'], (28, 30))
+        self.assertEqual(widths['PTS'], (36, 40))
+        self.assertEqual(widths['PIP'], (36, 38))
+        self.assertEqual(widths['SCP'], (36, 38))
+        self.assertEqual(widths['FBP'], (36, 38))
+        self.assertEqual(widths['POT'], (36, 38))
+        self.assertEqual(widths['PPP'], (36, 40))
+        self.assertEqual(sum(pair[1] for pair in widths.values()), 1136)
 
     def test_dmc_table_from_df_group_headers_and_alignments(self):
         from pages.game import _dmc_table_from_df
@@ -1231,7 +1312,10 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertIn('3PT', top_titles)
         self.assertIn('FT', top_titles)
         self.assertIn('REB', top_titles)
-        self.assertIn('AST', top_titles)
+        self.assertIn('AS', top_titles)
+        self.assertIn('PT', top_titles)
+        self.assertNotIn('AST', top_titles)
+        self.assertNotIn('PTS', top_titles)
         self.assertIn('FD', top_titles)
         sub_titles = [th.children for th in sub_row.children]
         self.assertEqual(sub_titles, ['M', 'A', '%', 'M', 'A', '%', 'M', 'A', '%', 'O', 'D', 'T'])

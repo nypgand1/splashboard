@@ -38,16 +38,33 @@ def _pm_side(value):
         return 0
 
 
+def _three_decimal_rate(rate):
+    text = f"{float(rate):.3f}"
+    if text.startswith('0'):
+        return text[1:]
+    return text
+
+
 def shot_pct_display(made, attempted, pct=None):
-    """Blank when A==0; 0.0% when A>0 and M==0. M itself stays blank at 0."""
+    """Blank when A==0; .000 when A>0 and M==0. Three decimals, no leading zero."""
     attempted_n = _as_nonneg_int(attempted)
     if attempted_n <= 0:
         return ''
     if _as_nonneg_int(made) == 0:
-        return '0.0%'
+        return '.000'
     if pct is not None and pd.notnull(pct):
-        return f"{float(pct):0.1f}%"
-    return f"{100.0 * _as_nonneg_int(made) / attempted_n:0.1f}%"
+        rate = float(pct) / 100.0
+    else:
+        rate = _as_nonneg_int(made) / attempted_n
+    return _three_decimal_rate(rate)
+
+
+def lineup_ppp_display(points, possessions):
+    """Blank when POSS is 0. Two decimals, including 0.00."""
+    poss_n = _as_nonneg_int(possessions)
+    if poss_n <= 0:
+        return ''
+    return f"{_as_nonneg_int(points) / poss_n:.2f}"
 
 
 def efg_pct_display(made2, attempted2, made3, attempted3, efg_val=None):
@@ -454,13 +471,22 @@ class PostGameReport():
         t_df['Min'] = stats['minutes'].map(minutes_to_mmss)
         t_df['2M'] = stats['pointsTwoMade'].fillna(0).astype(int)
         t_df['2A'] = stats['pointsTwoAttempted'].fillna(0).astype(int)
-        t_df['2FG%'] = stats.apply(lambda x: f"{x['pointsTwoPercentage']:0.1f}%" if x['pointsTwoAttempted'] != 0 and pd.notnull(x.get('pointsTwoPercentage')) else '', axis=1)
+        t_df['2FG%'] = stats.apply(
+            lambda x: shot_pct_display(x.get('pointsTwoMade'), x.get('pointsTwoAttempted'), x.get('pointsTwoPercentage')),
+            axis=1,
+        )
         t_df['3M'] = stats['pointsThreeMade'].fillna(0).astype(int)
         t_df['3A'] = stats['pointsThreeAttempted'].fillna(0).astype(int)
-        t_df['3FG%'] = stats.apply(lambda x: f"{x['pointsThreePercentage']:0.1f}%" if x['pointsThreeAttempted'] != 0 and pd.notnull(x.get('pointsThreePercentage')) else '', axis=1)
+        t_df['3FG%'] = stats.apply(
+            lambda x: shot_pct_display(x.get('pointsThreeMade'), x.get('pointsThreeAttempted'), x.get('pointsThreePercentage')),
+            axis=1,
+        )
         t_df['FTM'] = stats['freeThrowsMade'].fillna(0).astype(int)
         t_df['FTA'] = stats['freeThrowsAttempted'].fillna(0).astype(int)
-        t_df['FT%'] = stats.apply(lambda x: f"{x['freeThrowsPercentage']:0.1f}%" if x['freeThrowsAttempted'] != 0 and pd.notnull(x.get('freeThrowsPercentage')) else '', axis=1)
+        t_df['FT%'] = stats.apply(
+            lambda x: shot_pct_display(x.get('freeThrowsMade'), x.get('freeThrowsAttempted'), x.get('freeThrowsPercentage')),
+            axis=1,
+        )
         t_df['OR'] = stats['reboundsOffensive'].fillna(0).astype(int)
         t_df['DR'] = stats['reboundsDefensive'].fillna(0).astype(int)
         t_df['REB'] = stats['rebounds'].fillna(0).astype(int)
@@ -653,8 +679,8 @@ class PostGameReport():
             team_lineup_df['FT%'] = team_lineup_df.apply(
                 lambda x: shot_pct_display(x['1M'], x['1A']), axis=1,
             )
-            team_lineup_df['eFG%'] = team_lineup_df.apply(
-                lambda x: efg_pct_display(x['2M'], x['2A'], x['3M'], x['3A']), axis=1,
+            team_lineup_df['PPP'] = team_lineup_df.apply(
+                lambda x: lineup_ppp_display(x['PTS'], x['POSS']), axis=1,
             )
             team_lineup_df['2M'] = team_lineup_df['2M'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['2A'] = team_lineup_df['2A'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
@@ -674,17 +700,19 @@ class PostGameReport():
             team_lineup_df['BL'] = team_lineup_df['BLK'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['PF'] = team_lineup_df['PF'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['FD'] = team_lineup_df['FD'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)) if 'FD' in team_lineup_df.columns else ''
+            for column in ('PIP', 'SCP', 'FBP', 'POT'):
+                team_lineup_df[column] = team_lineup_df[column].apply(
+                    lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)
+                )
 
-            # PTS
-            team_lineup_df['PTS_RAW'] = team_lineup_df['PTS'].fillna(0).astype(int)
-            team_lineup_df['PTS'] = team_lineup_df['PTS_RAW'].apply(lambda v: '' if v == 0 else v)
-
-            team_lineup_df['PM'] = team_lineup_df.apply(lambda x: f"{x['PTS_RAW']}-{int(x.get('Opp_PTS', 0))}", axis=1)
+            team_lineup_df['PTS'] = team_lineup_df['PTS'].apply(
+                lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)
+            )
 
             team_lineup_df = team_lineup_df[[
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
                 'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
-                'PF', 'FD', 'PTS', 'eFG%', 'PM'
+                'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP'
             ]].copy()
             team_lineup_df.sort_values(by=['+/-', 'Lineup'], ascending=[False, True], inplace=True)
             u_df_dict[team_name] = team_lineup_df
@@ -753,15 +781,15 @@ class PostGameReport():
 
             two_m = _clean_int('pointsTwoMade') if _clean_int('pointsTwoMade') is not None else 0
             two_a = _clean_int('pointsTwoAttempted') if _clean_int('pointsTwoAttempted') is not None else 0
-            two_pct = f"{float(_val('pointsTwoPercentage', 0)):0.1f}%" if two_a > 0 else None
+            two_pct = shot_pct_display(two_m, two_a, _val('pointsTwoPercentage', None)) or None
 
             three_m = _clean_int('pointsThreeMade') if _clean_int('pointsThreeMade') is not None else 0
             three_a = _clean_int('pointsThreeAttempted') if _clean_int('pointsThreeAttempted') is not None else 0
-            three_pct = f"{float(_val('pointsThreePercentage', 0)):0.1f}%" if three_a > 0 else None
+            three_pct = shot_pct_display(three_m, three_a, _val('pointsThreePercentage', None)) or None
 
             ft_m = _clean_int('freeThrowsMade') if _clean_int('freeThrowsMade') is not None else 0
             ft_a = _clean_int('freeThrowsAttempted') if _clean_int('freeThrowsAttempted') is not None else 0
-            ft_pct = f"{float(_val('freeThrowsPercentage', 0)):0.1f}%" if ft_a > 0 else None
+            ft_pct = shot_pct_display(ft_m, ft_a, _val('freeThrowsPercentage', None)) or None
 
             efg_val = _val('fieldGoalsEffectivePercentage', None)
             efg_str = f"{float(efg_val):0.1f}%" if pd.notnull(efg_val) else None

@@ -139,13 +139,13 @@ def _player_frame(name, starter, plus_minus):
         'PTS': 10,
         '2M': 3,
         '2A': 5,
-        '2FG%': '60%',
+        '2FG%': '.600',
         '3M': 1,
         '3A': 3,
-        '3FG%': '33%',
+        '3FG%': '.330',
         'FTM': 2,
         'FTA': 2,
-        'FT%': '100%',
+        'FT%': '1.000',
         'OR': 1,
         'DR': 2,
         'REB': 3,
@@ -198,13 +198,13 @@ class FakeReport:
         away = _player_book(REPORT_AWAY_PLAYERS, -3)
         away.loc[0, '2M'] = ''
         away.loc[0, '2A'] = 4
-        away.loc[0, '2FG%'] = '0.0%'
+        away.loc[0, '2FG%'] = '.000'
         away.loc[0, '3M'] = ''
         away.loc[0, '3A'] = 2
-        away.loc[0, '3FG%'] = '0.0%'
+        away.loc[0, '3FG%'] = '.000'
         away.loc[0, 'FTM'] = ''
         away.loc[0, 'FTA'] = 1
-        away.loc[0, 'FT%'] = '0.0%'
+        away.loc[0, 'FT%'] = '.000'
         away.loc[0, 'eFG%'] = '0.0%'
         return {
             HOME: _split(home),

@@ -292,6 +292,9 @@ def test_report_player_zero_made_shows_zero_pct(page, e2e_server):
     _hydrate_report_page(page, 2)
     page.wait_for_timeout(800)
     text = page.locator('#report-paper-page-3').inner_text()
+    assert '.600' in text
+    assert '1.000' in text
+    assert '4\t.000' in text
     assert '0.0%' in text
     assert 'Player Stats' in text
 
@@ -732,5 +735,5 @@ def test_report_pdf_contains_on_screen_text(page, e2e_server):
     path = download_info.value.path()
     reader = PdfReader(str(path))
     text = '\n'.join((pdf_page.extract_text() or '') for pdf_page in reader.pages)
-    assert 'PTS' in text or 'Min' in text
+    assert 'PT' in text or 'Min' in text
     assert '20:00' in text or 'Lin' in text

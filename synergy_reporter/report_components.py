@@ -41,6 +41,15 @@ def lineup_tables_for_size(lineup_store_data, lineup_size=5):
     return {}
 
 
+def read_split_frame(payload):
+    """Read split JSON without turning display text into numbers.
+
+    `.000`, `1.000`, and lineup `0.00` must stay text. Default inference
+    turns those into 0, 1, and 0, and a numeric 0 is then painted blank.
+    """
+    return pd.read_json(io.StringIO(payload), orient='split', dtype=False)
+
+
 def _df_from_split(payload):
     if payload is None:
         return None
@@ -49,7 +58,7 @@ def _df_from_split(payload):
     if not isinstance(payload, str) or not payload.strip():
         return None
     try:
-        df = pd.read_json(io.StringIO(payload), orient='split')
+        df = read_split_frame(payload)
     except Exception:
         return None
     if df is None or df.empty:

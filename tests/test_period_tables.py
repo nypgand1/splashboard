@@ -136,14 +136,14 @@ class ShotPctDisplayTests(unittest.TestCase):
 
     def test_zero_made_with_attempts_is_zero_pct(self):
         from synergy_reporter.post_game_report import efg_pct_display, shot_pct_display
-        self.assertEqual(shot_pct_display(0, 5), '0.0%')
-        self.assertEqual(shot_pct_display('', 4), '0.0%')
+        self.assertEqual(shot_pct_display(0, 5), '.000')
+        self.assertEqual(shot_pct_display('', 4), '.000')
         self.assertEqual(efg_pct_display(0, 3, 0, 2), '0.0%')
         self.assertEqual(efg_pct_display(0, 4, 0, 0), '0.0%')
 
     def test_made_keeps_source_percentage(self):
         from synergy_reporter.post_game_report import efg_pct_display, shot_pct_display
-        self.assertEqual(shot_pct_display(2, 4, 50.0), '50.0%')
+        self.assertEqual(shot_pct_display(2, 4, 50.0), '.500')
         self.assertEqual(efg_pct_display(2, 4, 0, 0, 50.0), '50.0%')
 
     def test_player_zero_made_fills_group_pct(self):
@@ -193,13 +193,13 @@ class ShotPctDisplayTests(unittest.TestCase):
         row = report._get_player_stats_df_dict()['Braves'].iloc[0]
         self.assertEqual(row['2M'], '')
         self.assertEqual(row['2A'], 5)
-        self.assertEqual(row['2FG%'], '0.0%')
+        self.assertEqual(row['2FG%'], '.000')
         self.assertEqual(row['3M'], '')
         self.assertEqual(row['3A'], 3)
-        self.assertEqual(row['3FG%'], '0.0%')
+        self.assertEqual(row['3FG%'], '.000')
         self.assertEqual(row['FTM'], '')
         self.assertEqual(row['FTA'], 2)
-        self.assertEqual(row['FT%'], '0.0%')
+        self.assertEqual(row['FT%'], '.000')
         self.assertEqual(row['eFG%'], '0.0%')
 
     def test_player_nan_counts_blank_instead_of_raising(self):

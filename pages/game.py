@@ -21,6 +21,7 @@ from synergy_inbounder.game_status import (
 from synergy_reporter.report_components import (
     apply_page_cmd,
     lineup_tables_for_size,
+    read_split_frame,
     render_report_workspace,
 )
 from synergy_reporter.report_layout import (
@@ -618,6 +619,10 @@ def _parse_numeric_stat(val):
         return None
 
 
+def _stat_header(name):
+    return {'AST': 'AS', 'PTS': 'PT'}.get(name, name)
+
+
 def _dmc_table_from_df(df, is_team_summary=True, title=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
@@ -698,7 +703,7 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
         for col in ('AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
                 top_row.append(dmc.TableTh(
-                    col,
+                    _stat_header(col),
                     tableProps={"rowSpan": 2},
                     style={
                         "textAlign": "center",
@@ -737,14 +742,14 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
             sub_row.extend([
                 dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
                 dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PT", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
         if any(c in df.columns for c in ('SCPM', 'SCPA', 'SCP')):
             top_row.append(dmc.TableTh("SCP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
                 dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
                 dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PT", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
         for col in ('FBP', 'POT', 'BP'):
             if col in df.columns:
@@ -931,7 +936,7 @@ LINEUP_COL_SIZES = {
     2: (140, 150),
     3: (180, 190),
     4: (220, 230),
-    5: (260, 270),
+    5: (240, 250),
 }
 
 
@@ -948,6 +953,38 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     column_defs = []
 
     sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
+    is_lineup = any('lineup' in str(name).lower() for name in col_set)
+    if is_lineup:
+        count_min, count_w = 26, 28
+        pct_min, pct_w = 44, 46
+        letter_min, letter_w = 28, 30
+        minute_min, minute_w = 44, 48
+        plusminus_min, plusminus_w = 34, 36
+        pt_min, pt_w = 36, 40
+        key_min, key_w = 36, 38
+        ppp_min, ppp_w = 36, 40
+    else:
+        count_min, count_w = 36, 38
+        pct_min, pct_w = 52, 56
+        letter_min, letter_w = 42, 44
+        minute_min, minute_w = 50, 56
+        plusminus_min, plusminus_w = 46, 48
+        pt_min, pt_w = 44, 46
+        key_min, key_w = 42, 44
+        ppp_min, ppp_w = 48, 52
+
+    def _num_col(field, header, min_w, width):
+        return {
+            "field": field,
+            "headerName": header,
+            "sortable": True,
+            "minWidth": min_w,
+            "width": width,
+            "cellStyle": {"textAlign": "center"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        }
 
     # Pinned left columns: #, PLAYER/LINEUP/TEAM, S
     if '#' in col_set:
@@ -1020,8 +1057,8 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             "field": "Min",
             "headerName": "MIN",
             "sortable": True,
-            "minWidth": 50,
-            "width": 56,
+            "minWidth": minute_min,
+            "width": minute_w,
             "cellStyle": {
                 "styleConditions": [
                     {
@@ -1042,8 +1079,8 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             "field": "+/-",
             "headerName": "+/-",
             "sortable": True,
-            "minWidth": 46,
-            "width": 48,
+            "minWidth": plusminus_min,
+            "width": plusminus_w,
             "cellRenderer": "PlusMinusCell",
             "cellStyle": {"textAlign": "center"},
             "cellClass": "ag-cell-align-center",
@@ -1054,11 +1091,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('2M', '2A', '2FG%')):
         children = []
         if '2M' in col_set:
-            children.append({"field": "2M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("2M", "M", count_min, count_w))
         if '2A' in col_set:
-            children.append({"field": "2A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("2A", "A", count_min, count_w))
         if '2FG%' in col_set:
-            children.append({"field": "2FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("2FG%", "%", pct_min, pct_w))
         column_defs.append({
             "headerName": "2PT",
             "marryChildren": True,
@@ -1069,11 +1106,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('3M', '3A', '3FG%')):
         children = []
         if '3M' in col_set:
-            children.append({"field": "3M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("3M", "M", count_min, count_w))
         if '3A' in col_set:
-            children.append({"field": "3A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("3A", "A", count_min, count_w))
         if '3FG%' in col_set:
-            children.append({"field": "3FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("3FG%", "%", pct_min, pct_w))
         column_defs.append({
             "headerName": "3PT",
             "marryChildren": True,
@@ -1084,11 +1121,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('FTM', 'FTA', 'FT%')):
         children = []
         if 'FTM' in col_set:
-            children.append({"field": "FTM", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("FTM", "M", count_min, count_w))
         if 'FTA' in col_set:
-            children.append({"field": "FTA", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("FTA", "A", count_min, count_w))
         if 'FT%' in col_set:
-            children.append({"field": "FT%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("FT%", "%", pct_min, pct_w))
         column_defs.append({
             "headerName": "FT",
             "marryChildren": True,
@@ -1099,11 +1136,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('OR', 'DR', 'REB')):
         children = []
         if 'OR' in col_set:
-            children.append({"field": "OR", "headerName": "O", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("OR", "O", count_min, count_w))
         if 'DR' in col_set:
-            children.append({"field": "DR", "headerName": "D", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("DR", "D", count_min, count_w))
         if 'REB' in col_set:
-            children.append({"field": "REB", "headerName": "T", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("REB", "T", count_min, count_w))
         column_defs.append({
             "headerName": "REB",
             "marryChildren": True,
@@ -1112,13 +1149,52 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         })
 
     stat_specs = [
-        ('AST', 'AST', 42, 44),
-        ('TO', 'TO', 42, 44),
-        ('ST', 'ST', 42, 44),
-        ('BL', 'BL', 42, 44),
-        ('PF', 'PF', 42, 44),
-        ('FD', 'FD', 42, 44),
-        ('PTS', 'PTS', 44, 46),
+        ('AST', 'AS', letter_min, letter_w),
+        ('TO', 'TO', letter_min, letter_w),
+        ('ST', 'ST', letter_min, letter_w),
+        ('BL', 'BL', letter_min, letter_w),
+        ('PF', 'PF', letter_min, letter_w),
+        ('FD', 'FD', letter_min, letter_w),
+        ('PTS', 'PT', pt_min, pt_w),
+    ]
+    for col_name, hdr_name, min_w, w in stat_specs:
+        if col_name in col_set:
+            column_defs.append({
+                "field": col_name,
+                "headerName": hdr_name,
+                "sortable": True,
+                "minWidth": min_w,
+                "width": w,
+                "cellStyle": {"textAlign": "center"},
+                "cellClass": "ag-cell-align-center",
+                "headerClass": "ag-header-align-center",
+                "cellClassRules": sorted_cell_rules,
+            })
+
+    key_fields = [name for name in ('PIP', 'SCP', 'FBP', 'POT') if name in col_set]
+    if key_fields:
+        column_defs.append({
+            "headerName": "Key Stats",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": [
+                {
+                    "field": name,
+                    "headerName": name,
+                    "sortable": True,
+                    "minWidth": key_min,
+                    "width": key_w,
+                    "cellStyle": {"textAlign": "center"},
+                    "cellClass": "ag-cell-align-center",
+                    "headerClass": "ag-header-align-center",
+                    "cellClassRules": sorted_cell_rules,
+                }
+                for name in key_fields
+            ],
+        })
+
+    stat_specs = [
+        ('PPP', 'PPP', ppp_min, ppp_w),
         ('eFG%', 'eFG%', 54, 58),
         ('USG%', 'USG%', 54, 58),
         ('PM', 'PM', 56, 62),
@@ -1278,7 +1354,7 @@ def render_bs_sections(bs_store, period='all'):
     if 'PPP' in t_adv_df.columns:
         t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: _format_metric(x, 2))
 
-    t_df = pd.read_json(io.StringIO(view['t_df']), orient='split')
+    t_df = read_split_frame(view['t_df'])
     k_df = pd.read_json(io.StringIO(view['k_df']), orient='split')
 
     # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
@@ -1333,7 +1409,7 @@ def render_bs_sections(bs_store, period='all'):
             mb=10,
         )
         detail.append(title_section)
-        p_df = pd.read_json(io.StringIO(p_json), orient='split')
+        p_df = read_split_frame(p_json)
         summary_rows = p_summary.get(team_name) if isinstance(p_summary, dict) else None
         detail.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
     return matrix, detail
@@ -1726,7 +1802,7 @@ def render_lineup_children(lineup_store, lineup_size=5):
             mb=10,
         )
         children.append(title_section)
-        l_df = pd.read_json(io.StringIO(l_json), orient='split')
+        l_df = read_split_frame(l_json)
         children.append(_ag_grid_from_df(
             l_df,
             page_size=page_size,
