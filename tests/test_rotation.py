@@ -149,6 +149,56 @@ class RotationPayloadTests(unittest.TestCase):
         self.assertEqual(payload['runs'][0]['home_pts'], 10)
         self.assertEqual(payload['runs'][0]['away_pts'], 2)
 
+    def test_score_label_uses_event_type_when_subtype_is_missing(self):
+        home, away = 'home-id', 'away-id'
+        df = _pbp([
+            {
+                'periodId': 1,
+                'clock': 'PT02M00S',
+                'eventType': 'period',
+                'subType': 'start',
+                'entityId': home,
+                'personId': None,
+                'scores': json.dumps({home: 0, away: 0}),
+                home: ['p1'],
+                away: ['p2'],
+            },
+            {
+                'periodId': 1,
+                'clock': 'PT01M30S',
+                'eventType': '3pt',
+                'success': 1,
+                'entityId': home,
+                'personId': 'p1',
+                'scores': json.dumps({home: 3, away: 0}),
+                home: ['p1'],
+                away: ['p2'],
+            },
+            {
+                'periodId': 1,
+                'clock': 'PT01M00S',
+                'eventType': 'freeThrow',
+                'success': 1,
+                'entityId': home,
+                'personId': 'p1',
+                'scores': json.dumps({home: 4, away: 0}),
+                home: ['p1'],
+                away: ['p2'],
+            },
+        ])
+        missing = df.loc[df['eventType'].isin(['3pt', 'freeThrow']), 'subType']
+        self.assertTrue(missing.map(lambda value: isinstance(value, float) and pd.isna(value)).all())
+        payload = build_rotation_payload(
+            df,
+            starter_dict={home: ['p1'], away: ['p2']},
+            id_table={home: 'Home', away: 'Away', 'p1': 'A', 'p2': 'B'},
+            home_team_id=home,
+            away_team_id=away,
+        )
+        descs = [point['desc'] for point in payload['margin']]
+        self.assertIn('A 3PT', descs)
+        self.assertIn('A FT', descs)
+
     def test_ot_appends_buckets_after_regulation(self):
         home, away = 'home-id', 'away-id'
         df = _pbp([
