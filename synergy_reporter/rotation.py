@@ -643,7 +643,10 @@ def build_rotation_payload(
     curr_h, curr_a = 0, 0
     
     def _clean_shot_type(event_type, sub_type):
-        s = (sub_type or event_type or '').lower()
+        s = sub_type if isinstance(sub_type, str) and sub_type.strip() else event_type
+        if not isinstance(s, str):
+            s = ''
+        s = s.strip().lower()
         if '3' in s:
             return '3PT'
         if 'free' in s or 'ft' in s:

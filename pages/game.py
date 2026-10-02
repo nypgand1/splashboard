@@ -530,14 +530,14 @@ def update_rotation_store(n, game_id, match_info_store):
         return json.dumps({})
     try:
         report = get_cached_report(game_id)
+        info = safe_loads(match_info_store)
+        return json.dumps(report.get_rotation_payload(
+            home_team_id=info.get('home_team_id'),
+            away_team_id=info.get('away_team_id'),
+        ))
     except Exception as exc:
         print(f"Error loading rotation: {exc}")
         return _error_store()
-    info = safe_loads(match_info_store)
-    return json.dumps(report.get_rotation_payload(
-        home_team_id=info.get('home_team_id'),
-        away_team_id=info.get('away_team_id'),
-    ))
 
 def safe_loads(val):
     if val is None:
