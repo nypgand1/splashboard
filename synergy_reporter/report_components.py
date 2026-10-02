@@ -41,6 +41,15 @@ def lineup_tables_for_size(lineup_store_data, lineup_size=5):
     return {}
 
 
+def read_split_frame(payload):
+    """Read split JSON without turning display text into numbers.
+
+    `.000`, `1.000`, and lineup `0.00` must stay text. Default inference
+    turns those into 0, 1, and 0, and a numeric 0 is then painted blank.
+    """
+    return pd.read_json(io.StringIO(payload), orient='split', dtype=False)
+
+
 def _df_from_split(payload):
     if payload is None:
         return None
@@ -49,7 +58,7 @@ def _df_from_split(payload):
     if not isinstance(payload, str) or not payload.strip():
         return None
     try:
-        df = pd.read_json(io.StringIO(payload), orient='split')
+        df = read_split_frame(payload)
     except Exception:
         return None
     if df is None or df.empty:
@@ -107,12 +116,36 @@ def _player_table_json(bs_dict, match_info, side):
     return _pick_team_payload((bs_dict or {}).get('p_df_dict') or {}, match_info, side)
 
 
+def _without_opp_columns(payload):
+    """Drop Opp_* columns from a split payload. Leave other payloads untouched.
+
+    pandas split text for `.000` and `0.00` must stay as written when the
+    frame has no opponent columns. Rewriting every payload would change it.
+    """
+    if not isinstance(payload, str) or not payload.strip():
+        return payload
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return payload
+    columns = parsed.get('columns') if isinstance(parsed, dict) else None
+    if not isinstance(columns, list) or not any(str(col).startswith('Opp_') for col in columns):
+        return payload
+    keep = [index for index, col in enumerate(columns) if not str(col).startswith('Opp_')]
+    parsed['columns'] = [columns[index] for index in keep]
+    parsed['data'] = [
+        [row[index] for index in keep] if isinstance(row, list) else row
+        for row in (parsed.get('data') or [])
+    ]
+    return json.dumps(parsed, ensure_ascii=False)
+
+
 def _lineup_table_json(lineup_store_data, match_info, side):
-    return _pick_team_payload(
+    return _without_opp_columns(_pick_team_payload(
         lineup_tables_for_size(lineup_store_data, lineup_size=5),
         match_info,
         side,
-    )
+    ))
 
 
 def _sorted_player_split(bs_dict, match_info, side):

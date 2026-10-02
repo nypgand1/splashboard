@@ -46,10 +46,11 @@
         { name: '3PT', keys: ['3M', '3A', '3FG%'], subs: ['M', 'A', '%'] },
         { name: 'FT', keys: ['FTM', 'FTA', 'FT%'], subs: ['M', 'A', '%'] },
         { name: 'REB', keys: ['OR', 'DR', 'REB'], subs: ['O', 'D', 'T'] },
-        { name: 'PIP', keys: ['PIPM', 'PIPA', 'PIP'], subs: ['M', 'A', 'PTS'] },
-        { name: 'SCP', keys: ['SCPM', 'SCPA', 'SCP'], subs: ['M', 'A', 'PTS'] }
+        { name: 'PIP', keys: ['PIPM', 'PIPA', 'PIP'], subs: ['M', 'A', 'PT'] },
+        { name: 'SCP', keys: ['SCPM', 'SCPA', 'SCP'], subs: ['M', 'A', 'PT'] }
     ];
     var FF_KEYS = ['eFG%', 'TOV%', 'ORB%', 'FT-R'];
+    var KEY_STATS = ['PIP', 'SCP', 'FBP', 'POT'];
     var libsPromise = null;
     var hydrateLocks = {};
     var ALLOWED_IMAGE_MIMES = {
@@ -450,7 +451,7 @@
         if (col === '+/-') {
             return false;
         }
-        if (typeof val === 'string' && val.indexOf('%') !== -1) {
+        if (typeof val === 'string' && (val.indexOf('%') !== -1 || val.charAt(0) === '.')) {
             return false;
         }
         if (val === 0 || val === '0' || val === '0.0') {
@@ -509,6 +510,20 @@
         return map;
     }
 
+    function headerLabel(col) {
+        if (col === 'AST') {
+            return 'AS';
+        }
+        if (col === 'PTS') {
+            return 'PT';
+        }
+        return col;
+    }
+
+    function isLineupTable(tableKey) {
+        return tableKey === 'lineup_home' || tableKey === 'lineup_away';
+    }
+
     function skipFourFactorsGroup(tableKey) {
         return tableKey === 'p_df_home' || tableKey === 'p_df_away'
             || tableKey === 'lineup_home' || tableKey === 'lineup_away';
@@ -529,6 +544,14 @@
         }
         columns.forEach(function (col) {
             if (used[col]) {
+                return;
+            }
+            if (isLineupTable(tableKey) && KEY_STATS.indexOf(col) !== -1 && !used.__key) {
+                var presentKeys = KEY_STATS.filter(function (k) { return columns.indexOf(k) !== -1; });
+                presentKeys.forEach(function (k) { used[k] = 1; });
+                used.__key = 1;
+                top.push({ text: 'Key Stats', span: presentKeys.length });
+                presentKeys.forEach(function (k) { sub.push(k); });
                 return;
             }
             var group = COL_GROUPS.filter(function (g) { return g.keys.indexOf(col) !== -1; })[0];
@@ -552,7 +575,7 @@
                 return;
             }
             used[col] = 1;
-            top.push({ text: col, span: 1, rowSpan: 2 });
+            top.push({ text: headerLabel(col), span: 1, rowSpan: 2 });
         });
         return { top: top, sub: sub };
     }
@@ -602,7 +625,7 @@
             var tr = document.createElement('tr');
             columns.forEach(function (col) {
                 var th = document.createElement('th');
-                th.textContent = col;
+                th.textContent = headerLabel(col);
                 tr.appendChild(th);
             });
             thead.appendChild(tr);
@@ -621,6 +644,9 @@
                 td.textContent = text;
                 if (col === 'Player' || col === 'Lineup' || col === 'Lineups') {
                     td.style.fontWeight = '700';
+                }
+                if (col === 'Lineup' || col === 'Lineups') {
+                    td.className = 'report-lineup-name';
                 }
                 if (col === '+/-') {
                     var st = plusMinusStyle(row[col]);
@@ -2344,10 +2370,6 @@
         pdf.setFontSize(pxToPt(parseFloat(style.fontSize) || 9, scale));
         var pad = 0.4;
         var maxW = Math.max(0.4, box.w - pad * 2);
-        var fitted = fitText(pdf, text, maxW);
-        if (!fitted) {
-            return;
-        }
         var align = style.textAlign;
         var x = box.x + pad;
         var pdfAlign = 'left';
@@ -2358,11 +2380,76 @@
             x = box.x + box.w - pad;
             pdfAlign = 'right';
         }
+        var bold = fontWeightNum(style) >= 600;
+        if (cell.classList && cell.classList.contains('report-lineup-name')) {
+            var lines = lineupNameLines(pdf, text, maxW);
+            if (!lines.length) {
+                return;
+            }
+            var lineH = box.h / lines.length;
+            lines.forEach(function (line, index) {
+                drawPdfText(pdf, line, x, box.y + lineH * (index + 0.5), {
+                    baseline: 'middle',
+                    align: pdfAlign,
+                    bold: bold
+                });
+            });
+            return;
+        }
+        var fitted = fitText(pdf, text, maxW);
+        if (!fitted) {
+            return;
+        }
         drawPdfText(pdf, fitted, x, box.y + box.h / 2, {
             baseline: 'middle',
             align: pdfAlign,
-            bold: fontWeightNum(style) >= 600
+            bold: bold
         });
+    }
+
+    function lineupNameLines(pdf, text, maxW) {
+        if (!text) {
+            return [];
+        }
+        if (pdf.getTextWidth(text) <= maxW) {
+            return [text];
+        }
+        var lines = [];
+        var current = '';
+        text.split('-').forEach(function (chunk, index) {
+            var piece = index === 0 ? chunk : '-' + chunk;
+            var trial = current + piece;
+            if (current && pdf.getTextWidth(trial) > maxW) {
+                lines.push(current);
+                current = chunk;
+            } else {
+                current = trial;
+            }
+        });
+        if (current) {
+            lines.push(current);
+        }
+        var fitted = [];
+        lines.forEach(function (line) {
+            if (pdf.getTextWidth(line) <= maxW) {
+                fitted.push(line);
+                return;
+            }
+            var part = '';
+            for (var i = 0; i < line.length; i++) {
+                var next = part + line.charAt(i);
+                if (part && pdf.getTextWidth(next) > maxW) {
+                    fitted.push(part);
+                    part = line.charAt(i);
+                } else {
+                    part = next;
+                }
+            }
+            if (part) {
+                fitted.push(part);
+            }
+        });
+        return fitted;
     }
 
     function toRoman(num) {

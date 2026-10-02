@@ -31,7 +31,7 @@ Finished-game detection is in `docs/spec.md`. `Parser.parse_game_bundle` uses on
 | player period stats | `.../periods` (`limit=1000`; no `isPlayer`) | same + `/live` |
 | fixture roster | always official `.../roster` | same |
 | org persons / entities / venues | always official, HTTP cache 8 hours | same |
-| season fixtures | always official, process cache 60 seconds | same |
+| season fixtures | always official, process cache 25 seconds | same |
 
 Official live routes are marked **2 requests per minute** per route. The 30 / 25 / 25 cadence sits on that cap, assuming one live game at a time. The live bundle adds one person-period request on that same cadence. This spec does not require 429 `Retry-After` or serializing the live bundle.
 
@@ -59,5 +59,6 @@ Official live routes are marked **2 requests per minute** per route. The 30 / 25
 
 - Live PBP `requests_cache` TTL = 25 seconds (key `*/playbyplay/live`).
 - Live `PostGameReport` process cache = 25 seconds. After the game is finished, the same process does not rebuild it.
+- Season fixture process cache = 25 seconds. Home reloads that list every 30 seconds, so the next poll can see a score or status change.
 - Concurrent lookups for the same `game_id` build the report once (singleflight).
 - Caches are process-local. A Fly `auto_stop` wake is a cold cache.

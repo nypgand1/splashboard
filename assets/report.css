@@ -887,6 +887,10 @@ body {
     white-space: nowrap;
 }
 
+.report-js-table td.report-lineup-name {
+    white-space: normal;
+}
+
 .report-js-table thead th {
     font-weight: 700;
     background-color: var(--thead-bg);
@@ -1172,6 +1176,10 @@ body {
     background-color: #f8fafc !important;
 }
 
+.ag-theme-alpine.braves-clean-ag-grid.braves-lineup-grid .ag-row.lineup-opp-row .ag-cell {
+    background-color: #f1f5f9 !important;
+}
+
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell.ag-right-aligned-cell,
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell.ag-cell-align-right,
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell[style*="text-align: right"],
@@ -1225,7 +1233,7 @@ body {
     overflow: visible;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
     .braves-lineup-grid .ag-pinned-left-header,
     .braves-lineup-grid .ag-pinned-left-cols-container {
         width: 160px !important;
@@ -1239,6 +1247,14 @@ body {
         max-width: 160px !important;
         min-width: 160px !important;
         width: 160px !important;
+    }
+}
+
+@media (max-width: 1280px) and (min-width: 1025px) {
+    #wrap-lineup,
+    #wrap-matchups {
+        margin-left: -18px;
+        margin-right: -18px;
     }
 }
 

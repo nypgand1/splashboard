@@ -1,7 +1,8 @@
-from dash import html, dcc, callback, Input, Output, register_page
+from dash import html, dcc, callback, Input, Output, State, no_update, register_page
 import dash_mantine_components as dmc
 import pandas as pd
 
+from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.game_status import (
@@ -46,7 +47,17 @@ SHOW_OPTIONS = [
 
 def layout():
     return html.Div([
+        dcc.Interval(
+            id='home-interval',
+            interval=LIVE_CADENCE_SECONDS * 1000,
+            n_intervals=0,
+        ),
+        dcc.Store(
+            id='home-filter-store',
+            data={'show': SHOW_UPCOMING, 'game_type': None},
+        ),
         dcc.Loading(
+            delay_show=1000,
             custom_spinner=loading_skeleton(),
             children=html.Div(
                 id='home-game-list',
@@ -56,24 +67,45 @@ def layout():
     ])
 
 
+def _first_home_load(n_intervals):
+    return not isinstance(n_intervals, int) or n_intervals == 0
+
+
+def _home_filter_values(filters):
+    if not isinstance(filters, dict):
+        return SHOW_UPCOMING, None
+    return filters.get('show') or SHOW_UPCOMING, filters.get('game_type')
+
+
 @callback(
     Output('home-game-list', 'children'),
-    Input('home-game-list', 'id'),
+    Input('home-interval', 'n_intervals'),
+    State('home-filter-store', 'data'),
 )
-def load_home_game_list(_id):
+def load_home_game_list(n_intervals=0, filters=None):
+    first = _first_home_load(n_intervals)
+    show, game_type = _home_filter_values(filters)
     try:
-        df = df_data()
+        df = df_data(prefetch=first)
     except Exception as exc:
         print(f"Error loading home game list: {exc}")
-        return error_alert(ERROR_HOME)
+        if first:
+            return error_alert(ERROR_HOME)
+        return no_update
     if df is None or df.empty:
         return empty_state(EMPTY_HOME, EMPTY_HOME_NEXT)
     records = schedule_records(df)
-    return render_home_page(
-        records,
-        show=SHOW_UPCOMING,
-        game_type=default_game_type(records),
-    )
+    return render_home_page(records, show=show, game_type=game_type)
+
+
+@callback(
+    Output('home-filter-store', 'data'),
+    Input('home-show', 'value'),
+    Input('home-game-type', 'value'),
+    prevent_initial_call=True,
+)
+def remember_home_filters(show, game_type):
+    return {'show': show or SHOW_UPCOMING, 'game_type': game_type}
 
 
 @callback(
@@ -381,15 +413,16 @@ def render_home_page(records, show=SHOW_UPCOMING, game_type=None):
     )
 
 
-def df_data():
+def df_data(prefetch=True):
     game_list_df = Parser.parse_season_game_list_df(SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID)
     id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
 
-    try:
-        from synergy_inbounder.runtime_cache import prefetch_latest_games
-        prefetch_latest_games(game_list_df, max_games=2)
-    except Exception as e:
-        print(f"Failed to start home prefetch: {e}")
+    if prefetch:
+        try:
+            from synergy_inbounder.runtime_cache import prefetch_latest_games
+            prefetch_latest_games(game_list_df, max_games=2)
+        except Exception as e:
+            print(f"Failed to start home prefetch: {e}")
 
     df = game_list_df
     df['Time'] = df['startTimeLocal']

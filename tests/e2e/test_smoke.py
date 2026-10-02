@@ -1,4 +1,5 @@
 import base64
+import json
 import time
 
 from tests.e2e.fixtures import (
@@ -93,6 +94,37 @@ def test_home_schedule_filters_and_links(page, e2e_server):
     page.wait_for_url(f'**/game/{FINISHED_ID}', timeout=15000)
 
 
+def test_home_interval_keeps_the_show_filter(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    _wait(page, '#home-show')
+    _click_show(page, 'All')
+    page.wait_for_function(
+        '''() => [...document.querySelectorAll('a.home-schedule-row-clickable')]
+            .some((el) => (el.getAttribute('href') || '').includes('/game/fin-regular'))''',
+        timeout=10000,
+    )
+    page.evaluate(
+        '''() => {
+            window.__homeGen = 0;
+            const host = document.getElementById('home-game-list');
+            new MutationObserver(() => { window.__homeGen += 1; })
+                .observe(host, {childList: true, subtree: true});
+        }'''
+    )
+    page.evaluate(
+        '''() => window.dash_clientside.set_props('home-interval', {n_intervals: 2})'''
+    )
+    page.wait_for_function('() => window.__homeGen > 0', timeout=10000)
+    hrefs = page.eval_on_selector_all(
+        'a.home-schedule-row-clickable',
+        'els => els.map(a => a.getAttribute("href"))',
+    )
+    assert f'/game/{FINISHED_ID}' in hrefs
+    selected = page.locator('#home-show label, #home-show button').filter(has_text='All')
+    assert selected.count() >= 1
+
+
 def test_home_viewports(page, e2e_server):
     page.set_viewport_size({'width': 375, 'height': 812})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
@@ -126,7 +158,9 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
 
     tabs = page.locator('[role="tab"]')
     labels = [tabs.nth(i).inner_text().strip() for i in range(tabs.count())]
-    assert labels[:6] == ['Box Score', 'Rotation', 'Shot Chart', 'Lineup Stats', 'Play-By-Play', 'Report']
+    assert labels[:7] == [
+        'Box Score', 'Rotation', 'Shot Chart', 'Lineup Stats', 'Matchups', 'Play-By-Play', 'Report',
+    ]
 
     for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
@@ -542,3 +576,285 @@ def test_shot_chart_tab(page, e2e_server):
     assert narrow['home']['w'] > 200
     assert page.locator('#report-tab').is_hidden()
     assert page.get_by_role('tab', name='Shot Chart').is_visible()
+
+
+def _lineup_frame(page):
+    page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    _reveal_loading(page, 'wrap-lineup')
+    return page.evaluate(
+        '''() => {
+            const wrap = document.getElementById('wrap-lineup');
+            const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="Lineup"]');
+            const viewport = document.querySelector('#pane-lineup .ag-center-cols-viewport');
+            const cs = getComputedStyle(wrap);
+            return {
+                marginLeft: cs.marginLeft,
+                marginRight: cs.marginRight,
+                headerW: header ? Math.round(header.getBoundingClientRect().width) : 0,
+                overflow: viewport ? viewport.scrollWidth > viewport.clientWidth + 2 : null,
+            };
+        }'''
+    )
+
+
+def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
+    page.set_viewport_size({'width': 1210, 'height': 834})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Lineup Stats')
+    landscape = _lineup_frame(page)
+    assert landscape['marginLeft'] == '-18px'
+    assert landscape['marginRight'] == '-18px'
+    assert 240 <= landscape['headerW'] <= 260
+    places = page.evaluate(
+        '''() => {
+            const size = document.getElementById('lineup_size_dropdown').getBoundingClientRect();
+            const sw = document.getElementById('lineup-show-opp').getBoundingClientRect();
+            const wrap = document.getElementById('wrap-lineup').getBoundingClientRect();
+            return {
+                sizeRight: size.right,
+                switchLeft: sw.left,
+                switchRight: sw.right,
+                wrapRight: wrap.right,
+                sizeWidth: size.width,
+                wrapWidth: wrap.width,
+            };
+        }'''
+    )
+    assert places['switchLeft'] > places['sizeRight']
+    assert places['wrapRight'] - places['switchRight'] < 24
+    assert places['sizeWidth'] < places['wrapWidth'] * 0.7
+    assert page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').count() == 0
+    page.locator('#lineup-show-opp').click()
+    opp = page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').first
+    opp.wait_for(state='visible', timeout=20000)
+    assert 'ag-cell-align-right' in (opp.get_attribute('class') or '')
+    assert 'lineup-opp-row' in (opp.evaluate("el => el.closest('.ag-row').className") or '')
+    paint = opp.evaluate(
+        "el => getComputedStyle(el).backgroundColor"
+    )
+    assert paint == 'rgb(241, 245, 249)'
+    page.locator('#pane-lineup .ag-header-cell[col-id="PTS"]').first.click()
+    page.wait_for_timeout(300)
+    sort = page.evaluate(
+        '''() => {
+            const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
+            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
+            const rows = [...center.querySelectorAll('.ag-row')];
+            rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
+            const labels = rows.slice(0, 4).map(row => {
+                const cell = row.querySelector('.ag-cell[col-id="Lineup"]');
+                return cell ? cell.innerText.trim() : '';
+            });
+            return {dir: header ? header.getAttribute('aria-sort') : '', labels};
+        }'''
+    )
+    if sort['dir'] == 'ascending':
+        assert sort['labels'] == ['Chen-7', 'Opp', 'Chen-6', 'Opp']
+    else:
+        assert sort['dir'] == 'descending'
+        assert sort['labels'] == ['Chen-0', 'Opp', 'Chen-1', 'Opp']
+    page.locator('#lineup-show-opp').click()
+    page.wait_for_function(
+        '''() => {
+            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
+            if (!center) {
+                return false;
+            }
+            return [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+                .filter(el => el.innerText.trim() === 'Opp').length === 0;
+        }''',
+        timeout=20000,
+    )
+    hidden = page.evaluate(
+        '''() => {
+            const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
+            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
+            const rows = [...center.querySelectorAll('.ag-row')];
+            rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
+            const cell = rows[0] && rows[0].querySelector('.ag-cell[col-id="Lineup"]');
+            const opp = [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+                .filter(el => el.innerText.trim() === 'Opp').length;
+            return {dir: header ? header.getAttribute('aria-sort') : '', first: cell ? cell.innerText.trim() : '', opp};
+        }'''
+    )
+    assert hidden['dir'] == sort['dir']
+    assert hidden['first'] == sort['labels'][0]
+    assert hidden['opp'] == 0
+    page.locator('#lineup-show-opp').click()
+    page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').first.wait_for(
+        state='visible', timeout=20000,
+    )
+
+    page.set_viewport_size({'width': 1400, 'height': 900})
+    page.wait_for_timeout(400)
+    desktop = _lineup_frame(page)
+    assert desktop['marginLeft'] == '0px'
+    assert desktop['marginRight'] == '0px'
+    assert 240 <= desktop['headerW'] <= 260
+
+    page.set_viewport_size({'width': 834, 'height': 1210})
+    page.wait_for_timeout(400)
+    portrait = _lineup_frame(page)
+    assert portrait['headerW'] == 160
+
+
+def test_lineup_show_opp_keeps_the_same_lineup_page(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Lineup Stats')
+    page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    page.locator('#lineup_size_dropdown').get_by_text('4 Players').click()
+    page.locator('#pane-lineup .ag-paging-panel').nth(1).wait_for(state='visible', timeout=20000)
+
+    def home_summary():
+        return page.evaluate(
+            '''() => {
+                const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+                const summary = panel && panel.querySelector('.ag-paging-row-summary-panel');
+                return summary ? summary.innerText.replace(/\\s+/g, ' ').trim() : '';
+            }'''
+        )
+
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            const text = panel ? panel.innerText : '';
+            return text.includes('20') && text.includes('40');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '1 to 20 of 40'
+    page.locator('#pane-lineup .ag-paging-panel').nth(1).locator('[aria-label="Next Page"]').click()
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            return panel && panel.innerText.includes('21');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '21 to 40 of 40'
+    page.locator('#lineup-show-opp').click()
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            return panel && panel.innerText.includes('80');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '41 to 80 of 80'
+    page.locator('#lineup-show-opp').click()
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            const text = panel ? panel.innerText : '';
+            return text.includes('21') && text.includes('of 40');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '21 to 40 of 40'
+
+
+def _split_lineup(name, pts):
+    return json.dumps({
+        'columns': ['Lineup', 'PTS', 'Min'],
+        'index': [0],
+        'data': [[name, pts, '1:00']],
+    })
+
+
+def test_lineup_store_tick_repaints_both_tables(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Lineup Stats')
+    page.locator('#pane-lineup').get_by_text('Lin-0').first.wait_for(timeout=20000)
+    page.locator('#lineup_size_dropdown').get_by_text('5 Players').click()
+    page.locator('#lineup-show-opp').click()
+    page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').first.wait_for(
+        timeout=20000,
+    )
+    payload = json.dumps({
+        '5': {
+            HOME: _split_lineup('HomeRefresh', 3),
+            AWAY: _split_lineup('AwayRefresh', 2),
+        },
+    })
+    page.evaluate(
+        '''(payload) => window.dash_clientside.set_props('lineup_store', {data: payload})''',
+        payload,
+    )
+    page.locator('#pane-lineup').get_by_text('HomeRefresh').wait_for(timeout=20000)
+    page.locator('#pane-lineup').get_by_text('AwayRefresh').wait_for(timeout=20000)
+    assert page.locator('#pane-lineup').get_by_text('Lin-0').count() == 0
+    assert page.locator('#lineup_size_dropdown').get_by_text('5 Players').count() == 1
+    checked = page.evaluate(
+        '''() => {
+            const node = document.getElementById('lineup-show-opp');
+            const input = node && (node.matches('input') ? node : node.querySelector('input'));
+            return !!(input && input.checked);
+        }'''
+    )
+    assert checked is True
+
+
+def _matchup_lineup(page, index):
+    cell = page.locator('#matchup-grid .ag-cell[col-id="Lineup"]').nth(index)
+    return ' '.join(cell.inner_text().split())
+
+
+def test_matchups_tab_keeps_both_fives_and_switches_viewpoint(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Matchups')
+    page.locator('#matchup-grid .ag-cell[col-id="Lineup"]').first.wait_for(
+        state='visible', timeout=20000,
+    )
+    assert _matchup_lineup(page, 0) == 'Chen-Liu'
+    assert _matchup_lineup(page, 1) == 'Lin-Wu'
+    chrome = page.evaluate(
+        '''() => {
+            const cell = document.querySelector('#matchup-grid .ag-cell[col-id="Lineup"]');
+            const sorted = document.querySelectorAll('#matchup-grid .ag-header-cell-sorted').length;
+            return {
+                align: cell ? getComputedStyle(cell).textAlign : '',
+                sorted: sorted,
+            };
+        }'''
+    )
+    assert chrome['align'] == 'left'
+    assert chrome['sorted'] == 0
+    page.locator('#matchup-team').get_by_text(HOME).click()
+    page.wait_for_function(
+        '''() => {
+            const cell = document.querySelector('#matchup-grid .ag-cell[col-id="Lineup"]');
+            return cell && cell.innerText.replace(/\\s+/g, ' ').trim() === 'Lin-Wu';
+        }''',
+        timeout=20000,
+    )
+    assert _matchup_lineup(page, 0) == 'Lin-Wu'
+    assert _matchup_lineup(page, 1) == 'Chen-Liu'
+
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.wait_for_timeout(400)
+    shown = page.evaluate(
+        '''() => {
+            const tab = [...document.querySelectorAll('[role="tab"]')].find(
+                (node) => (node.textContent || '').includes('Matchups')
+            );
+            const report = document.getElementById('report-tab');
+            return {
+                matchups: tab ? getComputedStyle(tab).display : 'missing',
+                report: report ? getComputedStyle(report).display : 'missing',
+            };
+        }'''
+    )
+    assert shown['matchups'] != 'none'
+    assert shown['report'] == 'none'
+    assert _matchup_lineup(page, 0) == 'Lin-Wu'

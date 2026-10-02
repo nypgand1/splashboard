@@ -6,6 +6,7 @@ from unittest.mock import patch
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import pandas as pd
+from dash import no_update
 from dash_iconify import DashIconify
 
 import app  # noqa: F401
@@ -90,6 +91,89 @@ class FourStateTests(unittest.TestCase):
     def test_home_layout_uses_skeleton(self):
         layout = home_page.layout()
         self.assertTrue(find_type(layout, dmc.Skeleton))
+
+    def test_home_layout_polls_and_keeps_filters_in_a_store(self):
+        from dash import dcc
+        from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
+
+        layout = home_page.layout()
+        interval = next(node for node in walk(layout) if _node_id(node) == 'home-interval')
+        self.assertIsInstance(interval, dcc.Interval)
+        self.assertEqual(interval.interval, LIVE_CADENCE_SECONDS * 1000)
+        store = next(node for node in walk(layout) if _node_id(node) == 'home-filter-store')
+        self.assertEqual(store.data, {'show': 'upcoming', 'game_type': None})
+
+    def test_later_home_tick_keeps_filters_and_replaces_scores(self):
+        first_df = _schedule_df([
+            _home_row(
+                status='FINISHED', fixtureId='done', fixtureType='REGULAR',
+                home_team='Night', away_team='Day',
+                teamScoreHome=80, teamScoreAway=70,
+            ),
+        ])
+        second_df = _schedule_df([
+            _home_row(
+                status='FINISHED', fixtureId='done', fixtureType='REGULAR',
+                home_team='Night', away_team='Day',
+                teamScoreHome=99, teamScoreAway=70,
+            ),
+        ])
+        frames = [first_df, second_df]
+        calls = []
+
+        def _df(prefetch=True):
+            calls.append(prefetch)
+            return frames.pop(0)
+
+        filters = {'show': 'all', 'game_type': 'REGULAR'}
+        with patch.object(home_page, 'df_data', side_effect=_df):
+            first = home_page.load_home_game_list(0, filters)
+            second = home_page.load_home_game_list(1, filters)
+        self.assertEqual(calls, [True, False])
+        self.assertEqual(_segmented(first, 'home-show').value, 'all')
+        self.assertEqual(_segmented(second, 'home-show').value, 'all')
+        self.assertEqual(_segmented(second, 'home-game-type').value, 'REGULAR')
+        first_store = next(node for node in walk(first) if _node_id(node) == 'home-schedule-store')
+        second_store = next(node for node in walk(second) if _node_id(node) == 'home-schedule-store')
+        self.assertEqual(first_store.data[0]['score'], '70 : 80')
+        self.assertEqual(second_store.data[0]['score'], '70 : 99')
+
+    def test_later_home_tick_keeps_the_list_when_reload_fails(self):
+        with patch.object(home_page, 'df_data', side_effect=RuntimeError('boom')):
+            self.assertIs(
+                home_page.load_home_game_list(1, {'show': 'finished'}),
+                no_update,
+            )
+
+    def test_home_refresh_does_not_prefetch(self):
+        frame = pd.DataFrame([{
+            'startTimeLocal': '2026-01-01T19:00:00',
+            'status': 'SCHEDULED',
+            'fixtureType': 'REGULAR',
+            'fixtureId': 'g1',
+            'venueId': 'v',
+            'teamIdHome': 'h',
+            'teamIdAway': 'a',
+            'teamScoreHome': None,
+            'teamScoreAway': None,
+        }])
+        with patch.object(home_page.Parser, 'parse_season_game_list_df', return_value=frame), \
+                patch.object(home_page.Parser, 'parse_id_tables', return_value={'h': 'Home', 'a': 'Away', 'v': 'Arena'}), \
+                patch('synergy_inbounder.runtime_cache.prefetch_latest_games') as prefetch:
+            home_page.df_data(prefetch=False)
+            prefetch.assert_not_called()
+            home_page.df_data(prefetch=True)
+            prefetch.assert_called_once()
+
+    def test_remember_home_filters(self):
+        self.assertEqual(
+            home_page.remember_home_filters('finished', 'PLAYOFF'),
+            {'show': 'finished', 'game_type': 'PLAYOFF'},
+        )
+        self.assertEqual(
+            home_page.remember_home_filters(None, None),
+            {'show': 'upcoming', 'game_type': None},
+        )
 
     def test_game_error_and_empty_views(self):
         err = game_page.render_bs_children(json.dumps({'_ui': 'error', 'message': ERROR_GAME}))
@@ -187,12 +271,27 @@ class FourStateTests(unittest.TestCase):
         self.assertIn('2 Players', markup)
         ids = {getattr(node, 'id', None) for node in walk(wrap)}
         self.assertIn('lineup_size_dropdown', ids)
+        self.assertIn('lineup-show-opp', ids)
         self.assertNotIn('lineup_dropdown_container', ids)
         control = next(
             node for node in walk(wrap)
             if getattr(node, 'id', None) == 'lineup_size_dropdown'
         )
-        self.assertTrue(getattr(control, 'fullWidth', False))
+        self.assertFalse(bool(getattr(control, 'fullWidth', False)))
+        switch = next(node for node in walk(wrap) if getattr(node, 'id', None) == 'lineup-show-opp')
+        self.assertIsInstance(switch, dmc.Switch)
+        self.assertEqual(switch.label, 'Show Opp')
+        self.assertEqual(switch.size, 'sm')
+        self.assertEqual(switch.color, 'gray')
+        self.assertFalse(bool(switch.checked))
+        self.assertEqual(switch.ms, 'auto')
+        row = next(
+            node for node in walk(wrap)
+            if isinstance(node, dmc.Group)
+            and any(getattr(child, 'id', None) == 'lineup_size_dropdown' for child in (node.children or []))
+            and any(getattr(child, 'id', None) == 'lineup-show-opp' for child in (node.children or []))
+        )
+        self.assertEqual(row.w, '100%')
 
     def test_lineup_size_four_uses_same_chrome_and_paginates(self):
         teams = ['Taipei Fubon Braves', 'Formosa Dreamers']
@@ -225,6 +324,7 @@ class FourStateTests(unittest.TestCase):
             opts = grid.dashGridOptions
             self.assertTrue(opts.get('pagination'))
             self.assertEqual(opts.get('paginationPageSize'), 20)
+            self.assertEqual(opts.get('isExternalFilterPresent'), {'function': 'true'})
             lineup_col = next(col for col in grid.columnDefs if col.get('field') == 'Lineup')
             self.assertTrue(lineup_col.get('filter'))
             self.assertEqual(lineup_col.get('minWidth'), 220)
@@ -234,6 +334,15 @@ class FourStateTests(unittest.TestCase):
         five_grids = find_type(five, dag.AgGrid)
         self.assertEqual(len(five_grids), 1)
         self.assertFalse(five_grids[0].dashGridOptions.get('pagination'))
+        shown = game_page.update_pane_lineup('4', 'tab-lineup', store, None, True)
+        shown_grids = find_type(shown, dag.AgGrid)
+        self.assertEqual(shown_grids[0].dashGridOptions.get('paginationPageSize'), 40)
+        self.assertEqual(
+            shown_grids[0].dashGridOptions.get('isExternalFilterPresent'),
+            {'function': 'false'},
+        )
+        five_on = game_page.update_pane_lineup('5', 'tab-lineup', store, None, True)
+        self.assertFalse(find_type(five_on, dag.AgGrid)[0].dashGridOptions.get('pagination'))
 
     def test_lineup_missing_size_uses_render_path_not_title(self):
         teams = ['Home', 'Away']
@@ -270,9 +379,97 @@ class FourStateTests(unittest.TestCase):
         grids = find_type(tree, dag.AgGrid)
         self.assertEqual(len(grids), 2)
         self.assertEqual(grids[0].dashGridOptions.get('paginationPageSize'), 20)
+        self.assertEqual(grids[0].id, 'lineup-grid-0')
         lineup_col = next(col for col in grids[0].columnDefs if col.get('field') == 'Lineup')
         self.assertTrue(lineup_col.get('filter'))
         self.assertEqual(lineup_col.get('minWidth'), 220)
+
+    def test_lineup_tab_pairs_each_lineup_with_an_opp_row(self):
+        store = json.dumps({
+            '4': {
+                'Braves': pd.DataFrame([{
+                    'Lineup': 'A-B-C-D',
+                    'Min': '5:00',
+                    '+/-': 0,
+                    'PTS': 2,
+                    'PPP': '1.00',
+                    'Opp_PTS': 4,
+                    'Opp_PPP': '2.00',
+                    'Opp_Min': 'should-not-show',
+                }]).to_json(orient='split'),
+            },
+        })
+        tree = game_page.render_lineup_children(store, lineup_size=4)
+        grids = find_type(tree, dag.AgGrid)
+        self.assertEqual(len(grids), 1)
+        grid = grids[0]
+        self.assertEqual(grid.id, 'lineup-grid-0')
+        self.assertEqual(grid.dashGridOptions.get('paginationPageSize'), 20)
+        self.assertEqual(grid.dashGridOptions['isExternalFilterPresent']['function'], 'true')
+        self.assertIn(
+            'params && params.data && params.data._opp',
+            grid.dashGridOptions['doesExternalFilterPass']['function'],
+        )
+        shown = find_type(
+            game_page.render_lineup_children(store, lineup_size=4, show_opp=True),
+            dag.AgGrid,
+        )[0]
+        self.assertEqual(shown.dashGridOptions.get('paginationPageSize'), 40)
+        self.assertEqual(shown.dashGridOptions['isExternalFilterPresent']['function'], 'false')
+        fields = []
+
+        def collect(cols):
+            for col in cols:
+                if col.get('children'):
+                    collect(col['children'])
+                elif col.get('field'):
+                    fields.append(col['field'])
+
+        collect(grid.columnDefs)
+        self.assertNotIn('Opp_PTS', fields)
+        self.assertNotIn('Opp_Min', fields)
+        self.assertEqual([row['Lineup'] for row in grid.rowData], ['A-B-C-D', 'A-B-C-D'])
+        our, opp = grid.rowData
+        self.assertFalse(our['_opp'])
+        self.assertTrue(opp['_opp'])
+        self.assertEqual(opp['_pair'], 'A-B-C-D')
+        self.assertEqual(opp['PTS'], 4)
+        self.assertEqual(opp['PPP'], '2.00')
+        self.assertEqual(opp['Min'], '')
+        self.assertEqual(opp['+/-'], '')
+        self.assertEqual(our['_own']['PTS'], 2)
+        self.assertEqual(opp['_own']['PTS'], 2)
+        lineup_col = next(col for col in grid.columnDefs if col.get('field') == 'Lineup')
+        self.assertNotIn('cellClass', lineup_col)
+        self.assertIn('ag-cell-align-right', lineup_col['cellClassRules'])
+        self.assertEqual(
+            lineup_col['cellStyle']['styleConditions'][0]['style']['textAlign'],
+            'right',
+        )
+        self.assertEqual(lineup_col['cellStyle']['styleConditions'][0]['style']['color'], '#0f172a')
+        self.assertEqual(lineup_col['cellStyle']['styleConditions'][0]['style']['fontWeight'], '400')
+        self.assertEqual(lineup_col['cellStyle']['defaultStyle']['textAlign'], 'center')
+        self.assertEqual(lineup_col['cellStyle']['defaultStyle']['fontWeight'], '700')
+        self.assertIsNone(lineup_col.get('sortingOrder'))
+        self.assertIsNone(lineup_col.get('sort'))
+        plus = next(col for col in grid.columnDefs if col.get('field') == '+/-')
+        minutes = next(col for col in grid.columnDefs if col.get('field') == 'Min')
+        self.assertEqual(plus.get('sortingOrder'), ['desc', 'asc', None])
+        self.assertEqual(minutes.get('sortingOrder'), ['desc', 'asc', None])
+        self.assertIn("indexOf(':')", minutes['comparator']['function'])
+        self.assertIsNone(plus.get('sort'))
+        self.assertIn("'Opp'", lineup_col['valueGetter']['function'])
+        self.assertIn('params.data["Lineup"]', lineup_col['filterValueGetter']['function'])
+        self.assertIn('_own', lineup_col['comparator']['function'])
+        self.assertIn('_opp', grid.dashGridOptions['postSortRows']['function'])
+        self.assertNotIn('_opp', lineup_col['comparator']['function'])
+        self.assertEqual(grid.getRowStyle['styleConditions'][0]['style']['backgroundColor'], '#f1f5f9')
+        self.assertEqual(grid.getRowStyle['defaultStyle']['backgroundColor'], '#ffffff')
+        self.assertIn(':opp', grid.getRowId)
+        self.assertEqual(grid.rowClassRules['lineup-opp-row'], 'params.data && params.data._opp')
+
+    def test_game_change_turns_show_opp_off(self):
+        self.assertIs(game_page.reset_lineup_show_opp('next-game'), False)
 
     def test_rotation_run_buttons_use_short_clock_label(self):
         payload = {
@@ -681,6 +878,48 @@ class PbpAlignmentTests(unittest.TestCase):
             self.assertEqual(cdef['headerClass'], 'ag-header-align-center')
             self.assertEqual(cdef['cellClass'], 'ag-cell-align-center')
             self.assertEqual(cdef['cellStyle']['textAlign'], 'center')
+
+
+class PlayerGridSortTests(unittest.TestCase):
+    def test_minutes_and_jersey_sort_as_numbers_and_names_stay_ascending_first(self):
+        df = pd.DataFrame([{
+            '#': '10',
+            'Player': 'Lin',
+            'S': '○',
+            'Min': '20:00',
+            '+/-': 5,
+            '2M': 1,
+            '2A': 2,
+            '2FG%': '.500',
+            'eFG%': '50.0%',
+            'USG%': '20.0%',
+            'PM': '12-10',
+            'PTS': 2,
+        }])
+        grid = find_type(game_page._ag_grid_from_df(df), dag.AgGrid)[0]
+
+        def field(name, cols=None):
+            for col in cols if cols is not None else grid.columnDefs:
+                if col.get('field') == name:
+                    return col
+                found = field(name, col.get('children') or [])
+                if found:
+                    return found
+            return None
+
+        desc = ['desc', 'asc', None]
+        for name in ('#', 'Min', 'eFG%', 'USG%', '+/-', 'PTS'):
+            col = field(name)
+            self.assertIsNotNone(col, name)
+            self.assertEqual(col.get('sortingOrder'), desc, name)
+            self.assertIn('isDescending', col['comparator']['function'])
+        self.assertIn("indexOf(':')", field('Min')['comparator']['function'])
+        self.assertIn("replace('%'", field('eFG%')['comparator']['function'])
+        self.assertIn('DNP', field('Min')['comparator']['function'])
+        for name in ('Player', 'S', 'PM'):
+            col = field(name)
+            self.assertIsNone(col.get('sortingOrder'), name)
+            self.assertIsNone(col.get('comparator'), name)
 
 
 class GameBannerStatusTests(unittest.TestCase):

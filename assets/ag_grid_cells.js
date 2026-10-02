@@ -1,5 +1,51 @@
 // AG-Grid custom cell renderers for Dash AG-Grid
 var dagFuncs = window.dashAgGridFunctions = window.dashAgGridFunctions || {};
+
+window.__lineupShowOpp = false;
+
+window.applyLineupShowOpp = function (show, attempt) {
+    window.__lineupShowOpp = !!show;
+    attempt = attempt || 0;
+    if (!window.dash_ag_grid || !window.dash_ag_grid.getApi) {
+        return;
+    }
+    var pending = false;
+    ['lineup-grid-0', 'lineup-grid-1'].forEach(function (id) {
+        if (!document.getElementById(id)) {
+            return;
+        }
+        var api;
+        try {
+            api = window.dash_ag_grid.getApi(id);
+        } catch (err) {
+            pending = true;
+            return;
+        }
+        if (!api || (api.isDestroyed && api.isDestroyed())) {
+            return;
+        }
+        var page = null;
+        if (api.getGridOption('pagination') && api.paginationGetCurrentPage) {
+            page = api.paginationGetCurrentPage();
+        }
+        api.setGridOption('isExternalFilterPresent', function () {
+            return !window.__lineupShowOpp;
+        });
+        api.onFilterChanged();
+        if (api.getGridOption('pagination')) {
+            api.setGridOption('paginationPageSize', window.__lineupShowOpp ? 40 : 20);
+            if (typeof page === 'number' && api.paginationGoToPage) {
+                api.paginationGoToPage(page);
+            }
+        }
+    });
+    if (pending && attempt < 10) {
+        setTimeout(function () {
+            window.applyLineupShowOpp(window.__lineupShowOpp, attempt + 1);
+        }, 50);
+    }
+};
+
 var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
 
 dagComponentFuncs.PlusMinusCell = function (props) {

@@ -38,16 +38,77 @@ def _pm_side(value):
         return 0
 
 
+def _three_decimal_rate(rate):
+    text = f"{float(rate):.3f}"
+    if text.startswith('0'):
+        return text[1:]
+    return text
+
+
 def shot_pct_display(made, attempted, pct=None):
-    """Blank when A==0; 0.0% when A>0 and M==0. M itself stays blank at 0."""
+    """Blank when A==0; .000 when A>0 and M==0. Three decimals, no leading zero."""
     attempted_n = _as_nonneg_int(attempted)
     if attempted_n <= 0:
         return ''
     if _as_nonneg_int(made) == 0:
-        return '0.0%'
+        return '.000'
     if pct is not None and pd.notnull(pct):
-        return f"{float(pct):0.1f}%"
-    return f"{100.0 * _as_nonneg_int(made) / attempted_n:0.1f}%"
+        rate = float(pct) / 100.0
+    else:
+        rate = _as_nonneg_int(made) / attempted_n
+    return _three_decimal_rate(rate)
+
+
+def lineup_ppp_display(points, possessions):
+    """Blank when POSS is 0. Two decimals, including 0.00."""
+    poss_n = _as_nonneg_int(possessions)
+    if poss_n <= 0:
+        return ''
+    return f"{_as_nonneg_int(points) / poss_n:.2f}"
+
+
+def _clock_sort_seconds(value):
+    """M:SS as seconds. Blank and DNP sort as missing."""
+    if value is None:
+        return float('nan')
+    try:
+        if pd.isna(value):
+            return float('nan')
+    except TypeError:
+        pass
+    text = str(value).strip()
+    if not text or text == 'DNP' or ':' not in text:
+        return float('nan')
+    minutes, _, seconds = text.partition(':')
+    try:
+        return int(minutes) * 60 + float(seconds)
+    except ValueError:
+        return float('nan')
+
+
+def sort_lineup_table(df):
+    """+/- desc, PPP desc, minutes desc, lineup name asc. Blank PPP ranks below 0.00."""
+    if df is None or df.empty or '+/-' not in df.columns or 'Lineup' not in df.columns:
+        return df
+    res = df.copy()
+    if 'PPP' in res.columns:
+        res['_ppp_sort'] = pd.to_numeric(res['PPP'], errors='coerce')
+    else:
+        res['_ppp_sort'] = float('nan')
+    if 'duration' in res.columns:
+        res['_min_sort'] = pd.to_numeric(res['duration'], errors='coerce')
+    elif 'Min' in res.columns:
+        res['_min_sort'] = res['Min'].map(_clock_sort_seconds)
+    else:
+        res['_min_sort'] = float('nan')
+    res.sort_values(
+        by=['+/-', '_ppp_sort', '_min_sort', 'Lineup'],
+        ascending=[False, False, False, True],
+        na_position='last',
+        kind='mergesort',
+        inplace=True,
+    )
+    return res.drop(columns=['_ppp_sort', '_min_sort'])
 
 
 def efg_pct_display(made2, attempted2, made3, attempted3, efg_val=None):
@@ -244,6 +305,7 @@ class PostGameReport():
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None
         self._rotation_payload = None
+        self._matchup_payload = None
 
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
@@ -454,13 +516,22 @@ class PostGameReport():
         t_df['Min'] = stats['minutes'].map(minutes_to_mmss)
         t_df['2M'] = stats['pointsTwoMade'].fillna(0).astype(int)
         t_df['2A'] = stats['pointsTwoAttempted'].fillna(0).astype(int)
-        t_df['2FG%'] = stats.apply(lambda x: f"{x['pointsTwoPercentage']:0.1f}%" if x['pointsTwoAttempted'] != 0 and pd.notnull(x.get('pointsTwoPercentage')) else '', axis=1)
+        t_df['2FG%'] = stats.apply(
+            lambda x: shot_pct_display(x.get('pointsTwoMade'), x.get('pointsTwoAttempted'), x.get('pointsTwoPercentage')),
+            axis=1,
+        )
         t_df['3M'] = stats['pointsThreeMade'].fillna(0).astype(int)
         t_df['3A'] = stats['pointsThreeAttempted'].fillna(0).astype(int)
-        t_df['3FG%'] = stats.apply(lambda x: f"{x['pointsThreePercentage']:0.1f}%" if x['pointsThreeAttempted'] != 0 and pd.notnull(x.get('pointsThreePercentage')) else '', axis=1)
+        t_df['3FG%'] = stats.apply(
+            lambda x: shot_pct_display(x.get('pointsThreeMade'), x.get('pointsThreeAttempted'), x.get('pointsThreePercentage')),
+            axis=1,
+        )
         t_df['FTM'] = stats['freeThrowsMade'].fillna(0).astype(int)
         t_df['FTA'] = stats['freeThrowsAttempted'].fillna(0).astype(int)
-        t_df['FT%'] = stats.apply(lambda x: f"{x['freeThrowsPercentage']:0.1f}%" if x['freeThrowsAttempted'] != 0 and pd.notnull(x.get('freeThrowsPercentage')) else '', axis=1)
+        t_df['FT%'] = stats.apply(
+            lambda x: shot_pct_display(x.get('freeThrowsMade'), x.get('freeThrowsAttempted'), x.get('freeThrowsPercentage')),
+            axis=1,
+        )
         t_df['OR'] = stats['reboundsOffensive'].fillna(0).astype(int)
         t_df['DR'] = stats['reboundsDefensive'].fillna(0).astype(int)
         t_df['REB'] = stats['rebounds'].fillna(0).astype(int)
@@ -653,8 +724,8 @@ class PostGameReport():
             team_lineup_df['FT%'] = team_lineup_df.apply(
                 lambda x: shot_pct_display(x['1M'], x['1A']), axis=1,
             )
-            team_lineup_df['eFG%'] = team_lineup_df.apply(
-                lambda x: efg_pct_display(x['2M'], x['2A'], x['3M'], x['3A']), axis=1,
+            team_lineup_df['PPP'] = team_lineup_df.apply(
+                lambda x: lineup_ppp_display(x['PTS'], x['POSS']), axis=1,
             )
             team_lineup_df['2M'] = team_lineup_df['2M'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['2A'] = team_lineup_df['2A'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
@@ -674,20 +745,66 @@ class PostGameReport():
             team_lineup_df['BL'] = team_lineup_df['BLK'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['PF'] = team_lineup_df['PF'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['FD'] = team_lineup_df['FD'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)) if 'FD' in team_lineup_df.columns else ''
+            for column in ('PIP', 'SCP', 'FBP', 'POT'):
+                team_lineup_df[column] = team_lineup_df[column].apply(
+                    lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)
+                )
 
-            # PTS
-            team_lineup_df['PTS_RAW'] = team_lineup_df['PTS'].fillna(0).astype(int)
-            team_lineup_df['PTS'] = team_lineup_df['PTS_RAW'].apply(lambda v: '' if v == 0 else v)
+            team_lineup_df['PTS'] = team_lineup_df['PTS'].apply(
+                lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)
+            )
 
-            team_lineup_df['PM'] = team_lineup_df.apply(lambda x: f"{x['PTS_RAW']}-{int(x.get('Opp_PTS', 0))}", axis=1)
+            def _blank_count(value):
+                if pd.isna(value) or int(value) == 0:
+                    return ''
+                return int(value)
 
-            team_lineup_df = team_lineup_df[[
+            team_lineup_df['Opp_2FG%'] = team_lineup_df.apply(
+                lambda x: shot_pct_display(x['Opp_2M'], x['Opp_2A']), axis=1,
+            )
+            team_lineup_df['Opp_3FG%'] = team_lineup_df.apply(
+                lambda x: shot_pct_display(x['Opp_3M'], x['Opp_3A']), axis=1,
+            )
+            team_lineup_df['Opp_FT%'] = team_lineup_df.apply(
+                lambda x: shot_pct_display(x['Opp_1M'], x['Opp_1A']), axis=1,
+            )
+            team_lineup_df['Opp_PPP'] = team_lineup_df.apply(
+                lambda x: lineup_ppp_display(x['Opp_PTS'], x['Opp_POSS']), axis=1,
+            )
+            for source, dest in (
+                ('Opp_2M', 'Opp_2M'),
+                ('Opp_2A', 'Opp_2A'),
+                ('Opp_3M', 'Opp_3M'),
+                ('Opp_3A', 'Opp_3A'),
+                ('Opp_1M', 'Opp_FTM'),
+                ('Opp_1A', 'Opp_FTA'),
+                ('Opp_OR', 'Opp_OR'),
+                ('Opp_DR', 'Opp_DR'),
+                ('Opp_REB', 'Opp_REB'),
+                ('Opp_AST', 'Opp_AST'),
+                ('Opp_TOV', 'Opp_TO'),
+                ('Opp_STL', 'Opp_ST'),
+                ('Opp_BLK', 'Opp_BL'),
+                ('Opp_PF', 'Opp_PF'),
+                ('Opp_FD', 'Opp_FD'),
+                ('Opp_PTS', 'Opp_PTS'),
+                ('Opp_PIP', 'Opp_PIP'),
+                ('Opp_SCP', 'Opp_SCP'),
+                ('Opp_FBP', 'Opp_FBP'),
+                ('Opp_POT', 'Opp_POT'),
+            ):
+                team_lineup_df[dest] = team_lineup_df[source].apply(_blank_count)
+
+            team_lineup_df = sort_lineup_table(team_lineup_df)
+            u_df_dict[team_name] = team_lineup_df[[
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
                 'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
-                'PF', 'FD', 'PTS', 'eFG%', 'PM'
+                'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
+                'Opp_2M', 'Opp_2A', 'Opp_2FG%', 'Opp_3M', 'Opp_3A', 'Opp_3FG%',
+                'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
+                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
+                'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
             ]].copy()
-            team_lineup_df.sort_values(by=['+/-', 'Lineup'], ascending=[False, True], inplace=True)
-            u_df_dict[team_name] = team_lineup_df
 
         return u_df_dict
 
@@ -753,15 +870,15 @@ class PostGameReport():
 
             two_m = _clean_int('pointsTwoMade') if _clean_int('pointsTwoMade') is not None else 0
             two_a = _clean_int('pointsTwoAttempted') if _clean_int('pointsTwoAttempted') is not None else 0
-            two_pct = f"{float(_val('pointsTwoPercentage', 0)):0.1f}%" if two_a > 0 else None
+            two_pct = shot_pct_display(two_m, two_a, _val('pointsTwoPercentage', None)) or None
 
             three_m = _clean_int('pointsThreeMade') if _clean_int('pointsThreeMade') is not None else 0
             three_a = _clean_int('pointsThreeAttempted') if _clean_int('pointsThreeAttempted') is not None else 0
-            three_pct = f"{float(_val('pointsThreePercentage', 0)):0.1f}%" if three_a > 0 else None
+            three_pct = shot_pct_display(three_m, three_a, _val('pointsThreePercentage', None)) or None
 
             ft_m = _clean_int('freeThrowsMade') if _clean_int('freeThrowsMade') is not None else 0
             ft_a = _clean_int('freeThrowsAttempted') if _clean_int('freeThrowsAttempted') is not None else 0
-            ft_pct = f"{float(_val('freeThrowsPercentage', 0)):0.1f}%" if ft_a > 0 else None
+            ft_pct = shot_pct_display(ft_m, ft_a, _val('freeThrowsPercentage', None)) or None
 
             efg_val = _val('fieldGoalsEffectivePercentage', None)
             efg_str = f"{float(efg_val):0.1f}%" if pd.notnull(efg_val) else None
@@ -839,6 +956,31 @@ class PostGameReport():
         )
         self._rotation_key = cache_key
         return self._rotation_payload
+
+    def get_matchup_payload(self, home_team_id=None, away_team_id=None):
+        cache_key = (str(home_team_id), str(away_team_id))
+        if self._matchup_payload is not None and getattr(self, '_matchup_key', None) == cache_key:
+            return self._matchup_payload
+        from synergy_reporter.matchups import build_matchup_payload
+        df = self.playbyplay_df.copy()
+        process_lineup_pbp(df, self.starter_dict)
+        shirts = {}
+        for person in self.roster or []:
+            if not isinstance(person, dict) or person.get('personId') is None:
+                continue
+            if person.get('shirtNumber') is None:
+                continue
+            shirts[person['personId']] = person['shirtNumber']
+            shirts[str(person['personId'])] = person['shirtNumber']
+        self._matchup_payload = build_matchup_payload(
+            df,
+            home_id=home_team_id,
+            away_id=away_team_id,
+            id_table=self.id_table or {},
+            shirts=shirts,
+        )
+        self._matchup_key = cache_key
+        return self._matchup_payload
 
     def get_play_by_play_df(self):
         if self._play_by_play_view is not None:

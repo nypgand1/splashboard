@@ -24,6 +24,7 @@ EMPTY_HOME_FILTER = 'No games in this view.'
 EMPTY_HOME_FILTER_NEXT = 'Switch Game Type or Show.'
 EMPTY_GAME = 'No data available.'
 EMPTY_GAME_NEXT = 'Open another game from Home.'
+EMPTY_MATCHUPS = 'No 5-player matchups for this game.'
 
 
 def icon(name, width=16, color=None, **kwargs):

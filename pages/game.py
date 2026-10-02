@@ -21,6 +21,7 @@ from synergy_inbounder.game_status import (
 from synergy_reporter.report_components import (
     apply_page_cmd,
     lineup_tables_for_size,
+    read_split_frame,
     render_report_workspace,
 )
 from synergy_reporter.report_layout import (
@@ -34,6 +35,7 @@ from synergy_reporter.rotation import (
     live_playhead_t,
     report_rotation_figure,
 )
+from synergy_reporter.matchups import matchup_grid_records
 from synergy_reporter.shot_chart import (
     court_data_uri,
     court_zones,
@@ -44,6 +46,7 @@ from synergy_reporter.shot_chart import (
 from ui_kit import (
     EMPTY_GAME,
     EMPTY_GAME_NEXT,
+    EMPTY_MATCHUPS,
     ERROR_GAME,
     empty_state,
     error_alert,
@@ -258,23 +261,36 @@ def _shot_chart_wrap(hidden=True):
 
 
 def _lineup_controls():
-    row = filter_control(
-        '',
-        dmc.SegmentedControl(
-            id='lineup_size_dropdown',
-            data=[
-                {'label': '5 Players', 'value': '5'},
-                {'label': '4 Players', 'value': '4'},
-                {'label': '3 Players', 'value': '3'},
-                {'label': '2 Players', 'value': '2'},
-            ],
-            value='5',
-            radius='md',
-            size='xs',
-            fullWidth=True,
-        ),
+    return dmc.Group(
+        [
+            dmc.SegmentedControl(
+                id='lineup_size_dropdown',
+                data=[
+                    {'label': '5 Players', 'value': '5'},
+                    {'label': '4 Players', 'value': '4'},
+                    {'label': '3 Players', 'value': '3'},
+                    {'label': '2 Players', 'value': '2'},
+                ],
+                value='5',
+                radius='md',
+                size='xs',
+            ),
+            dmc.Switch(
+                id='lineup-show-opp',
+                label='Show Opp',
+                checked=False,
+                size='sm',
+                color='gray',
+                ms='auto',
+            ),
+        ],
+        justify='flex-start',
+        align='center',
+        wrap='wrap',
+        gap='sm',
+        mb='sm',
+        w='100%',
     )
-    return dmc.Box(row, mb='sm')
 
 
 def _lineup_wrap(hidden=True):
@@ -283,7 +299,11 @@ def _lineup_wrap(hidden=True):
     if os.environ.get('SPLASHBOARD_E2E'):
         body = pane
     else:
-        body = dcc.Loading(custom_spinner=loading_skeleton('table'), children=pane)
+        body = dcc.Loading(
+            delay_show=1000,
+            custom_spinner=loading_skeleton('table'),
+            children=pane,
+        )
     return html.Div(
         [
             html.Div(id='lineup-last-update', children=_last_update_span()),
@@ -291,6 +311,47 @@ def _lineup_wrap(hidden=True):
             body,
         ],
         id='wrap-lineup',
+        style=style,
+    )
+
+
+def _matchup_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    return html.Div(
+        [
+            html.Div(id='matchup-last-update', children=_last_update_span()),
+            dmc.Group(
+                [
+                    dmc.SegmentedControl(
+                        id='matchup-team',
+                        data=[],
+                        value=None,
+                        radius='md',
+                        size='xs',
+                    ),
+                ],
+                justify='flex-start',
+                align='center',
+                gap='sm',
+                mb='sm',
+                w='100%',
+            ),
+            html.Div(id='matchup-status', children=loading_skeleton('table')),
+            html.Div(
+                dmc.Paper(
+                    _matchup_grid(),
+                    withBorder=True,
+                    radius='md',
+                    shadow='xs',
+                    mb='md',
+                    className='braves-grid-wrap',
+                    style={'overflowX': 'auto'},
+                ),
+                id='matchup-grid-wrap',
+                style={'display': 'none'},
+            ),
+        ],
+        id='wrap-matchups',
         style=style,
     )
 
@@ -310,6 +371,7 @@ def layout(game_id=None):
                         dmc.TabsTab("Rotation", value="tab-rotation", leftSection=icon("tabler:chart-bar", width=14)),
                         dmc.TabsTab("Shot Chart", value="tab-shot-chart", leftSection=icon("tabler:ball-basketball", width=14)),
                         dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=icon("tabler:users", width=14)),
+                        dmc.TabsTab("Matchups", value="tab-matchups", leftSection=icon("tabler:users-group", width=14)),
                         dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
                         dmc.TabsTab(
                             "Report",
@@ -337,6 +399,7 @@ def layout(game_id=None):
         _shot_chart_wrap(hidden=True),
         _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
         _lineup_wrap(hidden=True),
+        _matchup_wrap(hidden=True),
         _pane('wrap-report', 'pane-report', 'table', hidden=True),
         html.Div(id='pbp_table', style={'display': 'block'}),
         
@@ -350,6 +413,8 @@ def layout(game_id=None):
         dcc.Store(id='bs-period', data='all'),
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
+        dcc.Store(id='lineup-show-opp-sync'),
+        dcc.Store(id='matchup_store'),
         dcc.Store(id='rotation_store'),
         dcc.Store(id='rotation-click-t'),
         html.Button(id='rotation-click-fire', n_clicks=0, style={'display': 'none'}),
@@ -520,6 +585,28 @@ def update_lineup_store(n, game_id):
     return json.dumps(report.get_all_lineup_stats_json_dict(sizes=(5,)))
 
 @callback(
+    Output('matchup_store', 'data'),
+    [Input('interval-component', 'n_intervals'),
+     Input('game_id', 'children'),
+     Input('match_info_store', 'data')],
+)
+def update_matchup_store(n, game_id, match_info_store):
+    if not game_id:
+        return json.dumps({})
+    info = safe_loads(match_info_store)
+    if not info.get('home_team_id') or not info.get('away_team_id'):
+        return json.dumps({})
+    try:
+        report = get_cached_report(game_id)
+        return json.dumps(report.get_matchup_payload(
+            home_team_id=info.get('home_team_id'),
+            away_team_id=info.get('away_team_id'),
+        ))
+    except Exception as exc:
+        print(f"Error loading matchups: {exc}")
+        return _error_store()
+
+@callback(
     Output('rotation_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
@@ -618,6 +705,10 @@ def _parse_numeric_stat(val):
         return None
 
 
+def _stat_header(name):
+    return {'AST': 'AS', 'PTS': 'PT'}.get(name, name)
+
+
 def _dmc_table_from_df(df, is_team_summary=True, title=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
@@ -698,7 +789,7 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
         for col in ('AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
                 top_row.append(dmc.TableTh(
-                    col,
+                    _stat_header(col),
                     tableProps={"rowSpan": 2},
                     style={
                         "textAlign": "center",
@@ -737,14 +828,14 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
             sub_row.extend([
                 dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
                 dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PT", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
         if any(c in df.columns for c in ('SCPM', 'SCPA', 'SCP')):
             top_row.append(dmc.TableTh("SCP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
             sub_row.extend([
                 dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
                 dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("PTS", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
+                dmc.TableTh("PT", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
         for col in ('FBP', 'POT', 'BP'):
             if col in df.columns:
@@ -931,7 +1022,7 @@ LINEUP_COL_SIZES = {
     2: (140, 150),
     3: (180, 190),
     4: (220, 230),
-    5: (260, 270),
+    5: (240, 250),
 }
 
 
@@ -948,6 +1039,38 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     column_defs = []
 
     sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
+    is_lineup = any('lineup' in str(name).lower() for name in col_set)
+    if is_lineup:
+        count_min, count_w = 26, 28
+        pct_min, pct_w = 44, 46
+        letter_min, letter_w = 28, 30
+        minute_min, minute_w = 44, 48
+        plusminus_min, plusminus_w = 34, 36
+        pt_min, pt_w = 36, 40
+        key_min, key_w = 36, 38
+        ppp_min, ppp_w = 36, 40
+    else:
+        count_min, count_w = 36, 38
+        pct_min, pct_w = 52, 56
+        letter_min, letter_w = 42, 44
+        minute_min, minute_w = 50, 56
+        plusminus_min, plusminus_w = 46, 48
+        pt_min, pt_w = 44, 46
+        key_min, key_w = 42, 44
+        ppp_min, ppp_w = 48, 52
+
+    def _num_col(field, header, min_w, width):
+        return {
+            "field": field,
+            "headerName": header,
+            "sortable": True,
+            "minWidth": min_w,
+            "width": width,
+            "cellStyle": {"textAlign": "center"},
+            "cellClass": "ag-cell-align-center",
+            "headerClass": "ag-header-align-center",
+            "cellClassRules": sorted_cell_rules,
+        }
 
     # Pinned left columns: #, PLAYER/LINEUP/TEAM, S
     if '#' in col_set:
@@ -1020,8 +1143,8 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             "field": "Min",
             "headerName": "MIN",
             "sortable": True,
-            "minWidth": 50,
-            "width": 56,
+            "minWidth": minute_min,
+            "width": minute_w,
             "cellStyle": {
                 "styleConditions": [
                     {
@@ -1042,8 +1165,8 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             "field": "+/-",
             "headerName": "+/-",
             "sortable": True,
-            "minWidth": 46,
-            "width": 48,
+            "minWidth": plusminus_min,
+            "width": plusminus_w,
             "cellRenderer": "PlusMinusCell",
             "cellStyle": {"textAlign": "center"},
             "cellClass": "ag-cell-align-center",
@@ -1054,11 +1177,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('2M', '2A', '2FG%')):
         children = []
         if '2M' in col_set:
-            children.append({"field": "2M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("2M", "M", count_min, count_w))
         if '2A' in col_set:
-            children.append({"field": "2A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("2A", "A", count_min, count_w))
         if '2FG%' in col_set:
-            children.append({"field": "2FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("2FG%", "%", pct_min, pct_w))
         column_defs.append({
             "headerName": "2PT",
             "marryChildren": True,
@@ -1069,11 +1192,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('3M', '3A', '3FG%')):
         children = []
         if '3M' in col_set:
-            children.append({"field": "3M", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("3M", "M", count_min, count_w))
         if '3A' in col_set:
-            children.append({"field": "3A", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("3A", "A", count_min, count_w))
         if '3FG%' in col_set:
-            children.append({"field": "3FG%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("3FG%", "%", pct_min, pct_w))
         column_defs.append({
             "headerName": "3PT",
             "marryChildren": True,
@@ -1084,11 +1207,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('FTM', 'FTA', 'FT%')):
         children = []
         if 'FTM' in col_set:
-            children.append({"field": "FTM", "headerName": "M", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("FTM", "M", count_min, count_w))
         if 'FTA' in col_set:
-            children.append({"field": "FTA", "headerName": "A", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("FTA", "A", count_min, count_w))
         if 'FT%' in col_set:
-            children.append({"field": "FT%", "headerName": "%", "sortable": True, "minWidth": 52, "width": 56, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("FT%", "%", pct_min, pct_w))
         column_defs.append({
             "headerName": "FT",
             "marryChildren": True,
@@ -1099,11 +1222,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     if any(c in col_set for c in ('OR', 'DR', 'REB')):
         children = []
         if 'OR' in col_set:
-            children.append({"field": "OR", "headerName": "O", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("OR", "O", count_min, count_w))
         if 'DR' in col_set:
-            children.append({"field": "DR", "headerName": "D", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("DR", "D", count_min, count_w))
         if 'REB' in col_set:
-            children.append({"field": "REB", "headerName": "T", "sortable": True, "minWidth": 36, "width": 38, "cellStyle": {"textAlign": "center"}, "cellClass": "ag-cell-align-center", "headerClass": "ag-header-align-center", "cellClassRules": sorted_cell_rules})
+            children.append(_num_col("REB", "T", count_min, count_w))
         column_defs.append({
             "headerName": "REB",
             "marryChildren": True,
@@ -1112,13 +1235,52 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         })
 
     stat_specs = [
-        ('AST', 'AST', 42, 44),
-        ('TO', 'TO', 42, 44),
-        ('ST', 'ST', 42, 44),
-        ('BL', 'BL', 42, 44),
-        ('PF', 'PF', 42, 44),
-        ('FD', 'FD', 42, 44),
-        ('PTS', 'PTS', 44, 46),
+        ('AST', 'AS', letter_min, letter_w),
+        ('TO', 'TO', letter_min, letter_w),
+        ('ST', 'ST', letter_min, letter_w),
+        ('BL', 'BL', letter_min, letter_w),
+        ('PF', 'PF', letter_min, letter_w),
+        ('FD', 'FD', letter_min, letter_w),
+        ('PTS', 'PT', pt_min, pt_w),
+    ]
+    for col_name, hdr_name, min_w, w in stat_specs:
+        if col_name in col_set:
+            column_defs.append({
+                "field": col_name,
+                "headerName": hdr_name,
+                "sortable": True,
+                "minWidth": min_w,
+                "width": w,
+                "cellStyle": {"textAlign": "center"},
+                "cellClass": "ag-cell-align-center",
+                "headerClass": "ag-header-align-center",
+                "cellClassRules": sorted_cell_rules,
+            })
+
+    key_fields = [name for name in ('PIP', 'SCP', 'FBP', 'POT') if name in col_set]
+    if key_fields:
+        column_defs.append({
+            "headerName": "Key Stats",
+            "marryChildren": True,
+            "headerClass": "ag-header-group-center",
+            "children": [
+                {
+                    "field": name,
+                    "headerName": name,
+                    "sortable": True,
+                    "minWidth": key_min,
+                    "width": key_w,
+                    "cellStyle": {"textAlign": "center"},
+                    "cellClass": "ag-cell-align-center",
+                    "headerClass": "ag-header-align-center",
+                    "cellClassRules": sorted_cell_rules,
+                }
+                for name in key_fields
+            ],
+        })
+
+    stat_specs = [
+        ('PPP', 'PPP', ppp_min, ppp_w),
         ('eFG%', 'eFG%', 54, 58),
         ('USG%', 'USG%', 54, 58),
         ('PM', 'PM', 56, 62),
@@ -1137,10 +1299,305 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
                 "cellClassRules": sorted_cell_rules,
             })
 
+    _apply_click_sort_columns(column_defs)
     return column_defs
 
 
-def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None, lineup_size=5):
+def _display_cell(value):
+    if value is None:
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except TypeError:
+        pass
+    return value
+
+
+def _lineup_visible_columns(df):
+    return [
+        col for col in df.columns
+        if not str(col).startswith('Opp_') and not str(col).startswith('_')
+    ]
+
+
+def _lineup_pair_records(df):
+    """One lineup JSON row becomes our row, then an Opp row on the same columns."""
+    columns = _lineup_visible_columns(df)
+    records = []
+    for raw in df.to_dict('records'):
+        own = {col: _display_cell(raw.get(col)) for col in columns}
+        pair = own.get('Lineup', own.get('Lineups', ''))
+        our = dict(own)
+        our['_opp'] = False
+        our['_pair'] = pair
+        our['_own'] = dict(own)
+        records.append(our)
+        opp = {}
+        for col in columns:
+            if col in ('Min', '+/-'):
+                opp[col] = ''
+            elif 'lineup' in str(col).lower():
+                opp[col] = pair
+            else:
+                opp[col] = _display_cell(raw.get('Opp_' + col, ''))
+        opp['_opp'] = True
+        opp['_pair'] = pair
+        opp['_own'] = dict(own)
+        records.append(opp)
+    return records
+
+
+_DESC_SORT_FIELDS = {
+    '#', 'Min', '+/-',
+    '2M', '2A', '2FG%', '3M', '3A', '3FG%', 'FTM', 'FTA', 'FT%',
+    'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS',
+    'PIP', 'SCP', 'FBP', 'POT', 'PPP', 'eFG%', 'USG%',
+}
+DESC_FIRST_SORT = ['desc', 'asc', None]
+
+
+def _numeric_rank_js():
+    # M:SS becomes seconds. A trailing % is stripped so 0.0% and .833 compare
+    # as numbers. Blank stays below 0.
+    return (
+        "(function(raw) {"
+        "return raw === '' || raw === null || raw === undefined ? null"
+        " : (typeof raw === 'number' ? (raw !== raw ? null : raw)"
+        " : (typeof raw === 'string' && raw.indexOf(':') >= 0"
+        " ? (function(parts) {"
+        "return parts && parts.length === 2 && (+parts[0]) === (+parts[0]) && (+parts[1]) === (+parts[1])"
+        " ? (+parts[0]) * 60 + (+parts[1]) : null;"
+        "})(raw.split(':'))"
+        " : (typeof raw === 'string'"
+        " ? (function(text) { return (+text) === (+text) ? +text : null; })(raw.replace('%', ''))"
+        " : null)));"
+        "})"
+    )
+
+
+def _lineup_pair_comparator(field):
+    # dash-ag-grid evaluates this once with static-eval. That walker rejects
+    # var/if/for, and it prewalks the body with every parameter set to null,
+    # so member access and `typeof` stay behind a null check.
+    # AG Grid inverts a descending column. The DNP bias flips with
+    # isDescending so those rows stay last in both directions.
+    field_js = json.dumps(field)
+    rank = _numeric_rank_js()
+    return {
+        "function": (
+            "(function(a, b, nodeA, nodeB, isDescending) {"
+            "return (function(dnpA, dnpB) {"
+            "return dnpA !== dnpB ? (dnpA ? 1 : -1) * (isDescending ? -1 : 1)"
+            " : (function(av, bv) {"
+            "return (function(an, bn) {"
+            "return an === null && bn === null ? (av < bv ? -1 : av > bv ? 1 : 0)"
+            " : an === null ? -1 : bn === null ? 1"
+            " : an < bn ? -1 : an > bn ? 1 : 0;"
+            "})(" + rank + "(av), " + rank + "(bv));"
+            "})("
+            f"nodeA && nodeA.data ? (nodeA.data._own ? nodeA.data._own[{field_js}] : nodeA.data[{field_js}]) : null,"
+            f"nodeB && nodeB.data ? (nodeB.data._own ? nodeB.data._own[{field_js}] : nodeB.data[{field_js}]) : null);"
+            "})("
+            "nodeA && nodeA.data && nodeA.data.Min === 'DNP',"
+            "nodeB && nodeB.data && nodeB.data.Min === 'DNP');"
+            "})"
+        )
+    }
+
+
+def _apply_click_sort(col):
+    field = col.get('field')
+    if field not in _DESC_SORT_FIELDS:
+        return
+    col['sortingOrder'] = list(DESC_FIRST_SORT)
+    col['comparator'] = _lineup_pair_comparator(field)
+
+
+def _apply_click_sort_columns(column_defs):
+    for col in column_defs:
+        children = col.get('children')
+        if children:
+            _apply_click_sort_columns(children)
+            continue
+        _apply_click_sort(col)
+
+
+# postSortRows is compiled as `params => expr` on every sort. Snapshot the
+# comparator order first: indexOf on the live array moves while it sorts.
+_LINEUP_POST_SORT = {
+    "function": (
+        "(function(original) {"
+        "return params.nodes.sort(function(a, b) {"
+        "return (function(ai, bi) {"
+        "return ai < bi ? -1 : ai > bi ? 1"
+        " : ((a && a.data && a.data._opp) ? 1 : 0) - ((b && b.data && b.data._opp) ? 1 : 0);"
+        "})("
+        "original ? original.indexOf(original.find(function(n) {"
+        "return n && n.data && a && a.data && n.data._pair === a.data._pair && !n.data._opp;"
+        "})) : -1,"
+        "original ? original.indexOf(original.find(function(n) {"
+        "return n && n.data && b && b.data && n.data._pair === b.data._pair && !n.data._opp;"
+        "})) : -1);"
+        "});"
+        "})(params && params.nodes ? params.nodes.slice() : [])"
+    )
+}
+
+
+def matchup_team_value(current, away_id, home_id, triggered_id):
+    valid = set()
+    if away_id:
+        valid.add(str(away_id))
+    if home_id:
+        valid.add(str(home_id))
+    default = str(away_id) if away_id else (str(home_id) if home_id else None)
+    if default is None:
+        return None
+    if triggered_id == 'game_id' or str(current) not in valid:
+        return default
+    return no_update
+
+
+def _apply_matchup_pair_columns(column_defs):
+    for col in column_defs:
+        children = col.get('children')
+        if children:
+            _apply_matchup_pair_columns(children)
+            continue
+        field = col.get('field')
+        if not field:
+            continue
+        col['comparator'] = _lineup_pair_comparator(field)
+        if field != 'Lineup':
+            continue
+        rules = dict(col.get('cellClassRules') or {})
+        rules['ag-cell-align-right'] = 'params.data && params.data._opp'
+        rules['ag-cell-align-left'] = '!(params.data && params.data._opp)'
+        col['cellClassRules'] = rules
+        col.pop('cellClass', None)
+        col['filterValueGetter'] = {
+            'function': "params.data && params.data._filter ? params.data._filter : ''",
+        }
+        col['cellStyle'] = {
+            'styleConditions': [
+                {
+                    'condition': 'params.data && params.data._opp',
+                    'style': {
+                        'textAlign': 'right',
+                        'fontWeight': '400',
+                        'color': '#0f172a',
+                        'whiteSpace': 'normal',
+                        'lineHeight': '1.3',
+                    },
+                }
+            ],
+            'defaultStyle': {
+                'textAlign': 'left',
+                'fontWeight': '700',
+                'whiteSpace': 'normal',
+                'lineHeight': '1.3',
+            },
+        }
+
+
+def _matchup_column_defs():
+    columns = [
+        'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+        'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+        'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
+    ]
+    column_defs = _build_stats_column_defs(
+        columns,
+        filterable_cols=['Lineup'],
+        lineup_size=5,
+    )
+    _apply_matchup_pair_columns(column_defs)
+    return column_defs
+
+
+def _matchup_grid():
+    return dag.AgGrid(
+        id='matchup-grid',
+        rowData=[],
+        columnDefs=_matchup_column_defs(),
+        defaultColDef={
+            'sortable': True,
+            'filter': False,
+            'resizable': True,
+            'cellDataType': False,
+        },
+        dashGridOptions={
+            'domLayout': 'autoHeight',
+            'suppressHorizontalScroll': False,
+            'postSortRows': _LINEUP_POST_SORT,
+        },
+        className='ag-theme-alpine braves-clean-ag-grid braves-lineup-grid',
+        style={'width': '100%'},
+        getRowId="params.data._pair + (params.data._opp ? ':other' : ':view')",
+        getRowStyle={
+            'styleConditions': [
+                {
+                    'condition': 'params.data && params.data._opp',
+                    'style': {'backgroundColor': '#f1f5f9'},
+                }
+            ],
+            'defaultStyle': {'backgroundColor': '#ffffff'},
+        },
+        rowClassRules={'lineup-opp-row': 'params.data && params.data._opp'},
+    )
+
+
+def _apply_lineup_pair_columns(column_defs):
+    for col in column_defs:
+        children = col.get("children")
+        if children:
+            _apply_lineup_pair_columns(children)
+            continue
+        field = col.get("field")
+        if not field:
+            continue
+        col["comparator"] = _lineup_pair_comparator(field)
+        if "lineup" not in str(field).lower():
+            continue
+        rules = dict(col.get("cellClassRules") or {})
+        rules["ag-cell-align-right"] = "params.data && params.data._opp"
+        rules["ag-cell-align-center"] = "!(params.data && params.data._opp)"
+        col["cellClassRules"] = rules
+        col.pop("cellClass", None)
+        field_js = json.dumps(field)
+        col["valueGetter"] = {
+            "function": (
+                "params.data && params.data._opp ? 'Opp' : "
+                f"(params.data ? params.data[{field_js}] : '')"
+            ),
+        }
+        col["filterValueGetter"] = {
+            "function": f"params.data ? params.data[{field_js}] : ''",
+        }
+        col["cellStyle"] = {
+            "styleConditions": [
+                {
+                    "condition": "params.data && params.data._opp",
+                    "style": {
+                        "textAlign": "right",
+                        "fontWeight": "400",
+                        "color": "#0f172a",
+                        "whiteSpace": "normal",
+                        "lineHeight": "1.3",
+                    },
+                }
+            ],
+            "defaultStyle": {
+                "textAlign": "center",
+                "fontWeight": "700",
+                "whiteSpace": "normal",
+                "lineHeight": "1.3",
+            },
+        }
+
+
+def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None, lineup_size=5, row_records=None, pair_rows=False, show_opp=False, grid_id=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
     
@@ -1201,6 +1658,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                     'whiteSpace': 'normal',
                     'lineHeight': '1.3',
                 }
+            _apply_click_sort(col_def)
             column_defs.append(col_def)
 
     dash_options = {
@@ -1212,18 +1670,43 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
         dash_options["paginationPageSize"] = page_size
     if pinned_bottom_data:
         dash_options["pinnedBottomRowData"] = pinned_bottom_data
+    pair_props = {}
+    if pair_rows:
+        _apply_lineup_pair_columns(column_defs)
+        dash_options["postSortRows"] = _LINEUP_POST_SORT
+        dash_options["isExternalFilterPresent"] = {
+            "function": "false" if show_opp else "true",
+        }
+        dash_options["doesExternalFilterPass"] = {
+            "function": "!(params && params.data && params.data._opp)",
+        }
+        pair_props = {
+            "id": grid_id,
+            "getRowId": "params.data._pair + (params.data._opp ? ':opp' : ':us')",
+            "getRowStyle": {
+                "styleConditions": [
+                    {
+                        "condition": "params.data && params.data._opp",
+                        "style": {"backgroundColor": "#f1f5f9"},
+                    }
+                ],
+                "defaultStyle": {"backgroundColor": "#ffffff"},
+            },
+            "rowClassRules": {"lineup-opp-row": "params.data && params.data._opp"},
+        }
 
     grid_class = "ag-theme-alpine braves-clean-ag-grid"
     if any('lineup' in str(c).lower() for c in df.columns):
         grid_class += " braves-lineup-grid"
     return dmc.Paper(
         dag.AgGrid(
-            rowData=df.to_dict('records'),
+            rowData=row_records if row_records is not None else df.to_dict('records'),
             columnDefs=column_defs,
             defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
             dashGridOptions=dash_options,
             className=grid_class,
-            style={'width': '100%'}
+            style={'width': '100%'},
+            **pair_props,
         ),
         withBorder=True,
         radius="md",
@@ -1278,7 +1761,7 @@ def render_bs_sections(bs_store, period='all'):
     if 'PPP' in t_adv_df.columns:
         t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: _format_metric(x, 2))
 
-    t_df = pd.read_json(io.StringIO(view['t_df']), orient='split')
+    t_df = read_split_frame(view['t_df'])
     k_df = pd.read_json(io.StringIO(view['k_df']), orient='split')
 
     # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
@@ -1333,7 +1816,7 @@ def render_bs_sections(bs_store, period='all'):
             mb=10,
         )
         detail.append(title_section)
-        p_df = pd.read_json(io.StringIO(p_json), orient='split')
+        p_df = read_split_frame(p_json)
         summary_rows = p_summary.get(team_name) if isinstance(p_summary, dict) else None
         detail.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
     return matrix, detail
@@ -1695,7 +2178,7 @@ def render_pbp_children(pbp_store):
     return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
-def render_lineup_children(lineup_store, lineup_size=5):
+def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
     try:
         size_int = int(lineup_size)
     except Exception:
@@ -1707,7 +2190,8 @@ def render_lineup_children(lineup_store, lineup_size=5):
     if not lineup_dict:
         return [_empty_view()]
     children = []
-    page_size = 20 if size_int < 5 else None
+    show_opp = bool(show_opp)
+    page_size = (40 if show_opp else 20) if size_int < 5 else None
     for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
         title_section = dmc.Group(
@@ -1726,12 +2210,17 @@ def render_lineup_children(lineup_store, lineup_size=5):
             mb=10,
         )
         children.append(title_section)
-        l_df = pd.read_json(io.StringIO(l_json), orient='split')
+        l_df = read_split_frame(l_json)
+        visible = l_df.loc[:, _lineup_visible_columns(l_df)]
         children.append(_ag_grid_from_df(
-            l_df,
+            visible,
             page_size=page_size,
             filterable_cols=['Lineup', 'Lineups'],
             lineup_size=size_int,
+            row_records=_lineup_pair_records(l_df),
+            pair_rows=True,
+            show_opp=show_opp,
+            grid_id=f'lineup-grid-{idx}',
         ))
     return children
 
@@ -2042,6 +2531,69 @@ def update_lineup_last_update(lineup_store, active_tab):
 
 
 @callback(
+    Output('matchup-team', 'data'),
+    Output('matchup-team', 'value'),
+    Input('match_info_store', 'data'),
+    Input('game_id', 'children'),
+    State('matchup-team', 'value'),
+)
+def sync_matchup_team(match_info_store, _game_id, current):
+    info = safe_loads(match_info_store)
+    away_id = info.get('away_team_id')
+    home_id = info.get('home_team_id')
+    away_id = None if away_id in (None, '') else str(away_id)
+    home_id = None if home_id in (None, '') else str(home_id)
+    if not away_id and not home_id:
+        return no_update, no_update
+    options = []
+    if away_id:
+        options.append({'label': info.get('away_team') or 'Away', 'value': away_id})
+    if home_id:
+        options.append({'label': info.get('home_team') or 'Home', 'value': home_id})
+    try:
+        triggered = ctx.triggered_id
+    except Exception:
+        triggered = None
+    return options, matchup_team_value(current, away_id, home_id, triggered)
+
+
+@callback(
+    Output('matchup-last-update', 'children'),
+    Input('matchup_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_matchup_last_update(matchup_store, active_tab):
+    if active_tab != 'tab-matchups':
+        return no_update
+    return _last_update_span()
+
+
+@callback(
+    Output('matchup-grid', 'rowData'),
+    Output('matchup-status', 'children'),
+    Output('matchup-grid-wrap', 'style'),
+    Input('matchup_store', 'data'),
+    Input('matchup-team', 'value'),
+    Input('tabs', 'value'),
+)
+def update_matchup_rows(matchup_store, viewpoint, active_tab):
+    if active_tab != 'tab-matchups':
+        return no_update, no_update, no_update
+    payload = safe_loads(matchup_store)
+    hidden = {'display': 'none'}
+    if not payload:
+        return [], loading_skeleton('table'), hidden
+    if payload.get('_ui') == 'error':
+        return [], _error_view(payload), hidden
+    pairs = payload.get('pairs')
+    if not isinstance(pairs, list):
+        return [], loading_skeleton('table'), hidden
+    if not pairs:
+        return [], empty_state(EMPTY_MATCHUPS, EMPTY_GAME_NEXT), hidden
+    return matchup_grid_records(payload, viewpoint), [], {'display': 'block'}
+
+
+@callback(
     Output('shot-chart-last-update', 'children'),
     Input('pbp_store', 'data'),
     Input('tabs', 'value'),
@@ -2067,16 +2619,18 @@ def update_pane_pbp(pbp_store, active_tab):
     Output('pane-lineup', 'children'),
     Input('lineup_size_dropdown', 'value'),
     Input('tabs', 'value'),
-    State('lineup_store', 'data'),
+    Input('lineup_store', 'data'),
     State('game_id', 'children'),
+    State('lineup-show-opp', 'checked'),
 )
-def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False):
     if active_tab != 'tab-lineup':
         return no_update
     try:
         size_int = int(lineup_size)
     except Exception:
         size_int = 5
+    show_opp = bool(show_opp)
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
@@ -2086,10 +2640,35 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
                 return render_lineup_children(
                     json.dumps({str(size_int): custom_dict}),
                     size_int,
+                    show_opp=show_opp,
                 )
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
-    return render_lineup_children(lineup_store, size_int)
+    return render_lineup_children(lineup_store, size_int, show_opp=show_opp)
+
+
+@callback(
+    Output('lineup-show-opp', 'checked'),
+    Input('game_id', 'children'),
+    prevent_initial_call=True,
+)
+def reset_lineup_show_opp(_game_id):
+    return False
+
+
+clientside_callback(
+    """
+    function(checked) {
+        if (window.applyLineupShowOpp) {
+            window.applyLineupShowOpp(!!checked);
+        }
+        return !!checked;
+    }
+    """,
+    Output('lineup-show-opp-sync', 'data'),
+    Input('lineup-show-opp', 'checked'),
+    prevent_initial_call=True,
+)
 
 
 @callback(
@@ -2157,6 +2736,7 @@ clientside_callback(
             active_tab === 'tab-rotation' ? show : hide,
             active_tab === 'tab-shot-chart' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
+            active_tab === 'tab-matchups' ? show : hide,
             active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-report' ? show : hide
         ];
@@ -2166,6 +2746,7 @@ clientside_callback(
     Output('wrap-rotation', 'style'),
     Output('wrap-shot-chart', 'style'),
     Output('wrap-lineup', 'style'),
+    Output('wrap-matchups', 'style'),
     Output('wrap-pbp', 'style'),
     Output('wrap-report', 'style'),
     Input('tabs', 'value'),

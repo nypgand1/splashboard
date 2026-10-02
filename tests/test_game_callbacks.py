@@ -86,6 +86,70 @@ class HiddenTabTests(unittest.TestCase):
         self.assertEqual(scheduled_style, {'display': 'none'})
 
 
+def _callback_specs(output_id):
+    from dash._callback import GLOBAL_CALLBACK_LIST
+    return [item for item in GLOBAL_CALLBACK_LIST if item['output'] == output_id]
+
+
+def _dep_pairs(deps):
+    return {(item['id'], item['property']) for item in deps}
+
+
+class LiveRefreshWiringTests(unittest.TestCase):
+    def test_lineup_grids_follow_store_and_report_does_not(self):
+        lineup = _callback_specs('pane-lineup.children')
+        self.assertEqual(len(lineup), 1)
+        self.assertIn(('lineup_store', 'data'), _dep_pairs(lineup[0]['inputs']))
+        self.assertIn(('lineup_size_dropdown', 'value'), _dep_pairs(lineup[0]['inputs']))
+        self.assertIn(('tabs', 'value'), _dep_pairs(lineup[0]['inputs']))
+        self.assertIn(('lineup-show-opp', 'checked'), _dep_pairs(lineup[0]['state']))
+        self.assertNotIn(('lineup_store', 'data'), _dep_pairs(lineup[0]['state']))
+
+        report = _callback_specs('pane-report.children')
+        self.assertEqual(len(report), 1)
+        self.assertEqual(
+            {item['id'] for item in report[0]['inputs']},
+            {'tabs', 'report-pane-ready'},
+        )
+        self.assertIn(('lineup_store', 'data'), _dep_pairs(report[0]['state']))
+        self.assertNotIn(('lineup_store', 'data'), _dep_pairs(report[0]['inputs']))
+
+    def test_home_reload_reads_the_filter_store(self):
+        home = _callback_specs('home-game-list.children')
+        self.assertEqual(len(home), 1)
+        self.assertEqual(
+            [(item['id'], item['property']) for item in home[0]['inputs']],
+            [('home-interval', 'n_intervals')],
+        )
+        self.assertIn(('home-filter-store', 'data'), _dep_pairs(home[0]['state']))
+        watched = {item['id'] for item in home[0]['inputs'] + home[0]['state']}
+        self.assertNotIn('home-show', watched)
+        self.assertNotIn('home-game-type', watched)
+
+    def test_open_lineup_size_uses_store_or_recomputes(self):
+        with patch.object(game_page, 'render_lineup_children', return_value='painted') as render, \
+                patch.object(game_page, 'get_cached_report') as cached:
+            painted = game_page.update_pane_lineup(
+                '5', 'tab-lineup', '{"5": {"Home": "{}"}}', 'g1', True,
+            )
+        self.assertEqual(painted, 'painted')
+        cached.assert_not_called()
+        self.assertEqual(render.call_args.args[1], 5)
+        self.assertTrue(render.call_args.kwargs['show_opp'])
+
+        report = cached.return_value
+        report.get_lineup_stats_json_dict.return_value = {'Home': '{}'}
+        with patch.object(game_page, 'render_lineup_children', return_value='sized') as render, \
+                patch.object(game_page, 'get_cached_report', return_value=report):
+            painted = game_page.update_pane_lineup(
+                '4', 'tab-lineup', '{"5": {"Home": "{}"}}', 'g1', False,
+            )
+        self.assertEqual(painted, 'sized')
+        report.get_lineup_stats_json_dict.assert_called_once_with(lineup_size=4)
+        self.assertFalse(render.call_args.kwargs['show_opp'])
+        self.assertIn('"4"', render.call_args.args[0])
+
+
 class RotationViewTests(unittest.TestCase):
     def _payload(self):
         return {
@@ -432,7 +496,7 @@ class TabsDmcContractTests(unittest.TestCase):
         values = [node.value for node in find_type(tree, dmc.TabsTab)]
         self.assertEqual(
             values,
-            ['tab-bs', 'tab-rotation', 'tab-shot-chart', 'tab-lineup', 'tab-pbp', 'tab-report'],
+            ['tab-bs', 'tab-rotation', 'tab-shot-chart', 'tab-lineup', 'tab-matchups', 'tab-pbp', 'tab-report'],
         )
         ids = {getattr(node, 'id', None) for node in _nodes(tree)}
         self.assertIn('shot-chart-period', ids)

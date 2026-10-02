@@ -251,12 +251,12 @@ class BoxScoreSliceTests(unittest.TestCase):
         players = _split_records(slices['1']['p_df_dict']['Braves'])
         lin = players[players['Player'] == 'Lin'].iloc[0]
         self.assertEqual(lin['Min'], '8:00')
-        self.assertEqual(lin['2FG%'], '10.0%')
+        self.assertEqual(lin['2FG%'], '.100')
         self.assertEqual(lin['USG%'], '22.5%')
         self.assertEqual(lin['S'], '○')
         team = _split_records(slices['1']['t_df'])
         braves = team[team['Team'] == 'Braves'].iloc[0]
-        self.assertEqual(braves['2FG%'], '10.0%')
+        self.assertEqual(braves['2FG%'], '.100')
         self.assertEqual(braves['PTS'], 20)
         advance = _split_records(slices['1']['t_adv_df'])
         self.assertEqual(advance[advance['Team'] == 'Braves'].iloc[0]['eFG%'], '99.0%')
@@ -267,7 +267,7 @@ class BoxScoreSliceTests(unittest.TestCase):
         lin = players[players['Player'] == 'Lin'].iloc[0]
         self.assertEqual(lin['2M'], 2)
         self.assertEqual(lin['2A'], 6)
-        self.assertEqual(lin['2FG%'], '33.3%')
+        self.assertEqual(lin['2FG%'], '.333')
         self.assertEqual(lin['USG%'], '')
         self.assertEqual(lin['Min'], '14:00')
         names = list(players['Player'])
@@ -280,7 +280,7 @@ class BoxScoreSliceTests(unittest.TestCase):
         team = _split_records(slices['h1']['t_df'])
         braves = team[team['Team'] == 'Braves'].iloc[0]
         self.assertEqual(braves['PTS'], 42)
-        self.assertEqual(braves['2FG%'], '33.3%')
+        self.assertEqual(braves['2FG%'], '.333')
         self.assertEqual(braves['Min'], '18:00')
         keys = _split_records(slices['h1']['k_df'])
         self.assertEqual(keys[keys['Team'] == 'Braves'].iloc[0]['BP'], 12)
@@ -290,7 +290,7 @@ class BoxScoreSliceTests(unittest.TestCase):
         coaches, total = summary
         self.assertEqual(coaches['PF'], 2)
         self.assertEqual(total['PTS'], 42)
-        self.assertEqual(total['2FG%'], '33.3%')
+        self.assertEqual(total['2FG%'], '.333')
 
     def test_slice_pace_uses_that_periods_possessions(self):
         pbp = pd.DataFrame([
