@@ -67,6 +67,50 @@ def lineup_ppp_display(points, possessions):
     return f"{_as_nonneg_int(points) / poss_n:.2f}"
 
 
+def _clock_sort_seconds(value):
+    """M:SS as seconds. Blank and DNP sort as missing."""
+    if value is None:
+        return float('nan')
+    try:
+        if pd.isna(value):
+            return float('nan')
+    except TypeError:
+        pass
+    text = str(value).strip()
+    if not text or text == 'DNP' or ':' not in text:
+        return float('nan')
+    minutes, _, seconds = text.partition(':')
+    try:
+        return int(minutes) * 60 + float(seconds)
+    except ValueError:
+        return float('nan')
+
+
+def sort_lineup_table(df):
+    """+/- desc, PPP desc, minutes desc, lineup name asc. Blank PPP ranks below 0.00."""
+    if df is None or df.empty or '+/-' not in df.columns or 'Lineup' not in df.columns:
+        return df
+    res = df.copy()
+    if 'PPP' in res.columns:
+        res['_ppp_sort'] = pd.to_numeric(res['PPP'], errors='coerce')
+    else:
+        res['_ppp_sort'] = float('nan')
+    if 'duration' in res.columns:
+        res['_min_sort'] = pd.to_numeric(res['duration'], errors='coerce')
+    elif 'Min' in res.columns:
+        res['_min_sort'] = res['Min'].map(_clock_sort_seconds)
+    else:
+        res['_min_sort'] = float('nan')
+    res.sort_values(
+        by=['+/-', '_ppp_sort', '_min_sort', 'Lineup'],
+        ascending=[False, False, False, True],
+        na_position='last',
+        kind='mergesort',
+        inplace=True,
+    )
+    return res.drop(columns=['_ppp_sort', '_min_sort'])
+
+
 def efg_pct_display(made2, attempted2, made3, attempted3, efg_val=None):
     """Blank when FGA==0; 0.0% when FGA>0 and (2M+3M)==0."""
     fga = _as_nonneg_int(attempted2) + _as_nonneg_int(attempted3)
@@ -261,6 +305,7 @@ class PostGameReport():
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None
         self._rotation_payload = None
+        self._matchup_payload = None
 
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
@@ -750,7 +795,8 @@ class PostGameReport():
             ):
                 team_lineup_df[dest] = team_lineup_df[source].apply(_blank_count)
 
-            team_lineup_df = team_lineup_df[[
+            team_lineup_df = sort_lineup_table(team_lineup_df)
+            u_df_dict[team_name] = team_lineup_df[[
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
                 'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
                 'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
@@ -759,8 +805,6 @@ class PostGameReport():
                 'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
                 'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
             ]].copy()
-            team_lineup_df.sort_values(by=['+/-', 'Lineup'], ascending=[False, True], inplace=True)
-            u_df_dict[team_name] = team_lineup_df
 
         return u_df_dict
 
@@ -912,6 +956,31 @@ class PostGameReport():
         )
         self._rotation_key = cache_key
         return self._rotation_payload
+
+    def get_matchup_payload(self, home_team_id=None, away_team_id=None):
+        cache_key = (str(home_team_id), str(away_team_id))
+        if self._matchup_payload is not None and getattr(self, '_matchup_key', None) == cache_key:
+            return self._matchup_payload
+        from synergy_reporter.matchups import build_matchup_payload
+        df = self.playbyplay_df.copy()
+        process_lineup_pbp(df, self.starter_dict)
+        shirts = {}
+        for person in self.roster or []:
+            if not isinstance(person, dict) or person.get('personId') is None:
+                continue
+            if person.get('shirtNumber') is None:
+                continue
+            shirts[person['personId']] = person['shirtNumber']
+            shirts[str(person['personId'])] = person['shirtNumber']
+        self._matchup_payload = build_matchup_payload(
+            df,
+            home_id=home_team_id,
+            away_id=away_team_id,
+            id_table=self.id_table or {},
+            shirts=shirts,
+        )
+        self._matchup_key = cache_key
+        return self._matchup_payload
 
     def get_play_by_play_df(self):
         if self._play_by_play_view is not None:

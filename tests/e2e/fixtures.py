@@ -327,6 +327,20 @@ class FakeReport:
     def get_lineup_stats_json_dict(self, lineup_size=5):
         return self.get_all_lineup_stats_json_dict(sizes=(lineup_size,))[str(lineup_size)]
 
+    def get_matchup_payload(self, home_team_id=None, away_team_id=None):
+        return {
+            'home_id': str(home_team_id or HOME_ID),
+            'away_id': str(away_team_id or AWAY_ID),
+            'pairs': [{
+                'id': 'lin-wu|chen-liu',
+                'home_name': 'Lin-Wu',
+                'away_name': 'Chen-Liu',
+                'duration': 125,
+                'home': {'PTS': 2, 'POSS': 1, '2M': 1, '2A': 1},
+                'away': {'PTS': 0, 'POSS': 0},
+            }],
+        }
+
     def get_rotation_payload(self, home_team_id=None, away_team_id=None):
         return {
             'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],

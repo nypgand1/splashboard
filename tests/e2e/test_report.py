@@ -29,6 +29,7 @@ def _select_game_tab(page, name, wrap_id):
         'wrap-rotation': 'tab-rotation',
         'wrap-shot-chart': 'tab-shot-chart',
         'wrap-lineup': 'tab-lineup',
+        'wrap-matchups': 'tab-matchups',
     }.get(wrap_id, 'tab-bs')
     for _ in range(8):
         _set_game_tab(page, tab_value)
@@ -53,7 +54,7 @@ def _select_game_tab(page, name, wrap_id):
             return
     page.evaluate(
         '''(wrapId) => {
-            const wraps = ['wrap-bs', 'wrap-rotation', 'wrap-shot-chart', 'wrap-lineup', 'wrap-pbp', 'wrap-report'];
+            const wraps = ['wrap-bs', 'wrap-rotation', 'wrap-shot-chart', 'wrap-lineup', 'wrap-matchups', 'wrap-pbp', 'wrap-report'];
             wraps.forEach((id) => {
                 const el = document.getElementById(id);
                 if (el) {

@@ -35,6 +35,7 @@ from synergy_reporter.rotation import (
     live_playhead_t,
     report_rotation_figure,
 )
+from synergy_reporter.matchups import matchup_grid_records
 from synergy_reporter.shot_chart import (
     court_data_uri,
     court_zones,
@@ -45,6 +46,7 @@ from synergy_reporter.shot_chart import (
 from ui_kit import (
     EMPTY_GAME,
     EMPTY_GAME_NEXT,
+    EMPTY_MATCHUPS,
     ERROR_GAME,
     empty_state,
     error_alert,
@@ -313,6 +315,47 @@ def _lineup_wrap(hidden=True):
     )
 
 
+def _matchup_wrap(hidden=True):
+    style = {'display': 'none'} if hidden else {}
+    return html.Div(
+        [
+            html.Div(id='matchup-last-update', children=_last_update_span()),
+            dmc.Group(
+                [
+                    dmc.SegmentedControl(
+                        id='matchup-team',
+                        data=[],
+                        value=None,
+                        radius='md',
+                        size='xs',
+                    ),
+                ],
+                justify='flex-start',
+                align='center',
+                gap='sm',
+                mb='sm',
+                w='100%',
+            ),
+            html.Div(id='matchup-status', children=loading_skeleton('table')),
+            html.Div(
+                dmc.Paper(
+                    _matchup_grid(),
+                    withBorder=True,
+                    radius='md',
+                    shadow='xs',
+                    mb='md',
+                    className='braves-grid-wrap',
+                    style={'overflowX': 'auto'},
+                ),
+                id='matchup-grid-wrap',
+                style={'display': 'none'},
+            ),
+        ],
+        id='wrap-matchups',
+        style=style,
+    )
+
+
 def layout(game_id=None):
     return html.Div([
         html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
@@ -328,6 +371,7 @@ def layout(game_id=None):
                         dmc.TabsTab("Rotation", value="tab-rotation", leftSection=icon("tabler:chart-bar", width=14)),
                         dmc.TabsTab("Shot Chart", value="tab-shot-chart", leftSection=icon("tabler:ball-basketball", width=14)),
                         dmc.TabsTab("Lineup Stats", value="tab-lineup", leftSection=icon("tabler:users", width=14)),
+                        dmc.TabsTab("Matchups", value="tab-matchups", leftSection=icon("tabler:users-group", width=14)),
                         dmc.TabsTab("Play-By-Play", value="tab-pbp", leftSection=icon("tabler:list-numbers", width=14)),
                         dmc.TabsTab(
                             "Report",
@@ -355,6 +399,7 @@ def layout(game_id=None):
         _shot_chart_wrap(hidden=True),
         _pane('wrap-pbp', 'pane-pbp', 'table', hidden=True),
         _lineup_wrap(hidden=True),
+        _matchup_wrap(hidden=True),
         _pane('wrap-report', 'pane-report', 'table', hidden=True),
         html.Div(id='pbp_table', style={'display': 'block'}),
         
@@ -369,6 +414,7 @@ def layout(game_id=None):
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
         dcc.Store(id='lineup-show-opp-sync'),
+        dcc.Store(id='matchup_store'),
         dcc.Store(id='rotation_store'),
         dcc.Store(id='rotation-click-t'),
         html.Button(id='rotation-click-fire', n_clicks=0, style={'display': 'none'}),
@@ -537,6 +583,28 @@ def update_lineup_store(n, game_id):
         print(f"Error loading lineup: {exc}")
         return _error_store()
     return json.dumps(report.get_all_lineup_stats_json_dict(sizes=(5,)))
+
+@callback(
+    Output('matchup_store', 'data'),
+    [Input('interval-component', 'n_intervals'),
+     Input('game_id', 'children'),
+     Input('match_info_store', 'data')],
+)
+def update_matchup_store(n, game_id, match_info_store):
+    if not game_id:
+        return json.dumps({})
+    info = safe_loads(match_info_store)
+    if not info.get('home_team_id') or not info.get('away_team_id'):
+        return json.dumps({})
+    try:
+        report = get_cached_report(game_id)
+        return json.dumps(report.get_matchup_payload(
+            home_team_id=info.get('home_team_id'),
+            away_team_id=info.get('away_team_id'),
+        ))
+    except Exception as exc:
+        print(f"Error loading matchups: {exc}")
+        return _error_store()
 
 @callback(
     Output('rotation_store', 'data'),
@@ -1231,6 +1299,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
                 "cellClassRules": sorted_cell_rules,
             })
 
+    _apply_click_sort_columns(column_defs)
     return column_defs
 
 
@@ -1279,32 +1348,79 @@ def _lineup_pair_records(df):
     return records
 
 
+_DESC_SORT_FIELDS = {
+    '#', 'Min', '+/-',
+    '2M', '2A', '2FG%', '3M', '3A', '3FG%', 'FTM', 'FTA', 'FT%',
+    'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS',
+    'PIP', 'SCP', 'FBP', 'POT', 'PPP', 'eFG%', 'USG%',
+}
+DESC_FIRST_SORT = ['desc', 'asc', None]
+
+
+def _numeric_rank_js():
+    # M:SS becomes seconds. A trailing % is stripped so 0.0% and .833 compare
+    # as numbers. Blank stays below 0.
+    return (
+        "(function(raw) {"
+        "return raw === '' || raw === null || raw === undefined ? null"
+        " : (typeof raw === 'number' ? (raw !== raw ? null : raw)"
+        " : (typeof raw === 'string' && raw.indexOf(':') >= 0"
+        " ? (function(parts) {"
+        "return parts && parts.length === 2 && (+parts[0]) === (+parts[0]) && (+parts[1]) === (+parts[1])"
+        " ? (+parts[0]) * 60 + (+parts[1]) : null;"
+        "})(raw.split(':'))"
+        " : (typeof raw === 'string'"
+        " ? (function(text) { return (+text) === (+text) ? +text : null; })(raw.replace('%', ''))"
+        " : null)));"
+        "})"
+    )
+
+
 def _lineup_pair_comparator(field):
     # dash-ag-grid evaluates this once with static-eval. That walker rejects
     # var/if/for, and it prewalks the body with every parameter set to null,
     # so member access and `typeof` stay behind a null check.
+    # AG Grid inverts a descending column. The DNP bias flips with
+    # isDescending so those rows stay last in both directions.
     field_js = json.dumps(field)
+    rank = _numeric_rank_js()
     return {
         "function": (
-            "(function(a, b, nodeA, nodeB) {"
-            "return (function(av, bv) {"
+            "(function(a, b, nodeA, nodeB, isDescending) {"
+            "return (function(dnpA, dnpB) {"
+            "return dnpA !== dnpB ? (dnpA ? 1 : -1) * (isDescending ? -1 : 1)"
+            " : (function(av, bv) {"
             "return (function(an, bn) {"
             "return an === null && bn === null ? (av < bv ? -1 : av > bv ? 1 : 0)"
             " : an === null ? -1 : bn === null ? 1"
             " : an < bn ? -1 : an > bn ? 1 : 0;"
+            "})(" + rank + "(av), " + rank + "(bv));"
             "})("
-            "av === '' || av === null || av === undefined ? null"
-            " : (typeof av === 'number' ? (av !== av ? null : av)"
-            " : ((+av) === (+av) ? +av : null)),"
-            "bv === '' || bv === null || bv === undefined ? null"
-            " : (typeof bv === 'number' ? (bv !== bv ? null : bv)"
-            " : ((+bv) === (+bv) ? +bv : null)));"
+            f"nodeA && nodeA.data ? (nodeA.data._own ? nodeA.data._own[{field_js}] : nodeA.data[{field_js}]) : null,"
+            f"nodeB && nodeB.data ? (nodeB.data._own ? nodeB.data._own[{field_js}] : nodeB.data[{field_js}]) : null);"
             "})("
-            f"nodeA && nodeA.data && nodeA.data._own ? nodeA.data._own[{field_js}] : null,"
-            f"nodeB && nodeB.data && nodeB.data._own ? nodeB.data._own[{field_js}] : null);"
+            "nodeA && nodeA.data && nodeA.data.Min === 'DNP',"
+            "nodeB && nodeB.data && nodeB.data.Min === 'DNP');"
             "})"
         )
     }
+
+
+def _apply_click_sort(col):
+    field = col.get('field')
+    if field not in _DESC_SORT_FIELDS:
+        return
+    col['sortingOrder'] = list(DESC_FIRST_SORT)
+    col['comparator'] = _lineup_pair_comparator(field)
+
+
+def _apply_click_sort_columns(column_defs):
+    for col in column_defs:
+        children = col.get('children')
+        if children:
+            _apply_click_sort_columns(children)
+            continue
+        _apply_click_sort(col)
 
 
 # postSortRows is compiled as `params => expr` on every sort. Snapshot the
@@ -1327,6 +1443,109 @@ _LINEUP_POST_SORT = {
         "})(params && params.nodes ? params.nodes.slice() : [])"
     )
 }
+
+
+def matchup_team_value(current, away_id, home_id, triggered_id):
+    valid = set()
+    if away_id:
+        valid.add(str(away_id))
+    if home_id:
+        valid.add(str(home_id))
+    default = str(away_id) if away_id else (str(home_id) if home_id else None)
+    if default is None:
+        return None
+    if triggered_id == 'game_id' or str(current) not in valid:
+        return default
+    return no_update
+
+
+def _apply_matchup_pair_columns(column_defs):
+    for col in column_defs:
+        children = col.get('children')
+        if children:
+            _apply_matchup_pair_columns(children)
+            continue
+        field = col.get('field')
+        if not field:
+            continue
+        col['comparator'] = _lineup_pair_comparator(field)
+        if field != 'Lineup':
+            continue
+        rules = dict(col.get('cellClassRules') or {})
+        rules['ag-cell-align-right'] = 'params.data && params.data._opp'
+        rules['ag-cell-align-left'] = '!(params.data && params.data._opp)'
+        col['cellClassRules'] = rules
+        col.pop('cellClass', None)
+        col['filterValueGetter'] = {
+            'function': "params.data && params.data._filter ? params.data._filter : ''",
+        }
+        col['cellStyle'] = {
+            'styleConditions': [
+                {
+                    'condition': 'params.data && params.data._opp',
+                    'style': {
+                        'textAlign': 'right',
+                        'fontWeight': '400',
+                        'color': '#0f172a',
+                        'whiteSpace': 'normal',
+                        'lineHeight': '1.3',
+                    },
+                }
+            ],
+            'defaultStyle': {
+                'textAlign': 'left',
+                'fontWeight': '700',
+                'whiteSpace': 'normal',
+                'lineHeight': '1.3',
+            },
+        }
+
+
+def _matchup_column_defs():
+    columns = [
+        'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+        'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+        'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
+    ]
+    column_defs = _build_stats_column_defs(
+        columns,
+        filterable_cols=['Lineup'],
+        lineup_size=5,
+    )
+    _apply_matchup_pair_columns(column_defs)
+    return column_defs
+
+
+def _matchup_grid():
+    return dag.AgGrid(
+        id='matchup-grid',
+        rowData=[],
+        columnDefs=_matchup_column_defs(),
+        defaultColDef={
+            'sortable': True,
+            'filter': False,
+            'resizable': True,
+            'cellDataType': False,
+        },
+        dashGridOptions={
+            'domLayout': 'autoHeight',
+            'suppressHorizontalScroll': False,
+            'postSortRows': _LINEUP_POST_SORT,
+        },
+        className='ag-theme-alpine braves-clean-ag-grid braves-lineup-grid',
+        style={'width': '100%'},
+        getRowId="params.data._pair + (params.data._opp ? ':other' : ':view')",
+        getRowStyle={
+            'styleConditions': [
+                {
+                    'condition': 'params.data && params.data._opp',
+                    'style': {'backgroundColor': '#f1f5f9'},
+                }
+            ],
+            'defaultStyle': {'backgroundColor': '#ffffff'},
+        },
+        rowClassRules={'lineup-opp-row': 'params.data && params.data._opp'},
+    )
 
 
 def _apply_lineup_pair_columns(column_defs):
@@ -1439,6 +1658,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                     'whiteSpace': 'normal',
                     'lineHeight': '1.3',
                 }
+            _apply_click_sort(col_def)
             column_defs.append(col_def)
 
     dash_options = {
@@ -2311,6 +2531,69 @@ def update_lineup_last_update(lineup_store, active_tab):
 
 
 @callback(
+    Output('matchup-team', 'data'),
+    Output('matchup-team', 'value'),
+    Input('match_info_store', 'data'),
+    Input('game_id', 'children'),
+    State('matchup-team', 'value'),
+)
+def sync_matchup_team(match_info_store, _game_id, current):
+    info = safe_loads(match_info_store)
+    away_id = info.get('away_team_id')
+    home_id = info.get('home_team_id')
+    away_id = None if away_id in (None, '') else str(away_id)
+    home_id = None if home_id in (None, '') else str(home_id)
+    if not away_id and not home_id:
+        return no_update, no_update
+    options = []
+    if away_id:
+        options.append({'label': info.get('away_team') or 'Away', 'value': away_id})
+    if home_id:
+        options.append({'label': info.get('home_team') or 'Home', 'value': home_id})
+    try:
+        triggered = ctx.triggered_id
+    except Exception:
+        triggered = None
+    return options, matchup_team_value(current, away_id, home_id, triggered)
+
+
+@callback(
+    Output('matchup-last-update', 'children'),
+    Input('matchup_store', 'data'),
+    Input('tabs', 'value'),
+)
+def update_matchup_last_update(matchup_store, active_tab):
+    if active_tab != 'tab-matchups':
+        return no_update
+    return _last_update_span()
+
+
+@callback(
+    Output('matchup-grid', 'rowData'),
+    Output('matchup-status', 'children'),
+    Output('matchup-grid-wrap', 'style'),
+    Input('matchup_store', 'data'),
+    Input('matchup-team', 'value'),
+    Input('tabs', 'value'),
+)
+def update_matchup_rows(matchup_store, viewpoint, active_tab):
+    if active_tab != 'tab-matchups':
+        return no_update, no_update, no_update
+    payload = safe_loads(matchup_store)
+    hidden = {'display': 'none'}
+    if not payload:
+        return [], loading_skeleton('table'), hidden
+    if payload.get('_ui') == 'error':
+        return [], _error_view(payload), hidden
+    pairs = payload.get('pairs')
+    if not isinstance(pairs, list):
+        return [], loading_skeleton('table'), hidden
+    if not pairs:
+        return [], empty_state(EMPTY_MATCHUPS, EMPTY_GAME_NEXT), hidden
+    return matchup_grid_records(payload, viewpoint), [], {'display': 'block'}
+
+
+@callback(
     Output('shot-chart-last-update', 'children'),
     Input('pbp_store', 'data'),
     Input('tabs', 'value'),
@@ -2453,6 +2736,7 @@ clientside_callback(
             active_tab === 'tab-rotation' ? show : hide,
             active_tab === 'tab-shot-chart' ? show : hide,
             active_tab === 'tab-lineup' ? show : hide,
+            active_tab === 'tab-matchups' ? show : hide,
             active_tab === 'tab-pbp' ? show : hide,
             active_tab === 'tab-report' ? show : hide
         ];
@@ -2462,6 +2746,7 @@ clientside_callback(
     Output('wrap-rotation', 'style'),
     Output('wrap-shot-chart', 'style'),
     Output('wrap-lineup', 'style'),
+    Output('wrap-matchups', 'style'),
     Output('wrap-pbp', 'style'),
     Output('wrap-report', 'style'),
     Input('tabs', 'value'),

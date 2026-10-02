@@ -158,7 +158,9 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
 
     tabs = page.locator('[role="tab"]')
     labels = [tabs.nth(i).inner_text().strip() for i in range(tabs.count())]
-    assert labels[:6] == ['Box Score', 'Rotation', 'Shot Chart', 'Lineup Stats', 'Play-By-Play', 'Report']
+    assert labels[:7] == [
+        'Box Score', 'Rotation', 'Shot Chart', 'Lineup Stats', 'Matchups', 'Play-By-Play', 'Report',
+    ]
 
     for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
@@ -799,3 +801,60 @@ def test_lineup_store_tick_repaints_both_tables(page, e2e_server):
         }'''
     )
     assert checked is True
+
+
+def _matchup_lineup(page, index):
+    cell = page.locator('#matchup-grid .ag-cell[col-id="Lineup"]').nth(index)
+    return ' '.join(cell.inner_text().split())
+
+
+def test_matchups_tab_keeps_both_fives_and_switches_viewpoint(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Matchups')
+    page.locator('#matchup-grid .ag-cell[col-id="Lineup"]').first.wait_for(
+        state='visible', timeout=20000,
+    )
+    assert _matchup_lineup(page, 0) == 'Chen-Liu'
+    assert _matchup_lineup(page, 1) == 'Lin-Wu'
+    chrome = page.evaluate(
+        '''() => {
+            const cell = document.querySelector('#matchup-grid .ag-cell[col-id="Lineup"]');
+            const sorted = document.querySelectorAll('#matchup-grid .ag-header-cell-sorted').length;
+            return {
+                align: cell ? getComputedStyle(cell).textAlign : '',
+                sorted: sorted,
+            };
+        }'''
+    )
+    assert chrome['align'] == 'left'
+    assert chrome['sorted'] == 0
+    page.locator('#matchup-team').get_by_text(HOME).click()
+    page.wait_for_function(
+        '''() => {
+            const cell = document.querySelector('#matchup-grid .ag-cell[col-id="Lineup"]');
+            return cell && cell.innerText.replace(/\\s+/g, ' ').trim() === 'Lin-Wu';
+        }''',
+        timeout=20000,
+    )
+    assert _matchup_lineup(page, 0) == 'Lin-Wu'
+    assert _matchup_lineup(page, 1) == 'Chen-Liu'
+
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.wait_for_timeout(400)
+    shown = page.evaluate(
+        '''() => {
+            const tab = [...document.querySelectorAll('[role="tab"]')].find(
+                (node) => (node.textContent || '').includes('Matchups')
+            );
+            const report = document.getElementById('report-tab');
+            return {
+                matchups: tab ? getComputedStyle(tab).display : 'missing',
+                report: report ? getComputedStyle(report).display : 'missing',
+            };
+        }'''
+    )
+    assert shown['matchups'] != 'none'
+    assert shown['report'] == 'none'
+    assert _matchup_lineup(page, 0) == 'Lin-Wu'

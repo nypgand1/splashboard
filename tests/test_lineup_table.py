@@ -6,7 +6,12 @@ import pandas as pd
 
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
-from synergy_reporter.post_game_report import PostGameReport, lineup_ppp_display, shot_pct_display
+from synergy_reporter.post_game_report import (
+    PostGameReport,
+    lineup_ppp_display,
+    shot_pct_display,
+    sort_lineup_table,
+)
 
 
 def _event(**kwargs):
@@ -54,6 +59,28 @@ class LineupPointTests(unittest.TestCase):
         self.assertEqual(shot_pct_display(5, 6, 83.3), '.833')
         self.assertEqual(shot_pct_display(4, 4, 100.0), '1.000')
         self.assertEqual(shot_pct_display(0, 3), '.000')
+
+
+class LineupOrderTests(unittest.TestCase):
+    def test_rows_sort_by_plus_minus_then_ppp_then_minutes_then_name(self):
+        frame = pd.DataFrame([
+            {'Lineup': 'B', '+/-': 1, 'PPP': '0.50', 'duration': 100, 'Min': '1:40'},
+            {'Lineup': 'A', '+/-': 1, 'PPP': '1.00', 'duration': 30, 'Min': '0:30'},
+            {'Lineup': 'C', '+/-': 1, 'PPP': '1.00', 'duration': 90, 'Min': '1:30'},
+            {'Lineup': 'D', '+/-': 4, 'PPP': '', 'duration': 10, 'Min': '0:10'},
+            {'Lineup': 'E', '+/-': 1, 'PPP': '', 'duration': 500, 'Min': '8:20'},
+        ])
+        self.assertEqual(
+            sort_lineup_table(frame)['Lineup'].tolist(),
+            ['D', 'C', 'A', 'B', 'E'],
+        )
+
+    def test_displayed_minutes_sort_as_seconds_when_duration_is_absent(self):
+        frame = pd.DataFrame([
+            {'Lineup': 'Short', '+/-': 0, 'PPP': '1.00', 'Min': '9:00'},
+            {'Lineup': 'Long', '+/-': 0, 'PPP': '1.00', 'Min': '10:00'},
+        ])
+        self.assertEqual(sort_lineup_table(frame)['Lineup'].tolist(), ['Long', 'Short'])
 
 
 class LineupTableTests(unittest.TestCase):

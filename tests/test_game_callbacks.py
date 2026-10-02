@@ -496,7 +496,7 @@ class TabsDmcContractTests(unittest.TestCase):
         values = [node.value for node in find_type(tree, dmc.TabsTab)]
         self.assertEqual(
             values,
-            ['tab-bs', 'tab-rotation', 'tab-shot-chart', 'tab-lineup', 'tab-pbp', 'tab-report'],
+            ['tab-bs', 'tab-rotation', 'tab-shot-chart', 'tab-lineup', 'tab-matchups', 'tab-pbp', 'tab-report'],
         )
         ids = {getattr(node, 'id', None) for node in _nodes(tree)}
         self.assertIn('shot-chart-period', ids)

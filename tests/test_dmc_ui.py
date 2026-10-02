@@ -450,6 +450,14 @@ class FourStateTests(unittest.TestCase):
         self.assertEqual(lineup_col['cellStyle']['styleConditions'][0]['style']['fontWeight'], '400')
         self.assertEqual(lineup_col['cellStyle']['defaultStyle']['textAlign'], 'center')
         self.assertEqual(lineup_col['cellStyle']['defaultStyle']['fontWeight'], '700')
+        self.assertIsNone(lineup_col.get('sortingOrder'))
+        self.assertIsNone(lineup_col.get('sort'))
+        plus = next(col for col in grid.columnDefs if col.get('field') == '+/-')
+        minutes = next(col for col in grid.columnDefs if col.get('field') == 'Min')
+        self.assertEqual(plus.get('sortingOrder'), ['desc', 'asc', None])
+        self.assertEqual(minutes.get('sortingOrder'), ['desc', 'asc', None])
+        self.assertIn("indexOf(':')", minutes['comparator']['function'])
+        self.assertIsNone(plus.get('sort'))
         self.assertIn("'Opp'", lineup_col['valueGetter']['function'])
         self.assertIn('params.data["Lineup"]', lineup_col['filterValueGetter']['function'])
         self.assertIn('_own', lineup_col['comparator']['function'])
@@ -870,6 +878,48 @@ class PbpAlignmentTests(unittest.TestCase):
             self.assertEqual(cdef['headerClass'], 'ag-header-align-center')
             self.assertEqual(cdef['cellClass'], 'ag-cell-align-center')
             self.assertEqual(cdef['cellStyle']['textAlign'], 'center')
+
+
+class PlayerGridSortTests(unittest.TestCase):
+    def test_minutes_and_jersey_sort_as_numbers_and_names_stay_ascending_first(self):
+        df = pd.DataFrame([{
+            '#': '10',
+            'Player': 'Lin',
+            'S': '○',
+            'Min': '20:00',
+            '+/-': 5,
+            '2M': 1,
+            '2A': 2,
+            '2FG%': '.500',
+            'eFG%': '50.0%',
+            'USG%': '20.0%',
+            'PM': '12-10',
+            'PTS': 2,
+        }])
+        grid = find_type(game_page._ag_grid_from_df(df), dag.AgGrid)[0]
+
+        def field(name, cols=None):
+            for col in cols if cols is not None else grid.columnDefs:
+                if col.get('field') == name:
+                    return col
+                found = field(name, col.get('children') or [])
+                if found:
+                    return found
+            return None
+
+        desc = ['desc', 'asc', None]
+        for name in ('#', 'Min', 'eFG%', 'USG%', '+/-', 'PTS'):
+            col = field(name)
+            self.assertIsNotNone(col, name)
+            self.assertEqual(col.get('sortingOrder'), desc, name)
+            self.assertIn('isDescending', col['comparator']['function'])
+        self.assertIn("indexOf(':')", field('Min')['comparator']['function'])
+        self.assertIn("replace('%'", field('eFG%')['comparator']['function'])
+        self.assertIn('DNP', field('Min')['comparator']['function'])
+        for name in ('Player', 'S', 'PM'):
+            col = field(name)
+            self.assertIsNone(col.get('sortingOrder'), name)
+            self.assertIsNone(col.get('comparator'), name)
 
 
 class GameBannerStatusTests(unittest.TestCase):
