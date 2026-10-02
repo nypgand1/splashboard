@@ -22,6 +22,22 @@ def _as_nonneg_int(value):
         return 0
 
 
+def _played_count(minutes, value):
+    count = _as_nonneg_int(value)
+    if minutes == 'DNP' or count == 0:
+        return ''
+    return count
+
+
+def _pm_side(value):
+    if isinstance(value, float) and pd.isna(value):
+        return 0
+    try:
+        return _as_nonneg_int(round(float(value or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def shot_pct_display(made, attempted, pct=None):
     """Blank when A==0; 0.0% when A>0 and M==0. M itself stays blank at 0."""
     attempted_n = _as_nonneg_int(attempted)
@@ -504,8 +520,8 @@ class PostGameReport():
             p_df_t['Min'] = p_df.apply(lambda x: 'DNP' if (not x.get('participated', True) or (pd.isna(x.get('minutes')) and not x.get('starter', False))) else minutes_to_mmss(x.get('minutes')), axis=1)
             p_df_t['+/-'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or pd.isna(x.get('plusMinus')) else int(round(float(x.get('plusMinus')))), axis=1)
 
-            p_df_t['2M'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('pointsTwoMade', 0) == 0 else int(x.get('pointsTwoMade', 0)), axis=1)
-            p_df_t['2A'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('pointsTwoAttempted', 0) == 0 else int(x.get('pointsTwoAttempted', 0)), axis=1)
+            p_df_t['2M'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsTwoMade')), axis=1)
+            p_df_t['2A'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsTwoAttempted')), axis=1)
             p_df_t['2FG%'] = p_df.apply(
                 lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else shot_pct_display(
                     x.get('pointsTwoMade'), x.get('pointsTwoAttempted'), x.get('pointsTwoPercentage'),
@@ -513,8 +529,8 @@ class PostGameReport():
                 axis=1,
             )
 
-            p_df_t['3M'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('pointsThreeMade', 0) == 0 else int(x.get('pointsThreeMade', 0)), axis=1)
-            p_df_t['3A'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('pointsThreeAttempted', 0) == 0 else int(x.get('pointsThreeAttempted', 0)), axis=1)
+            p_df_t['3M'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsThreeMade')), axis=1)
+            p_df_t['3A'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsThreeAttempted')), axis=1)
             p_df_t['3FG%'] = p_df.apply(
                 lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else shot_pct_display(
                     x.get('pointsThreeMade'), x.get('pointsThreeAttempted'), x.get('pointsThreePercentage'),
@@ -522,8 +538,8 @@ class PostGameReport():
                 axis=1,
             )
 
-            p_df_t['FTM'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('freeThrowsMade', 0) == 0 else int(x.get('freeThrowsMade', 0)), axis=1)
-            p_df_t['FTA'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('freeThrowsAttempted', 0) == 0 else int(x.get('freeThrowsAttempted', 0)), axis=1)
+            p_df_t['FTM'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('freeThrowsMade')), axis=1)
+            p_df_t['FTA'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('freeThrowsAttempted')), axis=1)
             p_df_t['FT%'] = p_df.apply(
                 lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else shot_pct_display(
                     x.get('freeThrowsMade'), x.get('freeThrowsAttempted'), x.get('freeThrowsPercentage'),
@@ -531,16 +547,16 @@ class PostGameReport():
                 axis=1,
             )
 
-            p_df_t['OR'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('reboundsOffensive', 0) == 0 else int(x.get('reboundsOffensive', 0)), axis=1)
-            p_df_t['DR'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('reboundsDefensive', 0) == 0 else int(x.get('reboundsDefensive', 0)), axis=1)
-            p_df_t['REB'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('rebounds', 0) == 0 else int(x.get('rebounds', 0)), axis=1)
-            p_df_t['AST'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('assists', 0) == 0 else int(x.get('assists', 0)), axis=1)
-            p_df_t['TO'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('turnovers', 0) == 0 else int(x.get('turnovers', 0)), axis=1)
-            p_df_t['ST'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('steals', 0) == 0 else int(x.get('steals', 0)), axis=1)
-            p_df_t['BL'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('blocks', 0) == 0 else int(x.get('blocks', 0)), axis=1)
-            p_df_t['PF'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('foulsTotal', 0) == 0 else int(x.get('foulsTotal', 0)), axis=1)
-            p_df_t['FD'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('foulsDrawn', 0) == 0 else int(x.get('foulsDrawn', 0)), axis=1)
-            p_df_t['PTS'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or x.get('points', 0) == 0 else int(x.get('points', 0)), axis=1)
+            p_df_t['OR'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('reboundsOffensive')), axis=1)
+            p_df_t['DR'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('reboundsDefensive')), axis=1)
+            p_df_t['REB'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('rebounds')), axis=1)
+            p_df_t['AST'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('assists')), axis=1)
+            p_df_t['TO'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('turnovers')), axis=1)
+            p_df_t['ST'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('steals')), axis=1)
+            p_df_t['BL'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('blocks')), axis=1)
+            p_df_t['PF'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('foulsTotal')), axis=1)
+            p_df_t['FD'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('foulsDrawn')), axis=1)
+            p_df_t['PTS'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('points')), axis=1)
 
             # eFG%: blank if FGA==0 or DNP, 0.0% if FGA>0 and 0 made
             def _calc_efg(x):
@@ -565,7 +581,10 @@ class PostGameReport():
                 return f"{usg_val:0.1f}%" if pd.notnull(usg_val) else '0.0%'
             p_df_t['USG%'] = p_df.apply(_calc_usg, axis=1)
 
-            p_df_t['PM'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else f"{int(round(float(x.get('plus', 0) or 0)))}-{int(round(float(x.get('minus', 0) or 0)))}", axis=1)
+            p_df_t['PM'] = p_df.apply(
+                lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else f"{_pm_side(x.get('plus'))}-{_pm_side(x.get('minus'))}",
+                axis=1,
+            )
     
             from synergy_reporter.report_components import sort_player_stats_for_report
             p_df_t = sort_player_stats_for_report(p_df_t)
