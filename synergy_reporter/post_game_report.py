@@ -709,10 +709,55 @@ class PostGameReport():
                 lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)
             )
 
+            def _blank_count(value):
+                if pd.isna(value) or int(value) == 0:
+                    return ''
+                return int(value)
+
+            team_lineup_df['Opp_2FG%'] = team_lineup_df.apply(
+                lambda x: shot_pct_display(x['Opp_2M'], x['Opp_2A']), axis=1,
+            )
+            team_lineup_df['Opp_3FG%'] = team_lineup_df.apply(
+                lambda x: shot_pct_display(x['Opp_3M'], x['Opp_3A']), axis=1,
+            )
+            team_lineup_df['Opp_FT%'] = team_lineup_df.apply(
+                lambda x: shot_pct_display(x['Opp_1M'], x['Opp_1A']), axis=1,
+            )
+            team_lineup_df['Opp_PPP'] = team_lineup_df.apply(
+                lambda x: lineup_ppp_display(x['Opp_PTS'], x['Opp_POSS']), axis=1,
+            )
+            for source, dest in (
+                ('Opp_2M', 'Opp_2M'),
+                ('Opp_2A', 'Opp_2A'),
+                ('Opp_3M', 'Opp_3M'),
+                ('Opp_3A', 'Opp_3A'),
+                ('Opp_1M', 'Opp_FTM'),
+                ('Opp_1A', 'Opp_FTA'),
+                ('Opp_OR', 'Opp_OR'),
+                ('Opp_DR', 'Opp_DR'),
+                ('Opp_REB', 'Opp_REB'),
+                ('Opp_AST', 'Opp_AST'),
+                ('Opp_TOV', 'Opp_TO'),
+                ('Opp_STL', 'Opp_ST'),
+                ('Opp_BLK', 'Opp_BL'),
+                ('Opp_PF', 'Opp_PF'),
+                ('Opp_FD', 'Opp_FD'),
+                ('Opp_PTS', 'Opp_PTS'),
+                ('Opp_PIP', 'Opp_PIP'),
+                ('Opp_SCP', 'Opp_SCP'),
+                ('Opp_FBP', 'Opp_FBP'),
+                ('Opp_POT', 'Opp_POT'),
+            ):
+                team_lineup_df[dest] = team_lineup_df[source].apply(_blank_count)
+
             team_lineup_df = team_lineup_df[[
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
                 'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
-                'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP'
+                'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
+                'Opp_2M', 'Opp_2A', 'Opp_2FG%', 'Opp_3M', 'Opp_3A', 'Opp_3FG%',
+                'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
+                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
+                'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
             ]].copy()
             team_lineup_df.sort_values(by=['+/-', 'Lineup'], ascending=[False, True], inplace=True)
             u_df_dict[team_name] = team_lineup_df

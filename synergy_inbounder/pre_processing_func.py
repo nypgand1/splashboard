@@ -114,6 +114,7 @@ def process_lineup_stats(df):
         ):
             flag = option_values.map(lambda raw, name=flag_name: _option_on(raw, name))
             lineup_df[column] = _flagged_points(event, made & is_team, flag)
+            lineup_df['Opp_' + column] = _flagged_points(event, made & is_opp, flag)
 
         lineup_df['Opp_POSS'] = (poss_end & poss_team.notna() & (poss_team != t)).astype(int)
         lineup_df['Opp_2M'] = (is_opp & (event == '2pt') & made).astype(int)
@@ -123,11 +124,22 @@ def process_lineup_stats(df):
         lineup_df['Opp_1M'] = (is_opp & (event == 'freeThrow') & made).astype(int)
         lineup_df['Opp_1A'] = (is_opp & (event == 'freeThrow')).astype(int)
         lineup_df['Opp_PTS'] = 2 * lineup_df['Opp_2M'] + 3 * lineup_df['Opp_3M'] + lineup_df['Opp_1M']
+        lineup_df['Opp_OR'] = np.where(is_opp & (event == 'rebound') & (subtype == 'offensive'), 1, np.nan)
+        lineup_df['Opp_DR'] = np.where(is_opp & (event == 'rebound') & (subtype == 'defensive'), 1, np.nan)
+        lineup_df['Opp_REB'] = np.where(is_opp & (event == 'rebound'), 1, np.nan)
+        lineup_df['Opp_AST'] = np.where(is_opp & (event == 'assist'), 1, np.nan)
+        lineup_df['Opp_TOV'] = np.where(is_opp & (event == 'turnover'), 1, np.nan)
+        lineup_df['Opp_STL'] = np.where(is_opp & (event == 'steal'), 1, np.nan)
+        lineup_df['Opp_BLK'] = np.where(is_opp & (event == 'block'), 1, np.nan)
+        lineup_df['Opp_PF'] = np.where(is_opp & (event == 'foul') & (subtype != 'drawn'), 1, np.nan)
+        lineup_df['Opp_FD'] = np.where(is_opp & (event == 'foul') & (subtype == 'drawn'), 1, np.nan)
 
         lineup_df[t] = lineup_df[t].apply(lambda x: json.dumps(sorted(list(x))))
         col_list = [t, 'duration', 'POSS', 'Opp_POSS', '2M', '2A', '3M', '3A', '1M', '1A',
                     'OR', 'DR', 'REB', 'AST', 'TOV', 'STL', 'BLK', 'PF', 'FD', 'PTS',
-                    'PIP', 'SCP', 'FBP', 'POT', 'Opp_PTS']
+                    'PIP', 'SCP', 'FBP', 'POT', 'Opp_PTS', 'Opp_2M', 'Opp_2A', 'Opp_3M', 'Opp_3A',
+                    'Opp_1M', 'Opp_1A', 'Opp_OR', 'Opp_DR', 'Opp_REB', 'Opp_AST', 'Opp_TOV',
+                    'Opp_STL', 'Opp_BLK', 'Opp_PF', 'Opp_FD', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT']
         lineup_df_t = lineup_df[col_list]
 
         team_lineup_df = lineup_df_t.groupby(t, as_index=False).sum(min_count=1)

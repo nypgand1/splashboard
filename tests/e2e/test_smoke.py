@@ -574,6 +574,85 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     assert landscape['marginLeft'] == '-18px'
     assert landscape['marginRight'] == '-18px'
     assert 240 <= landscape['headerW'] <= 260
+    places = page.evaluate(
+        '''() => {
+            const size = document.getElementById('lineup_size_dropdown').getBoundingClientRect();
+            const sw = document.getElementById('lineup-show-opp').getBoundingClientRect();
+            const wrap = document.getElementById('wrap-lineup').getBoundingClientRect();
+            return {
+                sizeRight: size.right,
+                switchLeft: sw.left,
+                switchRight: sw.right,
+                wrapRight: wrap.right,
+                sizeWidth: size.width,
+                wrapWidth: wrap.width,
+            };
+        }'''
+    )
+    assert places['switchLeft'] > places['sizeRight']
+    assert places['wrapRight'] - places['switchRight'] < 24
+    assert places['sizeWidth'] < places['wrapWidth'] * 0.7
+    assert page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').count() == 0
+    page.locator('#lineup-show-opp').click()
+    opp = page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').first
+    opp.wait_for(state='visible', timeout=20000)
+    assert 'ag-cell-align-right' in (opp.get_attribute('class') or '')
+    assert 'lineup-opp-row' in (opp.evaluate("el => el.closest('.ag-row').className") or '')
+    paint = opp.evaluate(
+        "el => getComputedStyle(el).backgroundColor"
+    )
+    assert paint == 'rgb(241, 245, 249)'
+    page.locator('#pane-lineup .ag-header-cell[col-id="PTS"]').first.click()
+    page.wait_for_timeout(300)
+    sort = page.evaluate(
+        '''() => {
+            const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
+            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
+            const rows = [...center.querySelectorAll('.ag-row')];
+            rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
+            const labels = rows.slice(0, 4).map(row => {
+                const cell = row.querySelector('.ag-cell[col-id="Lineup"]');
+                return cell ? cell.innerText.trim() : '';
+            });
+            return {dir: header ? header.getAttribute('aria-sort') : '', labels};
+        }'''
+    )
+    if sort['dir'] == 'ascending':
+        assert sort['labels'] == ['Chen-7', 'Opp', 'Chen-6', 'Opp']
+    else:
+        assert sort['dir'] == 'descending'
+        assert sort['labels'] == ['Chen-0', 'Opp', 'Chen-1', 'Opp']
+    page.locator('#lineup-show-opp').click()
+    page.wait_for_function(
+        '''() => {
+            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
+            if (!center) {
+                return false;
+            }
+            return [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+                .filter(el => el.innerText.trim() === 'Opp').length === 0;
+        }''',
+        timeout=20000,
+    )
+    hidden = page.evaluate(
+        '''() => {
+            const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
+            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
+            const rows = [...center.querySelectorAll('.ag-row')];
+            rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
+            const cell = rows[0] && rows[0].querySelector('.ag-cell[col-id="Lineup"]');
+            const opp = [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+                .filter(el => el.innerText.trim() === 'Opp').length;
+            return {dir: header ? header.getAttribute('aria-sort') : '', first: cell ? cell.innerText.trim() : '', opp};
+        }'''
+    )
+    assert hidden['dir'] == sort['dir']
+    assert hidden['first'] == sort['labels'][0]
+    assert hidden['opp'] == 0
+    page.locator('#lineup-show-opp').click()
+    page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').first.wait_for(
+        state='visible', timeout=20000,
+    )
 
     page.set_viewport_size({'width': 1400, 'height': 900})
     page.wait_for_timeout(400)
@@ -586,3 +665,62 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     page.wait_for_timeout(400)
     portrait = _lineup_frame(page)
     assert portrait['headerW'] == 160
+
+
+def test_lineup_show_opp_keeps_the_same_lineup_page(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Lineup Stats')
+    page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    page.locator('#lineup_size_dropdown').get_by_text('4 Players').click()
+    page.locator('#pane-lineup .ag-paging-panel').nth(1).wait_for(state='visible', timeout=20000)
+
+    def home_summary():
+        return page.evaluate(
+            '''() => {
+                const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+                const summary = panel && panel.querySelector('.ag-paging-row-summary-panel');
+                return summary ? summary.innerText.replace(/\\s+/g, ' ').trim() : '';
+            }'''
+        )
+
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            const text = panel ? panel.innerText : '';
+            return text.includes('20') && text.includes('40');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '1 to 20 of 40'
+    page.locator('#pane-lineup .ag-paging-panel').nth(1).locator('[aria-label="Next Page"]').click()
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            return panel && panel.innerText.includes('21');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '21 to 40 of 40'
+    page.locator('#lineup-show-opp').click()
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            return panel && panel.innerText.includes('80');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '41 to 80 of 80'
+    page.locator('#lineup-show-opp').click()
+    page.wait_for_function(
+        '''() => {
+            const panel = document.querySelectorAll('#pane-lineup .ag-paging-panel')[1];
+            const text = panel ? panel.innerText : '';
+            return text.includes('21') && text.includes('of 40');
+        }''',
+        timeout=20000,
+    )
+    assert home_summary() == '21 to 40 of 40'

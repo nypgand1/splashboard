@@ -1176,6 +1176,10 @@ body {
     background-color: #f8fafc !important;
 }
 
+.ag-theme-alpine.braves-clean-ag-grid.braves-lineup-grid .ag-row.lineup-opp-row .ag-cell {
+    background-color: #f1f5f9 !important;
+}
+
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell.ag-right-aligned-cell,
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell.ag-cell-align-right,
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell[style*="text-align: right"],

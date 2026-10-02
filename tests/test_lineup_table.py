@@ -66,6 +66,7 @@ class LineupTableTests(unittest.TestCase):
             pd.DataFrame(),
             {
                 'home': 'Braves',
+                'away': 'Dreamers',
                 'p1': 'A', 'p2': 'B', 'p3': 'C', 'p4': 'D', 'p5': 'E', 'p6': 'F',
             },
             [{'personId': f'p{i}', 'shirtNumber': str(i)} for i in range(1, 7)],
@@ -112,6 +113,10 @@ class LineupTableTests(unittest.TestCase):
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
                 'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
                 'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
+                'Opp_2M', 'Opp_2A', 'Opp_2FG%', 'Opp_3M', 'Opp_3A', 'Opp_3FG%',
+                'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
+                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
+                'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
             ],
         )
         by_name = {row['Lineup']: row for row in rows_out}
@@ -147,6 +152,114 @@ class LineupTableTests(unittest.TestCase):
         shared = next(row for row in rows_out if row['Lineup'] == 'B-C-D-E')
         self.assertEqual(shared['PTS'], 5)
         self.assertEqual(shared['PPP'], '1.67')
+
+    def test_opponent_totals_follow_the_lineup_on_the_floor(self):
+        rows = [
+            _event(eventType='period', subType='start', clock='PT12M0S', success=None, sequence=1),
+            _event(clock='PT11M0S', sequence=2),
+            _event(
+                entityId='away', clock='PT10M0S', sequence=3,
+                options={'pointsInThePaint': True, 'fastBreak': True},
+            ),
+            _event(
+                entityId='away', eventType='rebound', subType='defensive',
+                clock='PT9M30S', success=None, sequence=4,
+            ),
+            _event(
+                entityId='away', eventType='assist', subType=None,
+                clock='PT9M0S', success=None, sequence=5,
+            ),
+            _event(
+                entityId='away', eventType='turnover', subType='badPass',
+                clock='PT8M30S', success=None, sequence=6,
+            ),
+            _event(
+                entityId='away', eventType='foul', subType='personal',
+                clock='PT8M0S', success=None, sequence=7,
+            ),
+            _event(
+                entityId='away', eventType='foul', subType='drawn',
+                clock='PT7M30S', success=None, sequence=8,
+            ),
+            _event(eventType='period', subType='end', entityId=None, clock='PT7M0S', success=None, sequence=9),
+        ]
+        report = self._report(rows, {
+            'home': ['p1', 'p2', 'p3', 'p4', 'p5'],
+            'away': ['a1', 'a2', 'a3', 'a4', 'a5'],
+        })
+        _, rows_out = self._rows(report.get_lineup_stats_json_dict()['Braves'])
+        first = next(row for row in rows_out if row['Lineup'] == 'A-B-C-D-E')
+        self.assertEqual(first['Min'], '5:00')
+        self.assertEqual(first['PTS'], 2)
+        self.assertEqual(first['+/-'], 0)
+        self.assertEqual(first['Opp_PTS'], 2)
+        self.assertEqual(first['Opp_2M'], 1)
+        self.assertEqual(first['Opp_2A'], 1)
+        self.assertEqual(first['Opp_2FG%'], '1.000')
+        self.assertEqual(first['Opp_3M'], '')
+        self.assertEqual(first['Opp_FT%'], '')
+        self.assertEqual(first['Opp_OR'], '')
+        self.assertEqual(first['Opp_DR'], 1)
+        self.assertEqual(first['Opp_REB'], 1)
+        self.assertEqual(first['Opp_AST'], 1)
+        self.assertEqual(first['Opp_TO'], 1)
+        self.assertEqual(first['Opp_ST'], '')
+        self.assertEqual(first['Opp_BL'], '')
+        self.assertEqual(first['Opp_PF'], 1)
+        self.assertEqual(first['Opp_FD'], 1)
+        self.assertEqual(first['Opp_PIP'], 2)
+        self.assertEqual(first['Opp_FBP'], 2)
+        self.assertEqual(first['Opp_SCP'], '')
+        self.assertEqual(first['Opp_POT'], '')
+        self.assertEqual(first['Opp_PPP'], '1.00')
+
+        _, fours = self._rows(report.get_lineup_stats_json_dict(4)['Braves'])
+        shared = next(row for row in fours if row['Lineup'] == 'B-C-D-E')
+        self.assertEqual(shared['Opp_PTS'], 2)
+        self.assertEqual(shared['Opp_PPP'], '1.00')
+        self.assertEqual(shared['Opp_AST'], 1)
+
+    def test_report_lineup_payload_drops_opponent_columns(self):
+        from synergy_reporter.report_components import report_table_payload
+
+        plain = pd.DataFrame([{
+            'Lineup': '林志傑-張宗憲',
+            'PTS': '',
+            '2FG%': '.000',
+            'PPP': '0.00',
+        }]).to_json(orient='split')
+        kept = report_table_payload(
+            {},
+            {'Braves': plain},
+            {'home_team': 'Braves', 'away_team': 'Dreamers'},
+        )['lineup_home']
+        self.assertEqual(kept, plain)
+
+        wide = pd.DataFrame([{
+            'Lineup': '林志傑-張宗憲',
+            'PTS': 2,
+            '2FG%': '.000',
+            'PPP': '0.00',
+            'Opp_PTS': 4,
+            'Opp_PPP': '2.00',
+        }]).to_json(orient='split')
+        stripped_text = report_table_payload(
+            {},
+            {'5': {'Braves': wide}},
+            {'home_team': 'Braves'},
+        )['lineup_home']
+        self.assertIn('林志傑', stripped_text)
+        self.assertNotIn('\\u6797', stripped_text)
+        stripped = json.loads(stripped_text)
+        self.assertEqual(
+            stripped['columns'],
+            ['Lineup', 'PTS', '2FG%', 'PPP'],
+        )
+        row = dict(zip(stripped['columns'], stripped['data'][0]))
+        self.assertEqual(row['PTS'], 2)
+        self.assertEqual(row['2FG%'], '.000')
+        self.assertEqual(row['PPP'], '0.00')
+        self.assertNotIn('Opp_PTS', row)
 
     def test_display_text_survives_the_table_readers(self):
         from synergy_reporter.report_components import _sorted_player_split, read_split_frame

@@ -324,6 +324,9 @@ class FakeReport:
             }
         return payload
 
+    def get_lineup_stats_json_dict(self, lineup_size=5):
+        return self.get_all_lineup_stats_json_dict(sizes=(lineup_size,))[str(lineup_size)]
+
     def get_rotation_payload(self, home_team_id=None, away_team_id=None):
         return {
             'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],

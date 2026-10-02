@@ -259,23 +259,36 @@ def _shot_chart_wrap(hidden=True):
 
 
 def _lineup_controls():
-    row = filter_control(
-        '',
-        dmc.SegmentedControl(
-            id='lineup_size_dropdown',
-            data=[
-                {'label': '5 Players', 'value': '5'},
-                {'label': '4 Players', 'value': '4'},
-                {'label': '3 Players', 'value': '3'},
-                {'label': '2 Players', 'value': '2'},
-            ],
-            value='5',
-            radius='md',
-            size='xs',
-            fullWidth=True,
-        ),
+    return dmc.Group(
+        [
+            dmc.SegmentedControl(
+                id='lineup_size_dropdown',
+                data=[
+                    {'label': '5 Players', 'value': '5'},
+                    {'label': '4 Players', 'value': '4'},
+                    {'label': '3 Players', 'value': '3'},
+                    {'label': '2 Players', 'value': '2'},
+                ],
+                value='5',
+                radius='md',
+                size='xs',
+            ),
+            dmc.Switch(
+                id='lineup-show-opp',
+                label='Show Opp',
+                checked=False,
+                size='sm',
+                color='gray',
+                ms='auto',
+            ),
+        ],
+        justify='flex-start',
+        align='center',
+        wrap='wrap',
+        gap='sm',
+        mb='sm',
+        w='100%',
     )
-    return dmc.Box(row, mb='sm')
 
 
 def _lineup_wrap(hidden=True):
@@ -351,6 +364,7 @@ def layout(game_id=None):
         dcc.Store(id='bs-period', data='all'),
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
+        dcc.Store(id='lineup-show-opp-sync'),
         dcc.Store(id='rotation_store'),
         dcc.Store(id='rotation-click-t'),
         html.Button(id='rotation-click-fire', n_clicks=0, style={'display': 'none'}),
@@ -1216,7 +1230,151 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     return column_defs
 
 
-def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None, lineup_size=5):
+def _display_cell(value):
+    if value is None:
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except TypeError:
+        pass
+    return value
+
+
+def _lineup_visible_columns(df):
+    return [
+        col for col in df.columns
+        if not str(col).startswith('Opp_') and not str(col).startswith('_')
+    ]
+
+
+def _lineup_pair_records(df):
+    """One lineup JSON row becomes our row, then an Opp row on the same columns."""
+    columns = _lineup_visible_columns(df)
+    records = []
+    for raw in df.to_dict('records'):
+        own = {col: _display_cell(raw.get(col)) for col in columns}
+        pair = own.get('Lineup', own.get('Lineups', ''))
+        our = dict(own)
+        our['_opp'] = False
+        our['_pair'] = pair
+        our['_own'] = dict(own)
+        records.append(our)
+        opp = {}
+        for col in columns:
+            if col in ('Min', '+/-'):
+                opp[col] = ''
+            elif 'lineup' in str(col).lower():
+                opp[col] = pair
+            else:
+                opp[col] = _display_cell(raw.get('Opp_' + col, ''))
+        opp['_opp'] = True
+        opp['_pair'] = pair
+        opp['_own'] = dict(own)
+        records.append(opp)
+    return records
+
+
+def _lineup_pair_comparator(field):
+    # dash-ag-grid evaluates this once with static-eval. That walker rejects
+    # var/if/for, and it prewalks the body with every parameter set to null,
+    # so member access and `typeof` stay behind a null check.
+    field_js = json.dumps(field)
+    return {
+        "function": (
+            "(function(a, b, nodeA, nodeB) {"
+            "return (function(av, bv) {"
+            "return (function(an, bn) {"
+            "return an === null && bn === null ? (av < bv ? -1 : av > bv ? 1 : 0)"
+            " : an === null ? -1 : bn === null ? 1"
+            " : an < bn ? -1 : an > bn ? 1 : 0;"
+            "})("
+            "av === '' || av === null || av === undefined ? null"
+            " : (typeof av === 'number' ? (av !== av ? null : av)"
+            " : ((+av) === (+av) ? +av : null)),"
+            "bv === '' || bv === null || bv === undefined ? null"
+            " : (typeof bv === 'number' ? (bv !== bv ? null : bv)"
+            " : ((+bv) === (+bv) ? +bv : null)));"
+            "})("
+            f"nodeA && nodeA.data && nodeA.data._own ? nodeA.data._own[{field_js}] : null,"
+            f"nodeB && nodeB.data && nodeB.data._own ? nodeB.data._own[{field_js}] : null);"
+            "})"
+        )
+    }
+
+
+# postSortRows is compiled as `params => expr` on every sort. Snapshot the
+# comparator order first: indexOf on the live array moves while it sorts.
+_LINEUP_POST_SORT = {
+    "function": (
+        "(function(original) {"
+        "return params.nodes.sort(function(a, b) {"
+        "return (function(ai, bi) {"
+        "return ai < bi ? -1 : ai > bi ? 1"
+        " : ((a && a.data && a.data._opp) ? 1 : 0) - ((b && b.data && b.data._opp) ? 1 : 0);"
+        "})("
+        "original ? original.indexOf(original.find(function(n) {"
+        "return n && n.data && a && a.data && n.data._pair === a.data._pair && !n.data._opp;"
+        "})) : -1,"
+        "original ? original.indexOf(original.find(function(n) {"
+        "return n && n.data && b && b.data && n.data._pair === b.data._pair && !n.data._opp;"
+        "})) : -1);"
+        "});"
+        "})(params && params.nodes ? params.nodes.slice() : [])"
+    )
+}
+
+
+def _apply_lineup_pair_columns(column_defs):
+    for col in column_defs:
+        children = col.get("children")
+        if children:
+            _apply_lineup_pair_columns(children)
+            continue
+        field = col.get("field")
+        if not field:
+            continue
+        col["comparator"] = _lineup_pair_comparator(field)
+        if "lineup" not in str(field).lower():
+            continue
+        rules = dict(col.get("cellClassRules") or {})
+        rules["ag-cell-align-right"] = "params.data && params.data._opp"
+        rules["ag-cell-align-center"] = "!(params.data && params.data._opp)"
+        col["cellClassRules"] = rules
+        col.pop("cellClass", None)
+        field_js = json.dumps(field)
+        col["valueGetter"] = {
+            "function": (
+                "params.data && params.data._opp ? 'Opp' : "
+                f"(params.data ? params.data[{field_js}] : '')"
+            ),
+        }
+        col["filterValueGetter"] = {
+            "function": f"params.data ? params.data[{field_js}] : ''",
+        }
+        col["cellStyle"] = {
+            "styleConditions": [
+                {
+                    "condition": "params.data && params.data._opp",
+                    "style": {
+                        "textAlign": "right",
+                        "fontWeight": "400",
+                        "color": "#0f172a",
+                        "whiteSpace": "normal",
+                        "lineHeight": "1.3",
+                    },
+                }
+            ],
+            "defaultStyle": {
+                "textAlign": "center",
+                "fontWeight": "700",
+                "whiteSpace": "normal",
+                "lineHeight": "1.3",
+            },
+        }
+
+
+def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_data=None, lineup_size=5, row_records=None, pair_rows=False, show_opp=False, grid_id=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
     
@@ -1288,18 +1446,43 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
         dash_options["paginationPageSize"] = page_size
     if pinned_bottom_data:
         dash_options["pinnedBottomRowData"] = pinned_bottom_data
+    pair_props = {}
+    if pair_rows:
+        _apply_lineup_pair_columns(column_defs)
+        dash_options["postSortRows"] = _LINEUP_POST_SORT
+        dash_options["isExternalFilterPresent"] = {
+            "function": "false" if show_opp else "true",
+        }
+        dash_options["doesExternalFilterPass"] = {
+            "function": "!(params && params.data && params.data._opp)",
+        }
+        pair_props = {
+            "id": grid_id,
+            "getRowId": "params.data._pair + (params.data._opp ? ':opp' : ':us')",
+            "getRowStyle": {
+                "styleConditions": [
+                    {
+                        "condition": "params.data && params.data._opp",
+                        "style": {"backgroundColor": "#f1f5f9"},
+                    }
+                ],
+                "defaultStyle": {"backgroundColor": "#ffffff"},
+            },
+            "rowClassRules": {"lineup-opp-row": "params.data && params.data._opp"},
+        }
 
     grid_class = "ag-theme-alpine braves-clean-ag-grid"
     if any('lineup' in str(c).lower() for c in df.columns):
         grid_class += " braves-lineup-grid"
     return dmc.Paper(
         dag.AgGrid(
-            rowData=df.to_dict('records'),
+            rowData=row_records if row_records is not None else df.to_dict('records'),
             columnDefs=column_defs,
             defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
             dashGridOptions=dash_options,
             className=grid_class,
-            style={'width': '100%'}
+            style={'width': '100%'},
+            **pair_props,
         ),
         withBorder=True,
         radius="md",
@@ -1771,7 +1954,7 @@ def render_pbp_children(pbp_store):
     return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
-def render_lineup_children(lineup_store, lineup_size=5):
+def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
     try:
         size_int = int(lineup_size)
     except Exception:
@@ -1783,7 +1966,8 @@ def render_lineup_children(lineup_store, lineup_size=5):
     if not lineup_dict:
         return [_empty_view()]
     children = []
-    page_size = 20 if size_int < 5 else None
+    show_opp = bool(show_opp)
+    page_size = (40 if show_opp else 20) if size_int < 5 else None
     for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
         title_section = dmc.Group(
@@ -1803,11 +1987,16 @@ def render_lineup_children(lineup_store, lineup_size=5):
         )
         children.append(title_section)
         l_df = read_split_frame(l_json)
+        visible = l_df.loc[:, _lineup_visible_columns(l_df)]
         children.append(_ag_grid_from_df(
-            l_df,
+            visible,
             page_size=page_size,
             filterable_cols=['Lineup', 'Lineups'],
             lineup_size=size_int,
+            row_records=_lineup_pair_records(l_df),
+            pair_rows=True,
+            show_opp=show_opp,
+            grid_id=f'lineup-grid-{idx}',
         ))
     return children
 
@@ -2145,14 +2334,16 @@ def update_pane_pbp(pbp_store, active_tab):
     Input('tabs', 'value'),
     State('lineup_store', 'data'),
     State('game_id', 'children'),
+    State('lineup-show-opp', 'checked'),
 )
-def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False):
     if active_tab != 'tab-lineup':
         return no_update
     try:
         size_int = int(lineup_size)
     except Exception:
         size_int = 5
+    show_opp = bool(show_opp)
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
@@ -2162,10 +2353,35 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
                 return render_lineup_children(
                     json.dumps({str(size_int): custom_dict}),
                     size_int,
+                    show_opp=show_opp,
                 )
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
-    return render_lineup_children(lineup_store, size_int)
+    return render_lineup_children(lineup_store, size_int, show_opp=show_opp)
+
+
+@callback(
+    Output('lineup-show-opp', 'checked'),
+    Input('game_id', 'children'),
+    prevent_initial_call=True,
+)
+def reset_lineup_show_opp(_game_id):
+    return False
+
+
+clientside_callback(
+    """
+    function(checked) {
+        if (window.applyLineupShowOpp) {
+            window.applyLineupShowOpp(!!checked);
+        }
+        return !!checked;
+    }
+    """,
+    Output('lineup-show-opp-sync', 'data'),
+    Input('lineup-show-opp', 'checked'),
+    prevent_initial_call=True,
+)
 
 
 @callback(
