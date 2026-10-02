@@ -201,3 +201,52 @@ class ShotPctDisplayTests(unittest.TestCase):
         self.assertEqual(row['FTA'], 2)
         self.assertEqual(row['FT%'], '0.0%')
         self.assertEqual(row['eFG%'], '0.0%')
+
+    def test_player_nan_counts_blank_instead_of_raising(self):
+        missing = float('nan')
+        team_stats = pd.DataFrame([{'entityId': 'home', 'minutes': 'PT38M12S'}])
+        players = pd.DataFrame([{
+            'entityId': 'home',
+            'personId': 'p1',
+            'minutes': 'PT12M00S',
+            'participated': True,
+            'plusMinus': missing,
+            'pointsTwoMade': missing,
+            'pointsTwoAttempted': missing,
+            'pointsThreeMade': 2,
+            'pointsThreeAttempted': 4,
+            'freeThrowsMade': missing,
+            'freeThrowsAttempted': missing,
+            'reboundsOffensive': missing,
+            'reboundsDefensive': missing,
+            'rebounds': missing,
+            'assists': missing,
+            'turnovers': missing,
+            'steals': missing,
+            'blocks': missing,
+            'foulsTotal': missing,
+            'foulsDrawn': missing,
+            'points': missing,
+            'plus': missing,
+            'minus': missing,
+            'starter': True,
+        }])
+        bundle = (
+            team_stats,
+            pd.DataFrame([{'entityId': 'home', 'periodId': 1, 'points': 20}]),
+            players,
+            {'home': ['p1']},
+            pd.DataFrame(),
+            {'home': 'Braves', 'p1': 'Starter'},
+            [],
+            pd.DataFrame(),
+        )
+        with patch.object(Parser, 'parse_game_bundle', return_value=bundle):
+            report = PostGameReport('game-1')
+        row = report._get_player_stats_df_dict()['Braves'].iloc[0]
+        self.assertEqual(row['2M'], '')
+        self.assertEqual(row['2A'], '')
+        self.assertEqual(row['3M'], 2)
+        self.assertEqual(row['3A'], 4)
+        self.assertEqual(row['PTS'], '')
+        self.assertEqual(row['PM'], '0-0')
