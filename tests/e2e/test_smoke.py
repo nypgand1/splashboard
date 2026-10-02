@@ -1,4 +1,5 @@
 import base64
+import json
 import time
 
 from tests.e2e.fixtures import (
@@ -91,6 +92,37 @@ def test_home_schedule_filters_and_links(page, e2e_server):
 
     page.locator(f'a[href="/game/{FINISHED_ID}"]').first.click()
     page.wait_for_url(f'**/game/{FINISHED_ID}', timeout=15000)
+
+
+def test_home_interval_keeps_the_show_filter(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    _wait(page, '#home-show')
+    _click_show(page, 'All')
+    page.wait_for_function(
+        '''() => [...document.querySelectorAll('a.home-schedule-row-clickable')]
+            .some((el) => (el.getAttribute('href') || '').includes('/game/fin-regular'))''',
+        timeout=10000,
+    )
+    page.evaluate(
+        '''() => {
+            window.__homeGen = 0;
+            const host = document.getElementById('home-game-list');
+            new MutationObserver(() => { window.__homeGen += 1; })
+                .observe(host, {childList: true, subtree: true});
+        }'''
+    )
+    page.evaluate(
+        '''() => window.dash_clientside.set_props('home-interval', {n_intervals: 2})'''
+    )
+    page.wait_for_function('() => window.__homeGen > 0', timeout=10000)
+    hrefs = page.eval_on_selector_all(
+        'a.home-schedule-row-clickable',
+        'els => els.map(a => a.getAttribute("href"))',
+    )
+    assert f'/game/{FINISHED_ID}' in hrefs
+    selected = page.locator('#home-show label, #home-show button').filter(has_text='All')
+    assert selected.count() >= 1
 
 
 def test_home_viewports(page, e2e_server):
@@ -724,3 +756,46 @@ def test_lineup_show_opp_keeps_the_same_lineup_page(page, e2e_server):
         timeout=20000,
     )
     assert home_summary() == '21 to 40 of 40'
+
+
+def _split_lineup(name, pts):
+    return json.dumps({
+        'columns': ['Lineup', 'PTS', 'Min'],
+        'index': [0],
+        'data': [[name, pts, '1:00']],
+    })
+
+
+def test_lineup_store_tick_repaints_both_tables(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Lineup Stats')
+    page.locator('#pane-lineup').get_by_text('Lin-0').first.wait_for(timeout=20000)
+    page.locator('#lineup_size_dropdown').get_by_text('5 Players').click()
+    page.locator('#lineup-show-opp').click()
+    page.locator('#pane-lineup .ag-cell[col-id="Lineup"]').filter(has_text='Opp').first.wait_for(
+        timeout=20000,
+    )
+    payload = json.dumps({
+        '5': {
+            HOME: _split_lineup('HomeRefresh', 3),
+            AWAY: _split_lineup('AwayRefresh', 2),
+        },
+    })
+    page.evaluate(
+        '''(payload) => window.dash_clientside.set_props('lineup_store', {data: payload})''',
+        payload,
+    )
+    page.locator('#pane-lineup').get_by_text('HomeRefresh').wait_for(timeout=20000)
+    page.locator('#pane-lineup').get_by_text('AwayRefresh').wait_for(timeout=20000)
+    assert page.locator('#pane-lineup').get_by_text('Lin-0').count() == 0
+    assert page.locator('#lineup_size_dropdown').get_by_text('5 Players').count() == 1
+    checked = page.evaluate(
+        '''() => {
+            const node = document.getElementById('lineup-show-opp');
+            const input = node && (node.matches('input') ? node : node.querySelector('input'));
+            return !!(input && input.checked);
+        }'''
+    )
+    assert checked is True

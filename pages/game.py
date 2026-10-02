@@ -297,7 +297,11 @@ def _lineup_wrap(hidden=True):
     if os.environ.get('SPLASHBOARD_E2E'):
         body = pane
     else:
-        body = dcc.Loading(custom_spinner=loading_skeleton('table'), children=pane)
+        body = dcc.Loading(
+            delay_show=1000,
+            custom_spinner=loading_skeleton('table'),
+            children=pane,
+        )
     return html.Div(
         [
             html.Div(id='lineup-last-update', children=_last_update_span()),
@@ -2332,7 +2336,7 @@ def update_pane_pbp(pbp_store, active_tab):
     Output('pane-lineup', 'children'),
     Input('lineup_size_dropdown', 'value'),
     Input('tabs', 'value'),
-    State('lineup_store', 'data'),
+    Input('lineup_store', 'data'),
     State('game_id', 'children'),
     State('lineup-show-opp', 'checked'),
 )

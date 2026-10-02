@@ -36,7 +36,7 @@ This file is the source of truth for product behavior. Tests and later feature w
 ### Home `/`
 
 - Show `dmc.Skeleton` while the current-season schedule loads.
-- Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Theme Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. Home has no `dcc.Interval`.
+- Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Theme Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. `dcc.Interval` id `home-interval` reloads the season schedule every 30 seconds, including when no game is live. `dcc.Store` id `home-filter-store` is in the initial layout and keeps Show and Game Type; the reload reads that store. A failed reload keeps the list already on screen. The first load still shows the skeleton, then the error or empty copy.
 - The hero reuses `ui_kit.game_banner` and **shares the compact-row two-line composition** (full-width score line, then a tight centered meta cluster). Hero stays banner-tall via Paper padding and badge `size="md"` (list badges stay `size="xs"`). Do not put the badge in a right-hand column that steals width from the score well. Meta cluster is `date | time | venue` plus the badge (omit missing parts; no dangling `|`). Home hero date is `YYYY-MM-DD Day`; Game page banner date stays ISO `YYYY-MM-DD`. The hero ignores SHOW and GAME TYPE.
 - **Filter controls**: Quiet `dmc.SegmentedControl` without verbose labels.
   - Game Type: Options are distinct `fixtureType` values this season (`Regular`, `Playoff`). Hidden when 0–1 distinct types.
@@ -96,8 +96,8 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 | Void (`ABANDONED`) | `ABANDONED` | no | off | hidden | link: `A : H` or `@` |
 
 - Finished games freeze the report cache (no TTL rebuild).
-- Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play, Rotation, and Shot Chart share that cadence. Shot Chart keeps its period and player selections across ticks.
-- Unplayed and void use official routes and do not poll.
+- Live-play games: `/live` routes (except fixture roster and org persons/entities/venues); PBP HTTP cache and live report cache = 25 seconds; Play-By-Play, Rotation, Shot Chart, and Lineup Stats share that cadence. Shot Chart keeps its period and player selections across ticks. Lineup Stats rebuilds both team grids while that tab is open and keeps the size control and Show Opp. Report does not rebuild.
+- Unplayed and void games use official routes. The Game page interval stays off. Home still reloads the season list every 30 seconds.
 
 ## Background warmup and prefetch
 
@@ -278,6 +278,7 @@ Ownership is split so each layer does what the other cannot. This is not leftove
 
 - Wrap chrome, top to bottom: `Last Update`, then one control row, then the pane. The row is the width of the lineup wrap. On the left, a quiet size `dmc.SegmentedControl` (no Combination label) stays content-sized and keeps id `lineup_size_dropdown`. Options are `5 Players`, `4 Players`, `3 Players`, `2 Players`. Default `5`. On the right, `dmc.Switch` id `lineup-show-opp`, label `Show Opp`, size `sm`, color `gray`, default off, `ms="auto"`. A wrapped row keeps the switch on the right. The switch stays in this chrome while the pane is loading, empty, or in error.
 - Show Opp lasts for this visit to the game. Changing `game_id` or reloading turns it off. Changing tab, lineup size, or the live refresh leaves it as set. It is not written to `localStorage`. Turning it on or off keeps the sort, the Lineup filter, and the same 20-lineup page.
+- While Lineup Stats is the open tab, each `lineup_store` write rebuilds both team grids from that store. Sizes 4/3/2 recompute on that same write. The size control and Show Opp stay, and the new grids use the current Show Opp value. Sort, the Lineup filter, and the page reset on that rebuild. A hidden Lineup tab does not rebuild; opening it paints the latest store. Report still reads `lineup_store` as State and does not rebuild.
 - `lineup_store` precomputes size 5 at page load. Sizes 4/3/2 compute on demand in the Lineup tab callback, then render through the same `render_lineup_children` path (home/away section dots, Lineup filter, size-based column widths, pagination). Do not paint a second Title-only table.
 - 5-man lineups are displayed completely without pagination. 2/3/4-man lineups paginate 20 lineups per page. Show Opp off uses page size 20. Show Opp on makes each lineup two grid rows, uses page size 40, and does not split a pair across pages.
 - Lineup labels are player **names** from the id table, ordered by jersey shirt number (ascending), joined with hyphens (e.g. `林志傑-張宗憲`). Jersey is the sort key, not the displayed text.

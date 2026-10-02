@@ -6,6 +6,7 @@ from unittest.mock import patch
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import pandas as pd
+from dash import no_update
 from dash_iconify import DashIconify
 
 import app  # noqa: F401
@@ -90,6 +91,89 @@ class FourStateTests(unittest.TestCase):
     def test_home_layout_uses_skeleton(self):
         layout = home_page.layout()
         self.assertTrue(find_type(layout, dmc.Skeleton))
+
+    def test_home_layout_polls_and_keeps_filters_in_a_store(self):
+        from dash import dcc
+        from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
+
+        layout = home_page.layout()
+        interval = next(node for node in walk(layout) if _node_id(node) == 'home-interval')
+        self.assertIsInstance(interval, dcc.Interval)
+        self.assertEqual(interval.interval, LIVE_CADENCE_SECONDS * 1000)
+        store = next(node for node in walk(layout) if _node_id(node) == 'home-filter-store')
+        self.assertEqual(store.data, {'show': 'upcoming', 'game_type': None})
+
+    def test_later_home_tick_keeps_filters_and_replaces_scores(self):
+        first_df = _schedule_df([
+            _home_row(
+                status='FINISHED', fixtureId='done', fixtureType='REGULAR',
+                home_team='Night', away_team='Day',
+                teamScoreHome=80, teamScoreAway=70,
+            ),
+        ])
+        second_df = _schedule_df([
+            _home_row(
+                status='FINISHED', fixtureId='done', fixtureType='REGULAR',
+                home_team='Night', away_team='Day',
+                teamScoreHome=99, teamScoreAway=70,
+            ),
+        ])
+        frames = [first_df, second_df]
+        calls = []
+
+        def _df(prefetch=True):
+            calls.append(prefetch)
+            return frames.pop(0)
+
+        filters = {'show': 'all', 'game_type': 'REGULAR'}
+        with patch.object(home_page, 'df_data', side_effect=_df):
+            first = home_page.load_home_game_list(0, filters)
+            second = home_page.load_home_game_list(1, filters)
+        self.assertEqual(calls, [True, False])
+        self.assertEqual(_segmented(first, 'home-show').value, 'all')
+        self.assertEqual(_segmented(second, 'home-show').value, 'all')
+        self.assertEqual(_segmented(second, 'home-game-type').value, 'REGULAR')
+        first_store = next(node for node in walk(first) if _node_id(node) == 'home-schedule-store')
+        second_store = next(node for node in walk(second) if _node_id(node) == 'home-schedule-store')
+        self.assertEqual(first_store.data[0]['score'], '70 : 80')
+        self.assertEqual(second_store.data[0]['score'], '70 : 99')
+
+    def test_later_home_tick_keeps_the_list_when_reload_fails(self):
+        with patch.object(home_page, 'df_data', side_effect=RuntimeError('boom')):
+            self.assertIs(
+                home_page.load_home_game_list(1, {'show': 'finished'}),
+                no_update,
+            )
+
+    def test_home_refresh_does_not_prefetch(self):
+        frame = pd.DataFrame([{
+            'startTimeLocal': '2026-01-01T19:00:00',
+            'status': 'SCHEDULED',
+            'fixtureType': 'REGULAR',
+            'fixtureId': 'g1',
+            'venueId': 'v',
+            'teamIdHome': 'h',
+            'teamIdAway': 'a',
+            'teamScoreHome': None,
+            'teamScoreAway': None,
+        }])
+        with patch.object(home_page.Parser, 'parse_season_game_list_df', return_value=frame), \
+                patch.object(home_page.Parser, 'parse_id_tables', return_value={'h': 'Home', 'a': 'Away', 'v': 'Arena'}), \
+                patch('synergy_inbounder.runtime_cache.prefetch_latest_games') as prefetch:
+            home_page.df_data(prefetch=False)
+            prefetch.assert_not_called()
+            home_page.df_data(prefetch=True)
+            prefetch.assert_called_once()
+
+    def test_remember_home_filters(self):
+        self.assertEqual(
+            home_page.remember_home_filters('finished', 'PLAYOFF'),
+            {'show': 'finished', 'game_type': 'PLAYOFF'},
+        )
+        self.assertEqual(
+            home_page.remember_home_filters(None, None),
+            {'show': 'upcoming', 'game_type': None},
+        )
 
     def test_game_error_and_empty_views(self):
         err = game_page.render_bs_children(json.dumps({'_ui': 'error', 'message': ERROR_GAME}))
