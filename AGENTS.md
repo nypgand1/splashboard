@@ -4,6 +4,7 @@ Read the matching spec before changing behavior or fixing a bug.
 
 - Product behavior (pages, tabs, finished vs live, Rotation, English UI, Report canvas including GridStack / JS tables / DMC chrome / localStorage): `docs/spec.md`
 - Synergy hosts, official vs `/live`, token, roster, periodId, rate limits: `docs/synergy.md`
+- EASL hosts, unauthenticated REST, seasons, boxscore, PBP: `docs/easl.md`
 - Local run, tests, deploy, environment variables: `README.md`
 
 ## Daily
