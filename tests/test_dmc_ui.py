@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import unittest
@@ -78,19 +79,53 @@ class FourStateTests(unittest.TestCase):
 
     def test_home_error_and_empty(self):
         with patch.object(home_page, 'df_data', side_effect=RuntimeError('boom')):
-            err = home_page.load_home_game_list('home-game-list')
-        self.assertIsInstance(err, dmc.Alert)
-        self.assertEqual(err.children, ERROR_HOME)
+            err, err_store = home_page.load_home_game_list('home-game-list')
+        self.assertIs(err_store, no_update)
+        alerts = find_type(err, dmc.Alert)
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].children, ERROR_HOME)
+        self.assertEqual(alerts[0].title, 'Error')
+        self.assertEqual(_last_update_text(err), 'Last Update: —')
+        self.assertEqual(_segmented(err, 'home-show').value, 'upcoming')
+        self.assertFalse(_by_class(err, 'home-schedule-list'))
+        self.assertFalse(_by_class(err, 'game-info-banner'))
+        type_wrap = next(
+            node for node in walk(err) if _node_id(node) == 'home-game-type-wrap'
+        )
+        self.assertEqual((type_wrap.style or {}).get('display'), 'none')
 
-        with patch.object(home_page, 'df_data', return_value=pd.DataFrame()):
+        fixed = datetime.datetime(
+            2026, 10, 3, 15, 4, 5, 123456,
+            tzinfo=datetime.timezone(datetime.timedelta(hours=8)),
+        )
+
+        class _Frozen(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        with patch.object(home_page, 'df_data', return_value=pd.DataFrame()), \
+                patch.object(home_page.datetime, 'datetime', _Frozen):
             empty = home_page.load_home_game_list('home-game-list')
         markup = str(empty)
         self.assertIn(EMPTY_HOME, markup)
         self.assertIn(EMPTY_HOME_NEXT, markup)
+        self.assertEqual(
+            _last_update_text(empty),
+            'Last Update: 2026-10-03 15:04:05.123456+08:00',
+        )
+        self.assertTrue(_by_class(empty, 'home-schedule-list'))
+        self.assertIsNotNone(_segmented(empty, 'home-league'))
+        self.assertFalse(find_type(empty, dmc.Alert))
 
     def test_home_layout_uses_skeleton(self):
+        from dash import dcc
+
         layout = home_page.layout()
         self.assertTrue(find_type(layout, dmc.Skeleton))
+        self.assertFalse(find_type(layout, dcc.Loading))
+        host = next(node for node in walk(layout) if _node_id(node) == 'home-game-list')
+        self.assertTrue(find_type(host, dmc.Skeleton))
 
     def test_home_layout_polls_and_keeps_filters_in_a_store(self):
         from dash import dcc
@@ -101,7 +136,9 @@ class FourStateTests(unittest.TestCase):
         self.assertIsInstance(interval, dcc.Interval)
         self.assertEqual(interval.interval, LIVE_CADENCE_SECONDS * 1000)
         store = next(node for node in walk(layout) if _node_id(node) == 'home-filter-store')
-        self.assertEqual(store.data, {'show': 'upcoming', 'game_type': None})
+        self.assertEqual(store.data, home_page.initial_home_filters())
+        scope = next(node for node in walk(layout) if _node_id(node) == 'home-scope-store')
+        self.assertEqual(scope.data, home_page.initial_home_scope())
 
     def test_later_home_tick_keeps_filters_and_replaces_scores(self):
         first_df = _schedule_df([
@@ -121,14 +158,14 @@ class FourStateTests(unittest.TestCase):
         frames = [first_df, second_df]
         calls = []
 
-        def _df(prefetch=True):
+        def _df(prefetch=True, **_kwargs):
             calls.append(prefetch)
             return frames.pop(0)
 
         filters = {'show': 'all', 'game_type': 'REGULAR'}
         with patch.object(home_page, 'df_data', side_effect=_df):
-            first = home_page.load_home_game_list(0, filters)
-            second = home_page.load_home_game_list(1, filters)
+            first = home_page.load_home_game_list(0, None, filters)
+            second = home_page.load_home_game_list(1, None, filters)
         self.assertEqual(calls, [True, False])
         self.assertEqual(_segmented(first, 'home-show').value, 'all')
         self.assertEqual(_segmented(second, 'home-show').value, 'all')
@@ -140,10 +177,9 @@ class FourStateTests(unittest.TestCase):
 
     def test_later_home_tick_keeps_the_list_when_reload_fails(self):
         with patch.object(home_page, 'df_data', side_effect=RuntimeError('boom')):
-            self.assertIs(
-                home_page.load_home_game_list(1, {'show': 'finished'}),
-                no_update,
-            )
+            page, stored = home_page.load_home_game_list(1, None, {'show': 'finished'})
+        self.assertIs(page, no_update)
+        self.assertIs(stored, no_update)
 
     def test_home_refresh_does_not_prefetch(self):
         frame = pd.DataFrame([{
@@ -166,14 +202,31 @@ class FourStateTests(unittest.TestCase):
             prefetch.assert_called_once()
 
     def test_remember_home_filters(self):
-        self.assertEqual(
-            home_page.remember_home_filters('finished', 'PLAYOFF'),
-            {'show': 'finished', 'game_type': 'PLAYOFF'},
+        stored = home_page.initial_home_filters()
+        data, scope = home_page.apply_home_filters(
+            'finished', 'PLAYOFF', 'PLG', stored['seasons']['PLG'], stored, 'home-show',
         )
-        self.assertEqual(
-            home_page.remember_home_filters(None, None),
-            {'show': 'upcoming', 'game_type': None},
+        self.assertIsNone(scope)
+        self.assertEqual(data['show'], 'finished')
+        self.assertEqual(data['game_type'], None)
+        self.assertEqual(data['seasons'], stored['seasons'])
+
+        data, scope = home_page.apply_home_filters(
+            None, None, 'PLG', stored['seasons']['PLG'], stored, 'home-game-type',
         )
+        self.assertIsNone(scope)
+        self.assertEqual(data['show'], 'upcoming')
+        self.assertIsNone(data['game_type'])
+
+        staged = dict(stored)
+        staged['show'] = 'finished'
+        staged['game_type'] = 'PLAYOFF'
+        data, scope = home_page.apply_home_filters(
+            'upcoming', 'PLAYOFF', 'PLG', stored['seasons']['PLG'], staged, 'home-show',
+        )
+        self.assertIsNone(scope)
+        self.assertEqual(data['show'], 'upcoming')
+        self.assertEqual(data['game_type'], 'PLAYOFF')
 
     def test_game_error_and_empty_views(self):
         err = game_page.render_bs_children(json.dumps({'_ui': 'error', 'message': ERROR_GAME}))
@@ -538,6 +591,11 @@ def _papers(tree):
     return find_type(tree, dmc.Paper)
 
 
+def _last_update_text(tree):
+    node = next(item for item in walk(tree) if _node_id(item) == 'home-last-update')
+    return ''.join(_string_values(node))
+
+
 def _anchors(tree):
     found = []
     for node in walk(tree):
@@ -580,7 +638,7 @@ class HomeScheduleTests(unittest.TestCase):
         self.assertFalse(find_type(tree, dag.AgGrid))
         self.assertTrue(_papers(tree))
 
-    def test_hero_is_live_else_first_upcoming_and_hidden_when_empty(self):
+    def test_live_game_is_in_the_list_and_empty_season_keeps_filters(self):
         live_upcoming = self._load([
             _home_row(
                 status='SCHEDULED', fixtureId='up1',
@@ -596,31 +654,32 @@ class HomeScheduleTests(unittest.TestCase):
             _home_row(
                 status='FINISHED', fixtureId='fin1',
                 startTimeLocal='2026-02-01T19:00:00',
+                away_team='Finished Away', home_team='Finished Home',
             ),
         ])
-        hero = str(_papers(live_upcoming)[0])
-        self.assertIn('Live Away', hero)
-        self.assertIn('Live Home', hero)
-        self.assertNotIn('Upcoming Away', hero)
-
-        upcoming_only = self._load([
-            _home_row(
-                status='FINISHED', fixtureId='fin1',
-                startTimeLocal='2026-02-01T19:00:00',
-            ),
-            _home_row(
-                status='SCHEDULED', fixtureId='up1',
-                startTimeLocal='2026-03-02T19:00:00',
-                away_team='Upcoming Away', home_team='Upcoming Home',
-            ),
-        ])
-        hero = str(_papers(upcoming_only)[0])
-        self.assertIn('Upcoming Away', hero)
+        self.assertFalse(_by_class(live_upcoming, 'game-info-banner'))
+        listed = str(_by_class(live_upcoming, 'home-schedule-list')[0])
+        self.assertIn('Live Away', listed)
+        self.assertIn('Live Home', listed)
+        self.assertIn('Upcoming Away', listed)
+        self.assertNotIn('Finished Away', listed)
+        self.assertTrue(_last_update_text(live_upcoming).startswith('Last Update: '))
+        self.assertNotEqual(_last_update_text(live_upcoming), 'Last Update: —')
+        season = next(
+            node for node in walk(live_upcoming) if _node_id(node) == 'home-season'
+        )
+        self.assertIs(season.searchable, False)
+        self.assertIs(season.clearable, False)
+        self.assertIs(season.allowDeselect, False)
+        self.assertEqual(season.w, 132)
 
         empty = self._load([])
         markup = str(empty)
         self.assertIn(EMPTY_HOME, markup)
-        self.assertFalse(find_type(empty, dmc.Paper))
+        self.assertIn(EMPTY_HOME_NEXT, markup)
+        self.assertTrue(_by_class(empty, 'home-schedule-list'))
+        self.assertIsNotNone(_segmented(empty, 'home-show'))
+        self.assertFalse(_by_class(empty, 'game-info-banner'))
 
     def test_show_defaults_to_upcoming_and_game_type_from_live(self):
         tree = self._load([
@@ -684,7 +743,240 @@ class HomeScheduleTests(unittest.TestCase):
         finished = home_page.filter_schedule_records(records, 'finished', None)
         self.assertEqual([row['fixtureId'] for row in finished], ['fin'])
         all_rows = home_page.filter_schedule_records(records, 'all', None)
-        self.assertEqual([row['fixtureId'] for row in all_rows], ['fin', 'void', 'live', 'up'])
+        self.assertEqual([row['fixtureId'] for row in all_rows], ['up', 'live', 'void', 'fin'])
+
+    def test_all_and_finished_put_the_later_same_day_game_first(self):
+        records = home_page.schedule_records(_schedule_df([
+            _home_row(status='FINISHED', fixtureId='early', startTimeLocal='2026-05-01T09:00:00'),
+            _home_row(status='FINISHED', fixtureId='late', startTimeLocal='2026-05-01T21:00:00'),
+            _home_row(status='CONFIRMED', fixtureId='missing', startTimeLocal=''),
+            _home_row(status='FINISHED', fixtureId='older', startTimeLocal='2026-04-01T21:00:00'),
+        ]))
+        expected = ['late', 'early', 'older', 'missing']
+        self.assertEqual(
+            [row['fixtureId'] for row in home_page.filter_schedule_records(records, 'all', None)],
+            expected,
+        )
+        self.assertEqual(
+            [row['fixtureId'] for row in home_page.filter_schedule_records(records, 'finished', None)],
+            expected,
+        )
+
+    def _load_filtered(self, rows, n_intervals='home-game-list', filters=None, scope=None):
+        with patch.object(home_page, 'df_data', return_value=_schedule_df(rows)):
+            return home_page.load_home_game_list(n_intervals, scope, filters)
+
+    def test_empty_upcoming_uses_the_latest_finished_stage(self):
+        page, stored = self._load_filtered([
+            _home_row(
+                status='FINISHED', fixtureId='old-po', fixtureType='PLAYOFF',
+                startTimeLocal='2026-04-01T19:00:00', away_team='Old Playoff',
+            ),
+            _home_row(
+                status='CONFIRMED', fixtureId='new-reg', fixtureType='REGULAR',
+                startTimeLocal='2026-05-02T19:00:00', away_team='New Regular',
+            ),
+            _home_row(
+                status='CANCELLED', fixtureId='void', fixtureType='FINAL',
+                startTimeLocal='2026-05-03T19:00:00', away_team='Void Final',
+            ),
+        ])
+        self.assertEqual(_segmented(page, 'home-show').value, 'finished')
+        self.assertEqual(_segmented(page, 'home-game-type').value, 'REGULAR')
+        listed = str(_by_class(page, 'home-schedule-list')[0])
+        self.assertIn('New Regular', listed)
+        self.assertNotIn('Old Playoff', listed)
+        self.assertNotIn('Void Final', listed)
+        self.assertEqual(stored['show'], 'finished')
+        self.assertEqual(stored['game_type'], 'REGULAR')
+        self.assertEqual(stored['league'], 'PLG')
+
+    def test_later_tick_also_switches_an_empty_upcoming_view(self):
+        filters = home_page.initial_home_filters()
+        filters['show'] = 'upcoming'
+        filters['game_type'] = 'PLAYOFF'
+        page, stored = self._load_filtered([
+            _home_row(
+                status='FINISHED', fixtureId='po', fixtureType='PLAYOFF',
+                startTimeLocal='2026-05-02T19:00:00', away_team='Playoff Done',
+            ),
+            _home_row(
+                status='FINISHED', fixtureId='reg', fixtureType='REGULAR',
+                startTimeLocal='2026-04-01T19:00:00', away_team='Regular Done',
+            ),
+        ], n_intervals=2, filters=filters)
+        self.assertEqual(_segmented(page, 'home-show').value, 'finished')
+        self.assertEqual(_segmented(page, 'home-game-type').value, 'PLAYOFF')
+        self.assertIn('Playoff Done', str(_by_class(page, 'home-schedule-list')[0]))
+        self.assertNotIn('Regular Done', str(_by_class(page, 'home-schedule-list')[0]))
+        self.assertEqual(stored['show'], 'finished')
+        self.assertEqual(stored['game_type'], 'PLAYOFF')
+
+    def test_stored_all_stays_when_nothing_is_upcoming(self):
+        filters = home_page.initial_home_filters()
+        filters['show'] = 'all'
+        page, stored = self._load_filtered([
+            _home_row(status='FINISHED', fixtureId='fin', startTimeLocal='2026-04-01T19:00:00'),
+        ], filters=filters)
+        self.assertEqual(_segmented(page, 'home-show').value, 'all')
+        self.assertIs(stored, no_update)
+
+    def test_no_finished_game_keeps_upcoming_and_the_filtered_empty_copy(self):
+        page, stored = self._load_filtered([
+            _home_row(status='CANCELLED', fixtureId='void', away_team='Called Off'),
+        ])
+        self.assertEqual(_segmented(page, 'home-show').value, 'upcoming')
+        listed = str(_by_class(page, 'home-schedule-list')[0])
+        self.assertIn(EMPTY_HOME_FILTER, listed)
+        self.assertNotIn('No games available.', listed)
+        self.assertNotIn('Called Off', listed)
+        self.assertIs(stored, no_update)
+
+    def test_empty_season_does_not_switch_show(self):
+        with patch.object(home_page, 'df_data', return_value=pd.DataFrame()):
+            page, stored = home_page.load_home_game_list('home-game-list')
+        self.assertEqual(_segmented(page, 'home-show').value, 'upcoming')
+        self.assertIn(EMPTY_HOME, str(_by_class(page, 'home-schedule-list')[0]))
+        self.assertIs(stored, no_update)
+
+    def test_if_needed_default_runs_on_entry_and_not_on_a_later_tick(self):
+        rows = [
+            _home_row(
+                status='FINISHED', fixtureId='po', fixtureType='PLAYOFF',
+                startTimeLocal='2026-05-01T19:00:00', away_team='Playoff Done',
+                Score='80 : 70', teamScoreHome=70, teamScoreAway=80,
+            ),
+            _home_row(
+                status='IF_NEEDED', fixtureId='final', fixtureType='FINAL',
+                startTimeLocal='2026-06-01T19:00:00', away_team='Final If Needed',
+            ),
+        ]
+        page, stored = self._load_filtered(rows)
+        self.assertEqual(_segmented(page, 'home-show').value, 'finished')
+        self.assertEqual(_segmented(page, 'home-game-type').value, 'PLAYOFF')
+        listed = str(_by_class(page, 'home-schedule-list')[0])
+        self.assertIn('Playoff Done', listed)
+        self.assertNotIn('Final If Needed', listed)
+        self.assertEqual(stored['show'], 'finished')
+        self.assertEqual(stored['game_type'], 'PLAYOFF')
+
+        kept = home_page.apply_home_filters(
+            'upcoming', 'PLAYOFF', 'PLG', stored['seasons']['PLG'], stored, 'home-show',
+        )[0]
+        self.assertEqual(kept['show'], 'upcoming')
+        self.assertEqual(kept['game_type'], 'PLAYOFF')
+        records = home_page.schedule_records(_schedule_df(rows))
+        self.assertEqual(
+            home_page.filter_schedule_records(records, 'upcoming', 'PLAYOFF'),
+            [],
+        )
+        self.assertEqual(
+            [row['fixtureId'] for row in home_page.filter_schedule_records(records, 'upcoming', None)],
+            ['final'],
+        )
+
+        tick_page, tick_store = self._load_filtered(rows, n_intervals=3, filters=kept)
+        self.assertEqual(_segmented(tick_page, 'home-show').value, 'upcoming')
+        self.assertEqual(_segmented(tick_page, 'home-game-type').value, 'PLAYOFF')
+        tick_listed = str(_by_class(tick_page, 'home-schedule-list')[0])
+        self.assertIn(EMPTY_HOME_FILTER, tick_listed)
+        self.assertNotIn('Final If Needed', tick_listed)
+        self.assertIs(tick_store, no_update)
+
+    def test_spaced_if_needed_matches_the_entry_default_only(self):
+        records = [
+            {
+                'status': ' IF_NEEDED ',
+                'fixtureType': 'FINAL',
+                'startTimeLocal': '2026-06-01T19:00:00',
+            },
+            {
+                'status': 'FINISHED',
+                'fixtureType': 'PLAYOFF',
+                'startTimeLocal': '2026-05-01T19:00:00',
+            },
+        ]
+        self.assertEqual(
+            home_page.resolve_home_view(
+                records, 'upcoming', None, apply_if_needed_default=True,
+            ),
+            ('finished', 'PLAYOFF', True),
+        )
+        self.assertEqual(
+            home_page.resolve_home_view(
+                records, 'upcoming', 'PLAYOFF', apply_if_needed_default=False,
+            ),
+            ('upcoming', 'PLAYOFF', False),
+        )
+        self.assertEqual(
+            home_page.resolve_home_view(
+                [{'status': '', 'fixtureType': 'REGULAR', 'startTimeLocal': '2026-05-20T19:00:00'}],
+                'upcoming',
+                None,
+                apply_if_needed_default=True,
+            ),
+            ('upcoming', None, False),
+        )
+
+    def test_a_scheduled_game_keeps_the_upcoming_default(self):
+        page, stored = self._load_filtered([
+            _home_row(
+                status='IF_NEEDED', fixtureId='ifn', fixtureType='FINAL',
+                startTimeLocal='2026-06-01T19:00:00', away_team='If Needed',
+            ),
+            _home_row(
+                status='SCHEDULED', fixtureId='sched', fixtureType='REGULAR',
+                startTimeLocal='2026-05-20T19:00:00', away_team='Still Scheduled',
+            ),
+            _home_row(
+                status='FINISHED', fixtureId='fin', fixtureType='PLAYOFF',
+                startTimeLocal='2026-05-01T19:00:00', away_team='Already Done',
+            ),
+        ])
+        self.assertEqual(_segmented(page, 'home-show').value, 'upcoming')
+        self.assertEqual(_segmented(page, 'home-game-type').value, 'REGULAR')
+        listed = str(_by_class(page, 'home-schedule-list')[0])
+        self.assertIn('Still Scheduled', listed)
+        self.assertIn('If Needed', listed)
+        self.assertNotIn('Already Done', listed)
+        self.assertIs(stored, no_update)
+
+    def test_if_needed_without_a_finished_game_stays_on_upcoming(self):
+        page, stored = self._load_filtered([
+            _home_row(status='IF_NEEDED', fixtureId='ifn', away_team='Only If Needed'),
+        ])
+        self.assertEqual(_segmented(page, 'home-show').value, 'upcoming')
+        self.assertIn('Only If Needed', str(_by_class(page, 'home-schedule-list')[0]))
+        self.assertIs(stored, no_update)
+
+    def test_scope_change_applies_the_if_needed_default_for_that_league(self):
+        from easl_inbounder.settings import EASL_SEASON_ID
+
+        filters = home_page.initial_home_filters()
+        filters['game_type'] = 'REGULAR'
+        with patch.object(home_page, 'df_data', return_value=_schedule_df([
+            _home_row(
+                status='FINISHED', fixtureId='po', fixtureType='PLAYOFF',
+                startTimeLocal='2026-05-01T19:00:00', away_team='Easl Playoff',
+            ),
+            _home_row(
+                status='IF_NEEDED', fixtureId='final', fixtureType='FINAL',
+                startTimeLocal='2026-06-01T19:00:00', away_team='Easl Final',
+            ),
+        ])), patch.object(home_page, '_triggered_id', return_value='home-scope-store'):
+            page, stored = home_page.load_home_game_list(
+                4,
+                {'league': 'EASL', 'season_id': EASL_SEASON_ID},
+                filters,
+            )
+        self.assertEqual(_segmented(page, 'home-league').value, 'EASL')
+        self.assertEqual(_segmented(page, 'home-show').value, 'finished')
+        self.assertEqual(_segmented(page, 'home-game-type').value, 'PLAYOFF')
+        self.assertNotIn('Easl Final', str(_by_class(page, 'home-schedule-list')[0]))
+        self.assertEqual(stored['league'], 'EASL')
+        self.assertEqual(stored['seasons']['EASL'], EASL_SEASON_ID)
+        self.assertEqual(stored['show'], 'finished')
+        self.assertEqual(stored['game_type'], 'PLAYOFF')
 
     def test_date_header_and_row_time_have_no_iso_t(self):
         tree = self._load([
@@ -696,7 +988,7 @@ class HomeScheduleTests(unittest.TestCase):
         values = _string_values(tree)
         self.assertIn('2026-03-15 Sun', values)
         self.assertIn('18:30 | Arena', values)
-        self.assertIn('2026-03-15 Sun | 18:30 | Arena', values)
+        self.assertNotIn('2026-03-15 Sun | 18:30 | Arena', values)
         self.assertFalse(any('T' in value and value.startswith('2026-') for value in values))
 
     def test_clickable_rows_and_non_links(self):
@@ -718,7 +1010,7 @@ class HomeScheduleTests(unittest.TestCase):
         self.assertNotIn('/game/ifn', hrefs)
         self.assertNotIn('/game/can', hrefs)
 
-    def test_filtered_empty_keeps_hero_not_season_empty_copy(self):
+    def test_filtered_empty_keeps_filters_not_season_empty_copy(self):
         records = home_page.schedule_records(_schedule_df([
             _home_row(
                 status='IN_PROGRESS', fixtureId='live', fixtureType='REGULAR',
@@ -732,11 +1024,51 @@ class HomeScheduleTests(unittest.TestCase):
             ),
         ]))
         tree = home_page.render_home_page(records, show='finished', game_type='REGULAR')
-        markup = str(tree)
-        self.assertIn(EMPTY_HOME_FILTER, markup)
-        self.assertIn(EMPTY_HOME_FILTER_NEXT, markup)
-        self.assertNotIn(EMPTY_HOME, markup)
-        self.assertIn('Live Away', str(_papers(tree)[0]))
+        listed = str(_by_class(tree, 'home-schedule-list')[0])
+        self.assertIn(EMPTY_HOME_FILTER, listed)
+        self.assertIn(EMPTY_HOME_FILTER_NEXT, listed)
+        self.assertNotIn(EMPTY_HOME, listed)
+        self.assertNotIn('Live Away', listed)
+        self.assertTrue(_last_update_text(tree).startswith('Last Update: '))
+        self.assertIsNotNone(_segmented(tree, 'home-show'))
+
+    def test_show_change_keeps_the_clock_and_error_slot(self):
+        records = home_page.schedule_records(_schedule_df([
+            _home_row(status='FINISHED', fixtureId='fin', startTimeLocal='2026-01-01T19:00:00'),
+        ]))
+        listed = home_page.update_home_view(records, 'finished', None)
+        self.assertNotIn('Last Update', str(listed))
+        self.assertIn('fin', str(listed))
+        alert = home_page.update_home_view({'_ui': 'error'}, 'all', None)
+        self.assertIsInstance(alert, dmc.Alert)
+        self.assertEqual(alert.children, ERROR_HOME)
+        self.assertEqual(alert.title, 'Error')
+        self.assertFalse(_by_class(alert, 'home-schedule-list'))
+
+    def test_failed_scope_change_clears_the_clock(self):
+        from easl_inbounder.settings import EASL_SEASON_ID
+
+        with patch.object(home_page, 'df_data', side_effect=RuntimeError('boom')), \
+                patch.object(home_page, '_triggered_id', return_value='home-scope-store'):
+            tree, stored = home_page.load_home_game_list(
+                4,
+                {'league': 'EASL', 'season_id': EASL_SEASON_ID},
+                {'show': 'finished', 'game_type': 'REGULAR', 'league': 'PLG'},
+            )
+        self.assertIs(stored, no_update)
+        self.assertEqual(_last_update_text(tree), 'Last Update: —')
+        self.assertEqual(find_type(tree, dmc.Alert)[0].children, ERROR_HOME)
+        self.assertFalse(_by_class(tree, 'home-schedule-list'))
+        self.assertEqual(_segmented(tree, 'home-league').value, 'EASL')
+        self.assertEqual(_segmented(tree, 'home-show').value, 'finished')
+        season = next(node for node in walk(tree) if _node_id(node) == 'home-season')
+        self.assertEqual(season.value, EASL_SEASON_ID)
+        line = next(node for node in walk(tree) if _node_id(node) == 'home-last-update')
+        text = find_type(line, dmc.Text)[0]
+        self.assertEqual(text.size, 'sm')
+        self.assertEqual(text.c, 'dimmed')
+        self.assertEqual(text.mb, 8)
+        self.assertEqual(text.className, 'no-print')
 
     def test_compact_row_three_digit_well_meta_and_badge(self):
         records = home_page.schedule_records(_schedule_df([

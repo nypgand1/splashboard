@@ -36,17 +36,45 @@ def _click_show(page, label):
     time.sleep(0.4)
 
 
+def _season_label(page):
+    return page.locator('#home-season').evaluate(
+        """el => {
+            if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+                return el.value;
+            }
+            return (el.innerText || el.textContent || '').trim();
+        }"""
+    )
+
+
+def _season_is_not_editable(page):
+    return page.locator('#home-season').evaluate(
+        """el => {
+            const field = (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+                ? el
+                : el.querySelector('input, textarea');
+            if (!field || field.type === 'hidden') return true;
+            return Boolean(field.readOnly || field.disabled);
+        }"""
+    )
+
+
 def test_home_schedule_filters_and_links(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
-    _wait(page, '.game-info-banner')
+    _wait(page, '.home-schedule-list')
+    _wait(page, '#home-last-update')
     _wait(page, '#home-show')
 
     assert page.locator('.ag-root').count() == 0
-    hero = page.locator('.game-info-banner').inner_text()
-    assert AWAY in hero
-    assert HOME in hero
-    assert 'IN_PROGRESS' in hero
+    assert page.locator('.game-info-banner').count() == 0
+    listed = page.locator('.home-schedule-list').inner_text()
+    assert AWAY in listed
+    assert HOME in listed
+    assert 'IN_PROGRESS' in listed
+    update = page.locator('#home-last-update')
+    assert 'Last Update:' in update.inner_text()
+    assert update.bounding_box()['y'] < page.locator('#home-show').bounding_box()['y']
 
     type_wrap = page.locator('#home-game-type-wrap')
     assert type_wrap.count() == 1
@@ -94,6 +122,40 @@ def test_home_schedule_filters_and_links(page, e2e_server):
     page.wait_for_url(f'**/game/{FINISHED_ID}', timeout=15000)
 
 
+def test_home_easl_schedule_is_not_linked_to_game(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    _wait(page, '#home-league')
+    _wait(page, '#home-season')
+    assert _season_label(page) == '2025-26'
+    assert _season_is_not_editable(page) is True
+    assert 'PLG' in page.locator('#home-league').inner_text()
+
+    page.locator('#home-league').get_by_text('EASL', exact=True).click()
+    page.wait_for_function(
+        "() => document.body.innerText.includes('TBD')",
+        timeout=10000,
+    )
+    draft_hrefs = page.eval_on_selector_all(
+        'a',
+        'els => els.map((el) => el.getAttribute("href") || "")',
+    )
+    assert all('easl-draft' not in href for href in draft_hrefs)
+
+    _click_show(page, 'All')
+    page.wait_for_function(
+        "() => document.body.innerText.includes('Utsunomiya Brex')",
+        timeout=10000,
+    )
+    hrefs = page.eval_on_selector_all(
+        'a',
+        'els => els.map((el) => el.getAttribute("href") || "")',
+    )
+    assert all('easl-final' not in href and 'easl-draft' not in href for href in hrefs)
+    assert '90 : 81' in page.locator('.home-schedule-list').inner_text() or \
+        '90' in page.locator('.home-schedule-list').inner_text()
+
+
 def test_home_interval_keeps_the_show_filter(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
@@ -128,18 +190,22 @@ def test_home_interval_keeps_the_show_filter(page, e2e_server):
 def test_home_viewports(page, e2e_server):
     page.set_viewport_size({'width': 375, 'height': 812})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
-    _wait(page, '.game-info-banner')
-    box = page.locator('.game-info-banner').bounding_box()
+    _wait(page, '.home-schedule-list')
+    _wait(page, '#home-last-update')
+    box = page.locator('.home-schedule-list').bounding_box()
     assert box and box['width'] > 200
     overflow = page.evaluate(
         'document.documentElement.scrollWidth > document.documentElement.clientWidth + 4'
     )
     assert page.locator('.ag-root').count() == 0
+    assert page.locator('.game-info-banner').count() == 0
     assert overflow is False
 
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
-    _wait(page, '.game-info-banner')
+    _wait(page, '#home-show')
+    _wait(page, '#home-last-update')
+    assert page.locator('.game-info-banner').count() == 0
     assert page.locator('#home-show').count() == 1
 
 

@@ -34,6 +34,22 @@ class Parser:
         return df[['startTimeLocal', 'fixtureId', 'fixtureType', 'venueId', 'status', 'teamIdHome', 'teamScoreHome', 'teamIdAway', 'teamScoreAway']]
 
     @staticmethod
+    def find_game_row(org_id, game_id, season_ids):
+        if not game_id:
+            return None
+        wanted = str(game_id)
+        for season_id in season_ids:
+            frame = Parser.parse_season_game_list_df(org_id, season_id)
+            if frame is None or getattr(frame, 'empty', True):
+                continue
+            if 'fixtureId' not in frame.columns:
+                continue
+            matched = frame[frame['fixtureId'].astype(str) == wanted]
+            if not matched.empty:
+                return matched.iloc[0]
+        return None
+
+    @staticmethod
     def parse_game_pbp_df(org_id, game_id):
         live = should_use_live_endpoints(game_id=game_id)
         return Parser._pbp_df_from_json(Communicator.get_game_play_by_play_synergy(org_id, game_id, live=live))

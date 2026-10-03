@@ -4,6 +4,7 @@ Read the matching spec before changing behavior or fixing a bug.
 
 - Product behavior (pages, tabs, finished vs live, Rotation, English UI, Report canvas including GridStack / JS tables / DMC chrome / localStorage): `docs/spec.md`
 - Synergy hosts, official vs `/live`, token, roster, periodId, rate limits: `docs/synergy.md`
+- EASL hosts, unauthenticated REST, seasons, boxscore, PBP: `docs/easl.md`
 - Local run, tests, deploy, environment variables: `README.md`
 
 ## Daily
@@ -37,4 +38,4 @@ Acceptance for browser checks is the Playwright process exit code. Interactive b
 - **Four States for Every View**: Every data view must explicitly handle: `Loading` (`dmc.Skeleton`), `Empty` (English copy + next step), `Error` (`dmc.Alert`, recoverable, no traceback), and `Success`.
 - **Custom Cell Rendering**: Custom AG-Grid cell formatters and renderers reside in `assets/ag_grid_cells.js` via `window.dashAgGridComponentFunctions` (never uncompiled inline Python JS strings).
 - **Unit Test Contracts**: Unit tests cover Python contracts: per-column center alignment on `headerClass` / `cellClass` / `textAlign`, DMC component types (`AppShell`, `Skeleton`, `Alert`), Python `style` colors (winner cells, team stripe, player dots), empty/error copy, and fixture-status buckets (`synergy_inbounder/game_status.py`).
-- **Playwright Contracts**: `tests/e2e` covers Home hero/filters/row links, Game tabs including Report visibility at 1280px and hide under 1280px, Report first-paint table, leave Report and return with tables still on the first paper, delete page (remaining papers keep tables; page list is one stack), toolbar width ≤ paper width, 36px toolbar icons, Report thead without a 2px brand rule, notes, PDF, sticky toolbar, Rotation Paper width, 375px and 1280px Home, and table-pan hosts. Sampled AG Grid paint (`+/-` color, starter marker, `text-align`) is asserted in-test when those cells mount; Python contracts stay in the unit suite.
+- **Playwright Contracts**: `tests/e2e` covers Home filters, Last Update, and row links, Game tabs including Report visibility at 1280px and hide under 1280px, Report first-paint table, leave Report and return with tables still on the first paper, delete page (remaining papers keep tables; page list is one stack), toolbar width ≤ paper width, 36px toolbar icons, Report thead without a 2px brand rule, notes, PDF, sticky toolbar, Rotation Paper width, 375px and 1280px Home, and table-pan hosts. Sampled AG Grid paint (`+/-` color, starter marker, `text-align`) is asserted in-test when those cells mount; Python contracts stay in the unit suite.
