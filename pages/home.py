@@ -1,6 +1,19 @@
 import datetime
+import json
 
-from dash import html, dcc, callback, Input, Output, State, ctx, no_update, register_page
+from dash import (
+    Input,
+    Output,
+    State,
+    callback,
+    clientside_callback,
+    ctx,
+    dcc,
+    html,
+    no_update,
+    register_page,
+)
+from dash.development.base_component import Component
 import dash_mantine_components as dmc
 import pandas as pd
 
@@ -92,13 +105,9 @@ def layout():
         ),
         dcc.Store(id='home-filter-store', data=initial_home_filters()),
         dcc.Store(id='home-scope-store', data=initial_home_scope()),
-        dcc.Loading(
-            delay_show=1000,
-            custom_spinner=loading_skeleton(),
-            children=html.Div(
-                id='home-game-list',
-                children=loading_skeleton(),
-            ),
+        html.Div(
+            id='home-game-list',
+            children=loading_skeleton(),
         ),
     ])
 
@@ -173,9 +182,11 @@ def apply_home_filters(show, game_type, league, season_id, filters, triggered):
 
 @callback(
     Output('home-game-list', 'children'),
+    Output('home-filter-store', 'data', allow_duplicate=True),
     Input('home-interval', 'n_intervals'),
     Input('home-scope-store', 'data'),
     State('home-filter-store', 'data'),
+    prevent_initial_call='initial_duplicate',
 )
 def load_home_game_list(n_intervals=0, scope=None, filters=None):
     first = _first_home_load(n_intervals)
@@ -198,28 +209,29 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
                 league=league,
                 season_id=season_id,
                 failed=True,
-            )
-        return no_update
-    if df is None or df.empty:
-        return render_home_page(
-            [],
-            show=show,
-            game_type=game_type,
-            league=league,
-            season_id=season_id,
-        )
-    records = schedule_records(df, league=league)
-    return render_home_page(
+            ), no_update
+        return no_update, no_update
+    records = [] if df is None or df.empty else schedule_records(df, league=league)
+    show, game_type, persist = resolve_home_view(
+        records,
+        show,
+        game_type,
+        apply_if_needed_default=first or scope_change,
+    )
+    page = render_home_page(
         records,
         show=show,
         game_type=game_type,
         league=league,
         season_id=season_id,
     )
+    if not persist:
+        return page, no_update
+    return page, home_filters_after_default(filters, league, season_id, show, game_type)
 
 
 @callback(
-    Output('home-filter-store', 'data'),
+    Output('home-filter-store', 'data', allow_duplicate=True),
     Output('home-scope-store', 'data'),
     Input('home-show', 'value'),
     Input('home-game-type', 'value'),
@@ -238,7 +250,7 @@ def remember_home_filters(show, game_type, league, season_id, filters):
 
 
 @callback(
-    Output('home-schedule-list', 'children'),
+    Output('home-schedule-list', 'children', allow_duplicate=True),
     Input('home-schedule-store', 'data'),
     Input('home-show', 'value'),
     Input('home-game-type', 'value'),
@@ -246,8 +258,33 @@ def remember_home_filters(show, game_type, league, season_id, filters):
 )
 def update_home_view(records, show, game_type):
     if isinstance(records, dict) and records.get('_ui') == 'error':
-        return no_update
+        return error_alert(ERROR_HOME)
     return render_schedule_list(records or [], show, game_type)
+
+
+def _jsonable(node):
+    if isinstance(node, Component):
+        spec = node.to_plotly_json()
+        spec['props'] = {
+            key: _jsonable(value) for key, value in spec['props'].items()
+        }
+        return spec
+    if isinstance(node, (list, tuple)):
+        return [_jsonable(item) for item in node]
+    if isinstance(node, dict):
+        return {key: _jsonable(value) for key, value in node.items()}
+    return node
+
+
+clientside_callback(
+    'function() { return %s; }' % json.dumps(_jsonable(loading_skeleton())),
+    Output('home-schedule-list', 'children', allow_duplicate=True),
+    Input('home-show', 'value'),
+    Input('home-game-type', 'value'),
+    Input('home-league', 'value'),
+    Input('home-season', 'value'),
+    prevent_initial_call=True,
+)
 
 
 def _plain(value):
@@ -378,6 +415,54 @@ def default_game_type(records):
     return (records[0].get('fixtureType') or None) if records else None
 
 
+def _latest_finished(records):
+    finished = [
+        record for record in records or []
+        if status_bucket(record.get('status')) == 'finished'
+    ]
+    if not finished:
+        return None
+    return max(
+        finished,
+        key=lambda record: _parse_start(record.get('startTimeLocal')) or pd.Timestamp.min,
+    )
+
+
+def resolve_home_view(records, show, game_type, *, apply_if_needed_default):
+    show = show or SHOW_UPCOMING
+    if show != SHOW_UPCOMING:
+        return show, game_type, False
+    upcoming = [
+        record for record in records or []
+        if status_bucket(record.get('status')) in ('live', 'unplayed')
+    ]
+    all_if_needed = bool(upcoming) and all(
+        str(record.get('status') or '').strip() == 'IF_NEEDED'
+        for record in upcoming
+    )
+    switch = not upcoming or (all_if_needed and apply_if_needed_default)
+    if not switch:
+        return show, game_type, False
+    latest = _latest_finished(records)
+    if latest is None:
+        return SHOW_UPCOMING, game_type, False
+    stage = str(latest.get('fixtureType') or '').strip() or None
+    return SHOW_FINISHED, stage, True
+
+
+def home_filters_after_default(filters, league, season_id, show, game_type):
+    seasons = _season_map(filters)
+    if league not in (LEAGUE_PLG, LEAGUE_EASL):
+        league = LEAGUE_PLG
+    seasons[league] = season_id or seasons.get(league) or default_season_id(league)
+    return {
+        'show': show,
+        'game_type': game_type,
+        'league': league,
+        'seasons': seasons,
+    }
+
+
 def filter_schedule_records(records, show, game_type):
     rows = list(records or [])
     if game_type:
@@ -393,11 +478,9 @@ def filter_schedule_records(records, show, game_type):
             row for row in rows
             if status_bucket(row.get('status')) == 'finished'
         ]
-        # Finished games: newest completed first (descending)
         rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.min, reverse=True)
     else:
-        # All: chronological order
-        rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.max)
+        rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.min, reverse=True)
     return rows
 
 

@@ -115,7 +115,12 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertNotIn(('lineup_store', 'data'), _dep_pairs(report[0]['inputs']))
 
     def test_home_reload_reads_the_filter_store(self):
-        home = _callback_specs('home-game-list.children')
+        from dash._callback import GLOBAL_CALLBACK_LIST
+
+        home = [
+            item for item in GLOBAL_CALLBACK_LIST
+            if 'home-game-list.children' in item['output']
+        ]
         self.assertEqual(len(home), 1)
         self.assertEqual(
             [(item['id'], item['property']) for item in home[0]['inputs']],
@@ -125,11 +130,34 @@ class LiveRefreshWiringTests(unittest.TestCase):
             ],
         )
         self.assertIn(('home-filter-store', 'data'), _dep_pairs(home[0]['state']))
+        self.assertIn('home-filter-store.data', home[0]['output'])
         watched = {item['id'] for item in home[0]['inputs'] + home[0]['state']}
         self.assertNotIn('home-show', watched)
         self.assertNotIn('home-game-type', watched)
         self.assertNotIn('home-league', watched)
         self.assertNotIn('home-season', watched)
+
+    def test_home_controls_skeleton_the_list_not_the_interval(self):
+        from dash._callback import GLOBAL_CALLBACK_LIST
+
+        listed = [
+            item for item in GLOBAL_CALLBACK_LIST
+            if 'home-schedule-list.children' in item['output']
+        ]
+        clientside = [item for item in listed if item.get('clientside_function')]
+        server = [item for item in listed if not item.get('clientside_function')]
+        self.assertEqual(len(clientside), 1)
+        self.assertEqual(len(server), 1)
+        self.assertEqual(
+            [item['id'] for item in clientside[0]['inputs']],
+            ['home-show', 'home-game-type', 'home-league', 'home-season'],
+        )
+        self.assertNotIn('home-interval', {item['id'] for item in clientside[0]['inputs']})
+        self.assertTrue(clientside[0]['prevent_initial_call'])
+        self.assertIn('@', clientside[0]['output'])
+        self.assertIn('@', server[0]['output'])
+        self.assertIn(('home-schedule-store', 'data'), _dep_pairs(server[0]['inputs']))
+        self.assertNotIn(('home-interval', 'n_intervals'), _dep_pairs(server[0]['inputs']))
 
     def test_open_lineup_size_uses_store_or_recomputes(self):
         with patch.object(game_page, 'render_lineup_children', return_value='painted') as render, \
