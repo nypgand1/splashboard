@@ -92,12 +92,20 @@ class SeasonCatalogTests(unittest.TestCase):
         self.assertEqual(SYNERGY_SEASON_ID, '00ab711f-938c-11f0-91bb-4b1b779ef3d9')
         self.assertEqual(
             [label for label, _season_id in EASL_SEASONS],
-            ['2026-27', '2025-26'],
+            ['2026-27', '2025-26', '2024-25', '2023-24'],
         )
         self.assertEqual(EASL_SEASON_ID, '1409787d-a683-11f1-aea7-b596f55be5ed')
         self.assertEqual(
             dict(EASL_SEASONS)['2025-26'],
             '77441bb3-9759-11f0-b659-0561c09a0222',
+        )
+        self.assertEqual(
+            dict(EASL_SEASONS)['2024-25'],
+            '57cefc32-5ace-11ef-81a0-3d1f6018efb7',
+        )
+        self.assertEqual(
+            dict(EASL_SEASONS)['2023-24'],
+            'c24ce68a-6420-11ee-9daf-6b6188281bd0',
         )
 
 
@@ -163,7 +171,7 @@ class HomeLeagueScheduleTests(unittest.TestCase):
         self.assertEqual(season.value, EASL_SEASON_ID)
         self.assertEqual(
             [item['label'] for item in season.data],
-            ['2026-27', '2025-26'],
+            ['2026-27', '2025-26', '2024-25', '2023-24'],
         )
         league = next(node for node in walk(tree) if _node_id(node) == 'home-league')
         self.assertEqual(league.value, 'EASL')
