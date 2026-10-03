@@ -91,14 +91,13 @@ def get_cached_game_status(game_id):
 
 
 def lookup_game_status(game_id):
-    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
+    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, plg_season_ids
     from synergy_inbounder.parser import Parser
 
-    season_df = Parser.parse_season_game_list_df(SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID)
-    game_row = season_df[season_df['fixtureId'] == game_id]
-    if game_row.empty:
+    row = Parser.find_game_row(SYNERGY_ORGANIZATION_ID, game_id, plg_season_ids())
+    if row is None:
         return ''
-    return normalize_status(game_row.iloc[0]['status'])
+    return normalize_status(row.get('status'))
 
 
 def get_cached_season_df(org_id, season_id, builder):

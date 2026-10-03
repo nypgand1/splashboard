@@ -8,7 +8,7 @@ import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
-from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID
+from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, plg_season_ids
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
@@ -473,12 +473,12 @@ def update_match_info_store(n, game_id):
     if not game_id:
         return json.dumps({})
     try:
-        season_df = Parser.parse_season_game_list_df(SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID)
-        id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-        game_row = season_df[season_df['fixtureId'] == game_id]
-        if game_row.empty:
+        row = Parser.find_game_row(
+            SYNERGY_ORGANIZATION_ID, game_id, plg_season_ids(),
+        )
+        if row is None:
             return json.dumps({})
-        row = game_row.iloc[0]
+        id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
         
         home_name = id_table.get(row['teamIdHome'], row['teamIdHome'])
         away_name = id_table.get(row['teamIdAway'], row['teamIdAway'])

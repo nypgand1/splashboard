@@ -35,11 +35,12 @@ This file is the source of truth for product behavior. Tests and later feature w
 
 ### Home `/`
 
-- Show `dmc.Skeleton` while the current-season schedule loads.
-- Layout, top to bottom: one hero `dmc.Paper` (the live-play game, else the next upcoming unplayed game; hidden if the season list is empty, or if there is no live and no upcoming game), quiet filters, then one list `dmc.Paper` of date-grouped compact rows. Theme Box Score Paper chrome (`withBorder`, `radius="md"`, `shadow="xs"`). Only the hero is banner-tall. Not an AG Grid. Not one Paper per game. `dcc.Interval` id `home-interval` reloads the season schedule every 30 seconds, including when no game is live. `dcc.Store` id `home-filter-store` is in the initial layout and keeps Show and Game Type; the reload reads that store. A failed reload keeps the list already on screen. The first load still shows the skeleton, then the error or empty copy.
-- The hero reuses `ui_kit.game_banner` and **shares the compact-row two-line composition** (full-width score line, then a tight centered meta cluster). Hero stays banner-tall via Paper padding and badge `size="md"` (list badges stay `size="xs"`). Do not put the badge in a right-hand column that steals width from the score well. Meta cluster is `date | time | venue` plus the badge (omit missing parts; no dangling `|`). Home hero date is `YYYY-MM-DD Day`; Game page banner date stays ISO `YYYY-MM-DD`. The hero ignores SHOW and GAME TYPE.
-- **Filter controls**: Quiet `dmc.SegmentedControl` without verbose labels.
-  - Game Type: Options are distinct `fixtureType` values this season (`Regular`, `Playoff`). Hidden when 0–1 distinct types.
+- Show `dmc.Skeleton` while the selected league and season schedule loads.
+- Layout, top to bottom, after the schedule responds: `Last Update` (`#home-last-update`), quiet filters, then the schedule slot. There is no Home hero. The Game page banner stays. `Last Update` is the same dimmed line as Rotation: `dmc.Text` `size="sm"`, `c="dimmed"`, `mb=8`, `className="no-print"`, left aligned. The 8px under that line is the space before the filters. A successful schedule, a filtered empty list, and an empty season use one list `dmc.Paper` (wrapper id `home-schedule-list`, Paper class `home-schedule-list`; `withBorder`, `radius="md"`, `shadow="xs"`). A load error puts the red `dmc.Alert` in that same slot and does not wrap it in the Paper. Not an AG Grid. Not one Paper per game. `dcc.Interval` id `home-interval` and `dcc.Store` id `home-scope-store` reload the selected league and season every 30 seconds, and again when the scope store changes, including when no game is live. `dcc.Store` id `home-filter-store` is in the initial layout and keeps Show, Game Type, league, and the last season id for each league. Show and Game Type do not refetch and do not move the clock. Changing league or season sets Game Type back to unfiltered and keeps Show. The clock is `Last Update: {UTC+8 datetime}` with microseconds and the offset, stamped when that render is built. It moves on the first success, each successful 30-second reload, and a successful league or season change, including a successful empty season. A failed 30-second reload keeps the clock and the list already on screen. A first-load failure, or a failed league or season change, shows `Last Update: —` until this league and season succeed. Do not keep the previous scope's time. The first load still shows the skeleton, with no Last Update and no filters, then the error or the schedule chrome.
+- **Filter controls**, left to right, wrapping on a narrow width: League, Season, Game Type, Show. League is a quiet `dmc.SegmentedControl` (`PLG`, `EASL`). Season is a `dmc.Select` whose options are that league's hardcoded `(label, season id)` rows, newest first. Labels are `2026-27` style. `searchable` is false, `clearable` is false, `allowDeselect` is false, and the width stays 132. The closed control is not a text field. Game Type and Show stay quiet `dmc.SegmentedControl`s without verbose labels.
+  - Default league is `PLG`. Default PLG season is `2025-26`. The first time `EASL` is selected, its season is `2026-27`. Each league keeps its own season id in `home-filter-store`.
+  - PLG lists that organization's fixtures for the selected season. EASL lists every match from `GET https://easl.joshricha.com/api/v1/matches?seasonId=` (no token). Team names use `nameFullLocal`. A missing team name renders `TBD`. Venue uses `venue.nameLocal` and is omitted when missing.
+  - Game Type: Options are distinct `fixtureType` values this season (`Regular`, `Playoff`, `Final`). Hidden when 0–1 distinct types. An empty `fixtureType` is not an option.
   - Status: Chips ordered as `Upcoming` / `Finished` / `All`. Default **Upcoming**.
     - Upcoming = live-play ∪ unplayed (`SCHEDULED`, `IF_NEEDED`, `DRAFT`, `POSTPONED`, unknown/empty).
     - Finished = `FINISHED` / `CONFIRMED`.
@@ -57,10 +58,10 @@ This file is the source of truth for product behavior. Tests and later feature w
   - Score well: two `min-width: 3ch` slots with `font-variant-numeric: tabular-nums`; away score right-aligned, home score left-aligned, colon centered. `@` uses the same well (3ch spacers either side of `@`). Never shrink the well to fit names. Never fixed `w=68` on the well or `w=140` on team names. Team names `flex: 1; min-width: 0`; single-line ellipsis; no wrap; no abbreviation table.
   - Meta cluster under the score, centered as one nowrap group: `HH:MM | Venue` (omit missing parts; no dangling `|`; ellipsis) glued to the status badge `size="xs"`. The cluster is not `space-between`. Meta text truncates; the badge does not shrink. Date is shown once in the group header `YYYY-MM-DD Day` (e.g. `2026-05-30 Sat`).
 - **Sorting**: Upcoming games sort chronologically nearest first (ascending); Finished games sort newest completed first (descending).
-- **Navigation**: the whole compact row is the hit target. Clickable iff `score_is_clickable`: live-play (including `PENDING`), finished, `ABANDONED`. The row is an `html.A` / `dmc.Anchor` to `/game/<fixtureId>`. Pointer cursor and `--row-hover: #e0f2fe` on clickable rows only. Unplayed and `CANCELLED`/`BYE` are not links (default cursor, no hover). No per-row Dash `n_clicks`. No `ScheduleScoreLink`.
-- Filters only change the list. Empty filtered list (season itself is not empty): `No games in this view.` Next step: `Switch Game Type or Show.` Keep hero + filters; do not replace the page with the season-empty copy.
-- On Synergy failure: `dmc.Alert` with `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception).
-- When the season list is empty: `No games available.` Next step: `Check back when the season schedule is published.`
+- **Navigation**: the whole compact row is the hit target. On PLG, clickable iff `score_is_clickable`: live-play (including `PENDING`), finished, `ABANDONED`. The row is an `html.A` / `dmc.Anchor` to `/game/<fixtureId>`. Pointer cursor and `--row-hover: #e0f2fe` on clickable rows only. Unplayed and `CANCELLED`/`BYE` are not links (default cursor, no hover). EASL rows are never links, including `CONFIRMED` rows that still show a numeric score. No per-row Dash `n_clicks`. No `ScheduleScoreLink`. Game pages keep reading Synergy. Opening a PLG game looks that fixture up across the configured PLG seasons, default season first.
+- Filters only change the list. Empty filtered list (season itself is not empty): `No games in this view.` Next step: `Switch Game Type or Show.` Keep Last Update and filters. The copy sits inside the schedule Paper. Do not use the season-empty copy.
+- On a failed first load, or a failed league or season change: keep Last Update (`Last Update: —`) and the filters. The list slot is `dmc.Alert` with title `Error` and `Failed to load games. Please try again later.` (HTTP 200, no unhandled exception). It is not inside the schedule Paper. Show stays. Game Type stays hidden because this response has no types. Changing Show or Game Type does not clear the alert and does not refetch.
+- When the season list is empty: keep Last Update (a successful stamp) and the filters. The schedule Paper says `No games available.` Next step: `Check back when the season schedule is published.`
 
 ### Game `/game/<game_id>`
 
@@ -80,7 +81,7 @@ Box Score is the default (`value="tab-bs"`). Tab panes stay mounted. Hidden-tab 
 - Report canvas tables are native HTML `<table>` painted in JS from `bs_store` / `lineup_store` (per ADR 0001). Box Score quarter and team summary tables stay `dmc.Table`. No `dbc.Table`, `dbc.Row`, or `dbc.Col` is used anywhere in the codebase. Do not put AG Grid inside Report blocks.
 - Box Score quarter and team summary tables use `dmc.TableThead` / `dmc.TableTh` / `dmc.TableTd` (not raw `html.Th`).
 - Loading uses `dmc.Skeleton`. Empty copy is `No data available.` Next step: `Open another game from Home.` Error uses `dmc.Alert` with `Failed to load this view. Please try again later.` (no traceback).
-- The game banner date is ISO `YYYY-MM-DD`. It uses the same two-line `game_banner` composition as Home (score line, then `date | time | venue` plus badge `size="md"`). The banner status badge uses the same bucket colors and raw `status` label as Home (not `● LIVE`).
+- The game banner date is ISO `YYYY-MM-DD`. `game_banner` is a score line, then `date | time | venue` plus badge `size="md"`. The banner status badge uses the same bucket colors and raw `status` label as the Home rows (not `● LIVE`).
 
 A `dcc.Store` that is `None` or invalid JSON is treated as an empty object. Callbacks must not crash.
 
@@ -104,7 +105,7 @@ Source enum: DataCore `FixturesModel.status` (14 values). Compare after strip. U
 
 - **Game page Tab warmup**: For finished games (`FINISHED`, `CONFIRMED`), after `game_id` load, a background daemon thread precomputes Lineup `(4, 3, 2)` combinations and Rotation payload into `PostGameReport` memoized caches so tab switching is instantaneous.
 - **Font load**: `NotoSansTC-Regular.ttf` (2.2MB) loads when the user exports PDF, not on every Game page render.
-- **Home page 2-game prefetch**: Upon loading the Home schedule list, a background sequential worker pre-fetches and memoizes `PostGameReport` for up to the latest 2 games (safely limited to avoid live API rate limits). Any direct user page request preempts background warmup.
+- **Home page 2-game prefetch**: When the loaded Home schedule is PLG (first load or a league/season change), a background sequential worker pre-fetches and memoizes `PostGameReport` for up to the latest 2 games (safely limited to avoid live API rate limits). EASL does not prefetch. A later 30-second tick does not prefetch. Any direct user page request preempts background warmup.
 
 ## Rotation
 
@@ -339,7 +340,7 @@ Person period stats are one GET of `.../statistics/for/person/in/fixtures/{fixtu
 
 ## Config and deploy
 
-- Public hosts, org id, and season ids live in git (`synergy_inbounder/settings.py`).
+- Public hosts, org id, and PLG season ids live in git (`synergy_inbounder/settings.py`). `SYNERGY_SEASON_ID` is the `2025-26` row. EASL season ids live in `easl_inbounder/settings.py`. `EASL_SEASON_ID` is the `2026-27` row. Home does not call a seasons-list endpoint.
 - Credentials come only from `SYNERGY_CREDENTIAL_ID` and `SYNERGY_CREDENTIAL_SECRET`.
 - Missing credentials must fail clearly at token fetch. Do not POST empty strings.
 - Default tests do not call live Synergy.

@@ -8,7 +8,7 @@ Product behavior is in `docs/spec.md`. This file covers the external API and how
 - REST: `https://api.dc.connect.sportradar.com/v1/basketball/...`
 - Do not use `api.dc.prod.cloud.atriumsports.com` (HTTP 500 `AuthorizerConfigurationException`).
 
-Organization id and the current season id live in `synergy_inbounder/settings.py`.
+Organization id and the PLG season table live in `synergy_inbounder/settings.py`. `SYNERGY_SEASON_ID` is the `2025-26` season. Home can select the other regular seasons in that table. Game status lookup searches the default season first, then the rest.
 
 ## Token
 

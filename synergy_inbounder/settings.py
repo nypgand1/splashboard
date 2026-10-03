@@ -36,12 +36,26 @@ SYNERGY_BEARER = 'token'
 
 SYNERGY_ORGANIZATION_ID = 'b1vqz'
 
-SYNERGY_SEASON_ID_PRE_22_23 = 'e24ebe03-3e5b-11ed-a1a4-977d7240edca'
-SYNERGY_SEASON_ID_REG_22_23 = 'e279bdcf-3e5b-11ed-83e3-977d7240edca'
-SYNERGY_SEASON_ID_REG_23_24 = 'e54380a8-4318-11ee-aac9-833b08b75024'
-SYNERGY_SEASON_ID_REG_24_25 = 'ab495b22-7563-11ef-9992-67cb519a6043'
-SYNERGY_SEASON_ID_REG_25_26 = '00ab711f-938c-11f0-91bb-4b1b779ef3d9'
-SYNERGY_SEASON_ID = SYNERGY_SEASON_ID_REG_25_26
+# Newest first. Regular seasons only: no preseason, 熱身賽, ONE_OFF, or Test1.
+SYNERGY_SEASONS = (
+    ('2026-27', '94b08c7c-bb00-11f1-ba8e-bd03fe15a10b'),
+    ('2025-26', '00ab711f-938c-11f0-91bb-4b1b779ef3d9'),
+    ('2024-25', 'ab495b22-7563-11ef-9992-67cb519a6043'),
+    ('2023-24', 'e54380a8-4318-11ee-aac9-833b08b75024'),
+    ('2022-23', 'e279bdcf-3e5b-11ed-83e3-977d7240edca'),
+    ('2021-22', 'b84d0073-3d8e-11ed-bbf9-2d934c23ac1b'),
+    ('2020-21', 'b6d36761-3d8e-11ed-a1f2-d5490a4ddc81'),
+)
+SYNERGY_SEASON_ID = dict(SYNERGY_SEASONS)['2025-26']
+
+
+def plg_season_ids():
+    """Default season first, then the rest of SYNERGY_SEASONS."""
+    ordered = [SYNERGY_SEASON_ID]
+    for _label, season_id in SYNERGY_SEASONS:
+        if season_id not in ordered:
+            ordered.append(season_id)
+    return ordered
 
 
 class MissingSynergyCredentials(RuntimeError):

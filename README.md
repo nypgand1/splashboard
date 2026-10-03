@@ -1,6 +1,6 @@
 # Splashboard
 
-A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST, lists the season on Home, and shows Box Score, Rotation, Lineup Stats, Play-By-Play, and Report on the Game page.
+A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST for PLG and a public EASL schedule, lists the selected league and season on Home, and shows Box Score, Rotation, Lineup Stats, Play-By-Play, and Report on the Game page.
 
 ## Requirements
 
@@ -48,7 +48,7 @@ Smoke drives a local app with fixtures. It does not call live Synergy. `tests/e2
 | `SYNERGY_CREDENTIAL_SECRET` | credential secret for the token endpoint |
 | `PORT` | listen port locally or on Fly (Fly default 8080) |
 
-Hosts, organization id, and season ids live in `synergy_inbounder/settings.py` and are tracked. Do **not** put credentials in `fly.toml` `[env]`.
+Hosts, organization id, and PLG season ids live in `synergy_inbounder/settings.py`. EASL season ids live in `easl_inbounder/settings.py`. Both are tracked. Do **not** put credentials in `fly.toml` `[env]`.
 
 Locally, use a gitignored `.env` (`python-dotenv` loads it when settings is imported). On Fly, use `fly secrets`.
 

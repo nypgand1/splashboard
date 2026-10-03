@@ -119,12 +119,17 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertEqual(len(home), 1)
         self.assertEqual(
             [(item['id'], item['property']) for item in home[0]['inputs']],
-            [('home-interval', 'n_intervals')],
+            [
+                ('home-interval', 'n_intervals'),
+                ('home-scope-store', 'data'),
+            ],
         )
         self.assertIn(('home-filter-store', 'data'), _dep_pairs(home[0]['state']))
         watched = {item['id'] for item in home[0]['inputs'] + home[0]['state']}
         self.assertNotIn('home-show', watched)
         self.assertNotIn('home-game-type', watched)
+        self.assertNotIn('home-league', watched)
+        self.assertNotIn('home-season', watched)
 
     def test_open_lineup_size_uses_store_or_recomputes(self):
         with patch.object(game_page, 'render_lineup_children', return_value='painted') as render, \
