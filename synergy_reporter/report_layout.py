@@ -6,7 +6,7 @@ import re
 A4_WIDTH_MM = 210
 A4_HEIGHT_MM = 297
 GRID_COLUMNS = 12
-LAYOUT_VERSION = 3
+LAYOUT_VERSION = 4
 STORAGE_KEY_PREFIX = 'splashboard.report.layout.'
 IMAGE_MAX_BYTES = 1_000_000
 ALLOWED_IMAGE_MIMES = frozenset({'image/jpeg', 'image/png', 'image/webp'})
@@ -25,20 +25,20 @@ ALLOWED_TABLE_KEYS = (
     't_adv_df',
     't_df',
     'k_df',
-    'p_df_home',
     'p_df_away',
-    'lineup_home',
+    'p_df_home',
     'lineup_away',
+    'lineup_home',
 )
 TABLE_TITLES = {
     'score_group': 'Score',
     't_adv_df': 'Pace, PPP & Four Factors',
     't_df': 'Team Stats',
     'k_df': 'Key Stats',
-    'p_df_home': 'Home Player Stats',
     'p_df_away': 'Away Player Stats',
-    'lineup_home': 'Home Lineup Stats',
+    'p_df_home': 'Home Player Stats',
     'lineup_away': 'Away Lineup Stats',
+    'lineup_home': 'Home Lineup Stats',
 }
 ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
 ROTATION_TITLE = 'Rotation'
@@ -368,15 +368,15 @@ def default_layout(match_info=None):
             {
                 'id': 'page-3',
                 'blocks': [
-                    _table('p3-home', 'p_df_home', 0, 0, GRID_COLUMNS, 8),
-                    _table('p3-away', 'p_df_away', 0, 8, GRID_COLUMNS, 8),
+                    _table('p3-away', 'p_df_away', 0, 0, GRID_COLUMNS, 8),
+                    _table('p3-home', 'p_df_home', 0, 8, GRID_COLUMNS, 8),
                 ],
             },
             {
                 'id': 'page-4',
                 'blocks': [
-                    _table('p4-home', 'lineup_home', 0, 0, GRID_COLUMNS, 8),
-                    _table('p4-away', 'lineup_away', 0, 8, GRID_COLUMNS, 8),
+                    _table('p4-away', 'lineup_away', 0, 0, GRID_COLUMNS, 8),
+                    _table('p4-home', 'lineup_home', 0, 8, GRID_COLUMNS, 8),
                 ],
             },
         ],
@@ -390,9 +390,53 @@ def empty_page(page_id):
     }
 
 
+_STACK_PAIRS = (
+    ('p_df_home', 'p_df_away'),
+    ('lineup_home', 'lineup_away'),
+)
+
+
+def _swap_pair_ys(blocks):
+    """On one page, swap y when the home block is still above the away block."""
+    for home_key, away_key in _STACK_PAIRS:
+        homes = [block for block in blocks if block.get('table_key') == home_key]
+        aways = [block for block in blocks if block.get('table_key') == away_key]
+        used = set()
+        for home in sorted(homes, key=lambda block: block.get('y') or 0):
+            below = [
+                away for away in aways
+                if id(away) not in used and (away.get('y') or 0) > (home.get('y') or 0)
+            ]
+            if not below:
+                continue
+            away = min(below, key=lambda block: block.get('y') or 0)
+            used.add(id(away))
+            home_y = home.get('y')
+            home['y'] = away.get('y')
+            away['y'] = home_y
+
+
+def migrate_v3_layout(layout):
+    """Version 3 keeps notes and images. Stacked home/away pairs trade y."""
+    pages = []
+    for page in layout.get('pages') or []:
+        if not isinstance(page, dict):
+            continue
+        blocks = [
+            dict(block) for block in (page.get('blocks') or []) if isinstance(block, dict)
+        ]
+        _swap_pair_ys(blocks)
+        migrated = dict(page)
+        migrated['blocks'] = blocks
+        pages.append(migrated)
+    return {'version': LAYOUT_VERSION, 'pages': pages}
+
+
 def normalize_layout(layout):
     if not isinstance(layout, dict) or not layout.get('pages'):
         return default_layout()
+    if layout.get('version') == 3:
+        layout = migrate_v3_layout(layout)
     if layout.get('version') != LAYOUT_VERSION:
         return default_layout()
     pages = layout.get('pages') or []

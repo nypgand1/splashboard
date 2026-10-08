@@ -975,12 +975,12 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         rows=3,
         cols=1,
         shared_xaxes=True,
-        row_heights=[h_weight, m_weight, a_weight],
+        row_heights=[a_weight, m_weight, h_weight],
         vertical_spacing=stop_seam_spacing(base_height),
         subplot_titles=(
-            (home or {}).get('team_name') or 'Home',
-            '',
             (away or {}).get('team_name') or 'Away',
+            '',
+            (home or {}).get('team_name') or 'Home',
         ),
     )
     total_height = _open_lower_seam(fig, base_height)
@@ -1019,8 +1019,8 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     def add_gantt(team, row, bar_color, players, side_kills, kill_edge):
         players_rev = list(reversed(players))
         y_cats = [axis_label(p) for p in players_rev]
-        # categoryarray[0] is the bottom of the panel. Home's last row and
-        # away's first row are the two edges that face the margin.
+        # categoryarray[0] is the bottom of the panel. The top panel's last
+        # row and the bottom panel's first row face the margin.
         if kill_edge == 'bottom':
             y_cats = [KILL_ROW] + y_cats
         else:
@@ -1110,7 +1110,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         fig.update_yaxes(row=row, col=1, **axis)
         return y_cats
 
-    home_labels = add_gantt(home, 1, home_color, home_players, home_kills, 'bottom')
+    away_labels = add_gantt(away, 1, away_color, away_players, away_kills, 'bottom')
 
     # 2. Score Margin Step-line with Dual-Color Fill & Rich Hover Tooltips
     margin_x = [point['t'] for point in margin] or [0]
@@ -1210,7 +1210,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     )
 
 
-    away_labels = add_gantt(away, 3, away_color, away_players, away_kills, 'top')
+    home_labels = add_gantt(home, 3, home_color, home_players, home_kills, 'top')
 
     view_start, view_end = 0, game_end
     if x_range and len(x_range) == 2 and x_range[0] is not None and x_range[1] is not None:
@@ -1271,12 +1271,13 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             line_width=0,
         )
         
-        # Add bold text annotation: top for home runs, bottom for away runs
+        # The away panel is on top, so its run ink grows up from the margin.
         x_center = (run['start'] + run['end']) / 2
         pts_label = f"{run['home_pts']}-{run['away_pts']}" if is_home else f"{run['away_pts']}-{run['home_pts']}"
-        y_pos = span if is_home else -span
-        y_anchor = 'bottom' if is_home else 'top'
-        y_shift = 2 if is_home else -2
+        on_top = not is_home
+        y_pos = span if on_top else -span
+        y_anchor = 'bottom' if on_top else 'top'
+        y_shift = 2 if on_top else -2
         
         fig.add_annotation(
             x=x_center,
@@ -1380,9 +1381,9 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             showlegend=False,
         ))
 
-    mirror_categories('yaxis4', 'y', 'x', home_labels)
+    mirror_categories('yaxis4', 'y', 'x', away_labels)
     mirror_numbers('yaxis5', 'yaxis2', 'y2', 'x2')
-    mirror_categories('yaxis6', 'y3', 'x3', away_labels)
+    mirror_categories('yaxis6', 'y3', 'x3', home_labels)
     _add_kill_annotations(fig)
     _add_stop_counts(fig, kills, periods)
     _raise_away_title(fig)
@@ -1392,8 +1393,8 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
 def _open_lower_seam(fig, base_height):
     """Keep the upper seam and the panel pixel sizes. Grow only the lower seam.
 
-    The added pixels go into the figure height. The away count stays on the
-    panel edge; the team name moves up into the new room.
+    The added pixels go into the figure height. The bottom panel's count stays
+    on that panel's top edge; its team name moves up into the new room.
     """
     plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
     seam = stop_seam_spacing(base_height) * plot_h
@@ -1432,6 +1433,7 @@ def _open_lower_seam(fig, base_height):
 
 
 def _raise_away_title(fig):
+    """Shift the bottom panel's title up by one count line."""
     away_top = float(fig.layout.yaxis3.domain[1])
     titles = [
         ann for ann in fig.layout.annotations or []
@@ -1474,19 +1476,19 @@ def _is_stop_count(ann):
 
 
 def _add_stop_counts(fig, kills, periods):
-    home_bottom = float(fig.layout.yaxis.domain[0])
-    away_top = float(fig.layout.yaxis3.domain[1])
+    top_bottom = float(fig.layout.yaxis.domain[0])
+    bottom_top = float(fig.layout.yaxis3.domain[1])
     for kill in kills or []:
-        home = kill.get('side') == 'home'
+        on_top = kill.get('side') == 'away'
         fig.add_annotation(
             x=(float(kill['start']) + float(kill['end'])) / 2.0,
             xref='x2',
-            y=home_bottom if home else away_top,
+            y=top_bottom if on_top else bottom_top,
             yref='paper',
             text=str(int(kill['stops'])),
             font=dict(size=STOP_COUNT_FONT, color=KILL_COLOR),
             xanchor='center',
-            yanchor='top' if home else 'bottom',
+            yanchor='top' if on_top else 'bottom',
             showarrow=False,
             hovertext=format_kill_label(kill, periods),
         )

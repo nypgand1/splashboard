@@ -37,6 +37,13 @@ from synergy_reporter.rotation import (
     report_rotation_figure,
 )
 from synergy_reporter.matchups import matchup_grid_records
+from synergy_reporter.team_order import (
+    order_named_items,
+    order_team_frame,
+    section_dot,
+    side_names,
+    team_stripe,
+)
 from synergy_reporter.shot_chart import (
     court_data_uri,
     court_zones,
@@ -202,8 +209,8 @@ def _box_score_wrap():
                     style={'marginBottom': '12px'},
                 ),
                 dmc.Box(_bs_scroll_card('bs-team-scroll'), mb='sm'),
-                _bs_player_block(0, '#00b4d8'),
-                _bs_player_block(1, '#94a3b8'),
+                _bs_player_block(0, '#94a3b8'),
+                _bs_player_block(1, '#00b4d8'),
             ],
             id='bs-detail-body',
             style={'display': 'none'},
@@ -860,7 +867,7 @@ def _stat_header(name):
     return {'AST': 'AS', 'PTS': 'PT'}.get(name, name)
 
 
-def _dmc_table_from_df(df, is_team_summary=True, title=None):
+def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
 
@@ -1107,7 +1114,9 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
     for row_idx in range(len(df)):
         team_stripe_style = {}
         if is_team_summary and 'Team' in df.columns:
-            stripe_color = "#0077b6" if row_idx == 0 else "#94a3b8"
+            raw_name = df.iloc[row_idx]['Team']
+            team_name = '' if pd.isna(raw_name) else str(raw_name)
+            stripe_color = team_stripe(team_name, away_name, home_name, row_idx)
             team_stripe_style = {"borderLeft": f"3.5px solid {stripe_color}"}
 
         cells = []
@@ -1891,16 +1900,17 @@ def period_bar_state(bs_store):
     return data, style
 
 
-def _bs_frames(bs_dict, period='all'):
+def _bs_frames(bs_dict, period='all', match_info=None):
     selected = str(period or 'all')
     slices = bs_dict.get('slices') if isinstance(bs_dict.get('slices'), dict) else {}
     view = slices.get(selected) if selected != 'all' and isinstance(slices.get(selected), dict) else bs_dict
+    away_name, home_name = side_names(match_info)
 
-    qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
-    qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
-    qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
+    qt_pts_df = order_team_frame(pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split'), away_name, home_name)
+    qt_foul_df = order_team_frame(pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split'), away_name, home_name)
+    qt_tout_df = order_team_frame(pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split'), away_name, home_name)
 
-    t_adv_df = pd.read_json(io.StringIO(view['t_adv_df']), orient='split')
+    t_adv_df = order_team_frame(pd.read_json(io.StringIO(view['t_adv_df']), orient='split'), away_name, home_name)
     if 'Pace' in t_adv_df.columns:
         t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: _format_metric(x, 1))
     if 'PPP' in t_adv_df.columns:
@@ -1909,7 +1919,7 @@ def _bs_frames(bs_dict, period='all'):
     players = []
     p_dict = view.get('p_df_dict') if isinstance(view.get('p_df_dict'), dict) else {}
     p_summary = view.get('p_summary_dict') if isinstance(view.get('p_summary_dict'), dict) else {}
-    for team_name, p_json in sorted(p_dict.items()):
+    for team_name, p_json in order_named_items(p_dict.items(), away_name, home_name):
         players.append((
             team_name,
             read_split_frame(p_json),
@@ -1920,15 +1930,19 @@ def _bs_frames(bs_dict, period='all'):
         'qt_foul': qt_foul_df,
         'qt_tout': qt_tout_df,
         't_adv': t_adv_df,
-        't_df': read_split_frame(view['t_df']),
-        'k_df': pd.read_json(io.StringIO(view['k_df']), orient='split'),
+        't_df': order_team_frame(read_split_frame(view['t_df']), away_name, home_name),
+        'k_df': order_team_frame(pd.read_json(io.StringIO(view['k_df']), orient='split'), away_name, home_name),
         'players': players,
+        'away_name': away_name,
+        'home_name': home_name,
         'chips': bs_dict.get('period_chips') or [{'label': 'All', 'value': 'all'}],
     }
 
 
-def _table_children(df, title=None):
-    card = _dmc_table_from_df(df, is_team_summary=True, title=title)
+def _table_children(df, title=None, away_name=None, home_name=None):
+    card = _dmc_table_from_df(
+        df, is_team_summary=True, title=title, away_name=away_name, home_name=home_name,
+    )
     if isinstance(card, dmc.Paper):
         for child in card.children:
             if getattr(child, 'className', None) == 'braves-table-scroll':
@@ -1983,21 +1997,23 @@ def _player_model(df, pinned):
     }
 
 
-def render_bs_sections(bs_store, period='all'):
+def render_bs_sections(bs_store, period='all', match_info=None):
     bs_dict = safe_loads(bs_store)
     if bs_dict.get('_ui') == 'error':
         return [_error_view(bs_dict)], []
     if not bs_dict or not bs_dict.get('qt_pts_df'):
         return [_empty_view()], []
 
-    frames = _bs_frames(bs_dict, period)
+    frames = _bs_frames(bs_dict, period, match_info)
+    away_name = frames.get('away_name')
+    home_name = frames.get('home_name')
     row1 = dmc.SimpleGrid(
         cols={"base": 1, "lg": 3},
         spacing="12px",
         children=[
-            _dmc_table_from_df(frames['qt_pts'], is_team_summary=True, title="Score"),
-            _dmc_table_from_df(frames['qt_foul'], is_team_summary=True, title="Fouls"),
-            _dmc_table_from_df(frames['qt_tout'], is_team_summary=True, title="Timeouts"),
+            _dmc_table_from_df(frames['qt_pts'], is_team_summary=True, title="Score", away_name=away_name, home_name=home_name),
+            _dmc_table_from_df(frames['qt_foul'], is_team_summary=True, title="Fouls", away_name=away_name, home_name=home_name),
+            _dmc_table_from_df(frames['qt_tout'], is_team_summary=True, title="Timeouts", away_name=away_name, home_name=home_name),
         ],
         style={"marginBottom": "12px"}
     )
@@ -2005,20 +2021,25 @@ def render_bs_sections(bs_store, period='all'):
         cols={"base": 1, "lg": 2},
         spacing="12px",
         children=[
-            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title="Pace & 4 Factors"),
+            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title="Pace & 4 Factors", away_name=away_name, home_name=home_name),
             _dmc_table_from_df(
                 frames['k_df'],
                 is_team_summary=True,
                 title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench",
+                away_name=away_name,
+                home_name=home_name,
             ),
         ],
         style={"marginBottom": "12px"}
     )
-    row3 = dmc.Box(_dmc_table_from_df(frames['t_df'], is_team_summary=True), mb="sm")
+    row3 = dmc.Box(
+        _dmc_table_from_df(frames['t_df'], is_team_summary=True, away_name=away_name, home_name=home_name),
+        mb="sm",
+    )
     matrix = [_last_update_span(), row1]
     detail = [row2, row3]
     for idx, (team_name, p_df, summary_rows) in enumerate(frames['players']):
-        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+        dot_color = section_dot(team_name, away_name, home_name, idx)
         detail.append(dmc.Group(
             [
                 dmc.Box(style={
@@ -2038,8 +2059,8 @@ def render_bs_sections(bs_store, period='all'):
     return matrix, detail
 
 
-def render_bs_children(bs_store, period='all'):
-    matrix, detail = render_bs_sections(bs_store, period)
+def render_bs_children(bs_store, period='all', match_info=None):
+    matrix, detail = render_bs_sections(bs_store, period, match_info)
     return [*matrix, *detail]
 
 
@@ -2080,7 +2101,7 @@ def _bs_blank(fill):
     return {key: fill for key in BS_SYNC_KEYS}
 
 
-def box_score_screen(bs_store, period='all', game_id=None):
+def box_score_screen(bs_store, period='all', game_id=None, match_info=None):
     payload = bs_store if isinstance(bs_store, dict) else safe_loads(bs_store)
     if not isinstance(payload, dict):
         payload = {}
@@ -2090,7 +2111,7 @@ def box_score_screen(bs_store, period='all', game_id=None):
         return {'mode': 'error', 'payload': payload}
     if not payload or not payload.get('qt_pts_df'):
         return {'mode': 'empty'}
-    return {'mode': 'ready', 'frames': _bs_frames(payload, period)}
+    return {'mode': 'ready', 'frames': _bs_frames(payload, period, match_info)}
 
 
 def _bs_shell(mode, status=None):
@@ -2147,10 +2168,10 @@ def _bs_player_outputs(models, names, column_state):
     }
 
 
-def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, triggered_id):
+def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, triggered_id, match_info=None):
     if active_tab != 'tab-bs' and triggered_id != 'game_id':
         return tuple(no_update for _ in BS_SYNC_KEYS)
-    screen = box_score_screen(bs_store, period, game_id)
+    screen = box_score_screen(bs_store, period, game_id, match_info)
     if screen['mode'] == 'skeleton':
         return tuple(_bs_shell('skeleton')[key] for key in BS_SYNC_KEYS)
     if active_tab != 'tab-bs':
@@ -2172,18 +2193,22 @@ def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, t
     while len(models) < 2:
         models.append(_player_model(pd.DataFrame(), None))
     patch.update(_bs_player_outputs(models, names, column_state))
-    patch['pace'] = _table_children(frames['t_adv'], 'Pace & 4 Factors')
+    away_name = frames.get('away_name')
+    home_name = frames.get('home_name')
+    patch['pace'] = _table_children(frames['t_adv'], 'Pace & 4 Factors', away_name, home_name)
     patch['key'] = _table_children(
         frames['k_df'],
         'Paint / 2nd Chance / Fastbreak / Off TOV / Bench',
+        away_name,
+        home_name,
     )
-    patch['team'] = _table_children(frames['t_df'])
+    patch['team'] = _table_children(frames['t_df'], away_name=away_name, home_name=home_name)
     if triggered_id != 'bs-period':
         patch['chip_data'] = frames['chips']
         patch['last_update'] = _last_update_span()
-        patch['score'] = _table_children(frames['qt_pts'], 'Score')
-        patch['fouls'] = _table_children(frames['qt_foul'], 'Fouls')
-        patch['tout'] = _table_children(frames['qt_tout'], 'Timeouts')
+        patch['score'] = _table_children(frames['qt_pts'], 'Score', away_name, home_name)
+        patch['fouls'] = _table_children(frames['qt_foul'], 'Fouls', away_name, home_name)
+        patch['tout'] = _table_children(frames['qt_tout'], 'Timeouts', away_name, home_name)
     return tuple(patch[key] for key in BS_SYNC_KEYS)
 
 
@@ -2549,7 +2574,7 @@ def render_pbp_children(pbp_store):
     return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
-def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
+def render_lineup_children(lineup_store, lineup_size=5, show_opp=False, match_info=None):
     try:
         size_int = int(lineup_size)
     except Exception:
@@ -2563,8 +2588,10 @@ def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
     children = []
     show_opp = bool(show_opp)
     page_size = (40 if show_opp else 20) if size_int < 5 else None
-    for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
-        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+    away_name, home_name = side_names(match_info)
+    ordered = order_named_items(lineup_dict.items(), away_name, home_name)
+    for idx, (team_name, l_json) in enumerate(ordered):
+        dot_color = section_dot(team_name, away_name, home_name, idx)
         title_section = dmc.Group(
             [
                 dmc.Box(style={
@@ -2703,11 +2730,12 @@ def update_pane_bs(bs_store, active_tab, period='all'):
     Input('bs-period', 'data'),
     Input('game_id', 'children'),
     Input('tabs', 'value'),
+    Input('match_info_store', 'data'),
     State('bs-player-columns', 'data'),
 )
-def sync_box_score(bs_store, period, game_id, active_tab, column_state):
+def sync_box_score(bs_store, period, game_id, active_tab, match_info, column_state):
     return box_score_sync_values(
-        bs_store, period, game_id, active_tab, column_state, ctx.triggered_id,
+        bs_store, period, game_id, active_tab, column_state, ctx.triggered_id, match_info,
     )
 
 
@@ -3069,8 +3097,9 @@ def update_pane_pbp(pbp_store, active_tab):
     State('game_id', 'children'),
     State('lineup-show-opp', 'checked'),
     State('game_league', 'children'),
+    Input('match_info_store', 'data'),
 )
-def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False, league='plg'):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False, league='plg', match_info=None):
     if active_tab != 'tab-lineup':
         return no_update
     try:
@@ -3088,10 +3117,11 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
                     json.dumps({str(size_int): custom_dict}),
                     size_int,
                     show_opp=show_opp,
+                    match_info=match_info,
                 )
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
-    return render_lineup_children(lineup_store, size_int, show_opp=show_opp)
+    return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=match_info)
 
 
 @callback(

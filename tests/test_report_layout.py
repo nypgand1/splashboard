@@ -10,10 +10,10 @@ ALLOWED_TABLE_KEYS = (
     't_adv_df',
     't_df',
     'k_df',
-    'p_df_home',
     'p_df_away',
-    'lineup_home',
+    'p_df_home',
     'lineup_away',
+    'lineup_home',
 )
 ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
 
@@ -50,7 +50,7 @@ def _leaf_widths(column_defs):
 class DefaultLayoutTests(unittest.TestCase):
     def test_version_and_four_pages(self):
         layout = _layout()
-        self.assertEqual(layout['version'], 3)
+        self.assertEqual(layout['version'], 4)
         self.assertEqual(len(layout['pages']), 4)
 
     def test_header_is_not_a_block(self):
@@ -164,7 +164,7 @@ class DefaultLayoutTests(unittest.TestCase):
         away = [b for b in blocks if b.get('table_key') == 'p_df_away'][0]
         self.assertEqual(home.get('w'), 12)
         self.assertEqual(away.get('w'), 12)
-        self.assertLess(home.get('y'), away.get('y'))
+        self.assertLess(away.get('y'), home.get('y'))
 
     def test_page_four_both_lineup_tables(self):
         blocks = _blocks(_layout(), 3)
@@ -176,7 +176,7 @@ class DefaultLayoutTests(unittest.TestCase):
         away = [b for b in blocks if b.get('table_key') == 'lineup_away'][0]
         self.assertEqual(home.get('w'), 12)
         self.assertEqual(away.get('w'), 12)
-        self.assertLess(home.get('y'), away.get('y'))
+        self.assertLess(away.get('y'), home.get('y'))
 
     def test_page_two_chart_sits_under_key_stats_and_note_stays_short(self):
         page2 = _blocks(_layout(), 1)
@@ -506,7 +506,14 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('Plotly.toImage', js)
         self.assertIn('Plotly.react', js)
         self.assertIn('noResize: true', js)
-        self.assertIn('var LAYOUT_VERSION = 3', js)
+        self.assertIn('var LAYOUT_VERSION = 4', js)
+        self.assertIn('function migrateV3Layout', js)
+        self.assertIn('function teamStripeColor', js)
+        self.assertIn('match.away_team', js)
+        boot = js.split('function bootReport', 1)[1].split('function widgetFromBlock', 1)[0]
+        self.assertIn('stored.version === 3', boot)
+        self.assertIn('migrateV3Layout(stored)', boot)
+        self.assertLess(boot.find('migrateV3Layout(stored)'), boot.find('applyStoredLayout(stored)'))
         self.assertIn('No shot chart for this game.', js)
         self.assertIn('Could not load shot chart.', js)
         self.assertIn('function drawShotChartImage', js)
@@ -593,6 +600,9 @@ class ReportTableComponentTests(unittest.TestCase):
         lineup_pos = markup.find('Home Lineup Stats')
         self.assertGreater(player_pos, 0)
         self.assertGreater(lineup_pos, player_pos)
+        self.assertLess(markup.find('Away Player Stats'), markup.find('Home Player Stats'))
+        self.assertLess(markup.find('Away Lineup Stats'), markup.find('Home Lineup Stats'))
+        self.assertLess(markup.find('Key Stats'), markup.find('Away Player Stats'))
 
     def test_page_list_has_add_but_no_minus(self):
         from synergy_reporter.report_components import render_page_list
@@ -639,7 +649,7 @@ class ReportTableComponentTests(unittest.TestCase):
             'pages': [{'id': 'old', 'blocks': [_blocks(_layout(), 0)[0]]}],
         }
         fresh = report_layout.normalize_layout(stale)
-        self.assertEqual(fresh['version'], 3)
+        self.assertEqual(fresh['version'], 4)
         types = [b.get('type') for b in fresh['pages'][0]['blocks']]
         self.assertIn('rotation', types)
         replaced = report_layout.normalize_layout({
@@ -651,10 +661,96 @@ class ReportTableComponentTests(unittest.TestCase):
                 }],
             }],
         })
-        self.assertEqual(replaced['version'], 3)
+        self.assertEqual(replaced['version'], 4)
         self.assertNotIn('keep me', str(replaced))
         page_two = [b.get('type') for b in replaced['pages'][1]['blocks']]
         self.assertIn('shot_chart', page_two)
+
+    def test_v3_layout_swaps_only_a_home_block_still_above_its_away_block(self):
+        if report_layout is None:
+            raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
+        stored = {
+            'version': 3,
+            'pages': [
+                {
+                    'id': 'page-3',
+                    'blocks': [
+                        {
+                            'id': 'note', 'type': 'text', 'content': 'keep',
+                            'x': 0, 'y': 0, 'w': 6, 'h': 2,
+                        },
+                        {
+                            'id': 'img', 'type': 'image', 'src': 'data:image/png,x',
+                            'x': 6, 'y': 0, 'w': 6, 'h': 2,
+                        },
+                        {
+                            'id': 'home', 'type': 'builtin_table', 'table_key': 'p_df_home',
+                            'x': 0, 'y': 2, 'w': 12, 'h': 8,
+                        },
+                        {
+                            'id': 'away', 'type': 'builtin_table', 'table_key': 'p_df_away',
+                            'x': 0, 'y': 10, 'w': 12, 'h': 6,
+                        },
+                    ],
+                },
+                {
+                    'id': 'page-4',
+                    'blocks': [
+                        {
+                            'id': 'near-home', 'type': 'builtin_table', 'table_key': 'lineup_home',
+                            'x': 0, 'y': 0, 'w': 12, 'h': 9,
+                        },
+                        {
+                            'id': 'far-home', 'type': 'builtin_table', 'table_key': 'lineup_home',
+                            'x': 0, 'y': 12, 'w': 12, 'h': 4,
+                        },
+                        {
+                            'id': 'near-away', 'type': 'builtin_table', 'table_key': 'lineup_away',
+                            'x': 0, 'y': 5, 'w': 12, 'h': 7,
+                        },
+                        {
+                            'id': 'far-away', 'type': 'builtin_table', 'table_key': 'lineup_away',
+                            'x': 0, 'y': 20, 'w': 12, 'h': 3,
+                        },
+                    ],
+                },
+                {
+                    'id': 'already',
+                    'blocks': [
+                        {
+                            'id': 'a', 'type': 'builtin_table', 'table_key': 'p_df_away',
+                            'x': 0, 'y': 0, 'w': 12, 'h': 8,
+                        },
+                        {
+                            'id': 'h', 'type': 'builtin_table', 'table_key': 'p_df_home',
+                            'x': 0, 'y': 8, 'w': 12, 'h': 8,
+                        },
+                    ],
+                },
+            ],
+        }
+        fresh = report_layout.normalize_layout(stored)
+        self.assertEqual(fresh['version'], 4)
+        page3 = {block['id']: block for block in fresh['pages'][0]['blocks']}
+        self.assertEqual(page3['note']['content'], 'keep')
+        self.assertEqual(page3['note']['y'], 0)
+        self.assertEqual(page3['img']['y'], 0)
+        self.assertEqual(page3['img']['src'], 'data:image/png,x')
+        self.assertEqual(page3['away']['y'], 2)
+        self.assertEqual(page3['away']['h'], 6)
+        self.assertEqual(page3['home']['y'], 10)
+        self.assertEqual(page3['home']['h'], 8)
+        page4 = {block['id']: block for block in fresh['pages'][1]['blocks']}
+        self.assertEqual(page4['near-away']['y'], 0)
+        self.assertEqual(page4['near-home']['y'], 5)
+        self.assertEqual(page4['near-home']['h'], 9)
+        self.assertEqual(page4['far-away']['y'], 12)
+        self.assertEqual(page4['far-home']['y'], 20)
+        self.assertEqual(page4['far-home']['h'], 4)
+        already = {block['id']: block for block in fresh['pages'][2]['blocks']}
+        self.assertEqual(already['a']['y'], 0)
+        self.assertEqual(already['h']['y'], 8)
+        self.assertEqual(report_layout.normalize_layout(fresh), fresh)
 
     def test_empty_page_has_no_blocks(self):
         if report_layout is None:
@@ -872,6 +968,9 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(report_layout.TABLE_TITLES['p_df_home'], 'Home Player Stats')
         self.assertEqual(report_layout.TABLE_TITLES['p_df_away'], 'Away Player Stats')
         self.assertLess(titles.index('Home Player Stats'), titles.index('Home Lineup Stats'))
+        self.assertLess(titles.index('Away Player Stats'), titles.index('Home Player Stats'))
+        self.assertLess(titles.index('Away Lineup Stats'), titles.index('Home Lineup Stats'))
+        self.assertLess(titles.index('Key Stats'), titles.index('Away Player Stats'))
 
     def test_python_does_not_rebuild_on_layout_store(self):
         if report_layout is None:
@@ -1362,6 +1461,22 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         team_away = next(td for td in tds if td.children == 'Away')
         self.assertEqual(team_home.style.get('borderLeft'), '3.5px solid #0077b6')
         self.assertEqual(team_away.style.get('borderLeft'), '3.5px solid #94a3b8')
+
+        ordered = pd.DataFrame([
+            {'Team': 'Zebra', 'PTS': 79},
+            {'Team': 'Alpha', 'PTS': 88},
+        ])
+        named = _dmc_table_from_df(
+            ordered, is_team_summary=True, away_name='Zebra', home_name='Alpha',
+        )
+        named_tds = [n for n in walk(named) if isinstance(n, dmc.TableTd)]
+        self.assertEqual(named_tds[0].children, 'Zebra')
+        self.assertEqual(named_tds[0].style.get('borderLeft'), '3.5px solid #94a3b8')
+        alpha = next(td for td in named_tds if td.children == 'Alpha')
+        self.assertEqual(alpha.style.get('borderLeft'), '3.5px solid #0077b6')
+        winner = next(td for td in named_tds if td.children == '88')
+        self.assertEqual(winner.style.get('color'), '#0077b6')
+        self.assertEqual(winner.style.get('fontWeight'), 700)
 
 
 

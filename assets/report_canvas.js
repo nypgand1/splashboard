@@ -5,7 +5,7 @@
 
     var IMAGE_MAX_BYTES = 1000000;
     var GRID_COLUMNS = 12;
-    var LAYOUT_VERSION = 3;
+    var LAYOUT_VERSION = 4;
     var DESKTOP_MIN_PX = 1280;
     var ROTATION_EMPTY = 'No rotation chart for this game.';
     var ROTATION_ERROR = 'Could not load rotation.';
@@ -35,10 +35,10 @@
         t_adv_df: 'Pace, PPP & Four Factors',
         t_df: 'Team Stats',
         k_df: 'Key Stats',
-        p_df_home: 'Home Player Stats',
         p_df_away: 'Away Player Stats',
-        lineup_home: 'Home Lineup Stats',
-        lineup_away: 'Away Lineup Stats'
+        p_df_home: 'Home Player Stats',
+        lineup_away: 'Away Lineup Stats',
+        lineup_home: 'Home Lineup Stats'
     };
     var LOWER_BETTER = { Foul: 1, PF: 1, TO: 1, TOV: 1, 'TOV%': 1 };
     var COL_GROUPS = [
@@ -658,7 +658,7 @@
                     td.style.fontWeight = '700';
                 }
                 if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
-                    td.style.borderLeft = rIdx === 0 ? '3.5px solid #0077b6' : '3.5px solid #94a3b8';
+                    td.style.borderLeft = '3.5px solid ' + teamStripeColor(row, rIdx);
                 }
                 if (dnp && col === 'Min') {
                     td.colSpan = Math.max(1, columns.length - cIdx);
@@ -1257,6 +1257,71 @@
         hydratePage(index);
     }
 
+    function teamStripeColor(row, rIdx) {
+        var match = tablePayload().match || {};
+        var away = match.away_team || '';
+        var home = match.home_team || '';
+        var name = row && row.Team != null ? String(row.Team) : '';
+        if (away && home && away !== home) {
+            if (name === home) {
+                return '#0077b6';
+            }
+            if (name === away) {
+                return '#94a3b8';
+            }
+        }
+        return rIdx === 0 ? '#0077b6' : '#94a3b8';
+    }
+
+    var STACK_PAIRS = [
+        ['p_df_home', 'p_df_away'],
+        ['lineup_home', 'lineup_away']
+    ];
+
+    function swapPairYs(blocks) {
+        STACK_PAIRS.forEach(function (pair) {
+            var homes = blocks.filter(function (block) {
+                return block && block.table_key === pair[0];
+            });
+            var aways = blocks.filter(function (block) {
+                return block && block.table_key === pair[1];
+            });
+            var used = [];
+            homes.sort(function (a, b) {
+                return (a.y || 0) - (b.y || 0);
+            });
+            homes.forEach(function (home) {
+                var below = aways.filter(function (away) {
+                    return used.indexOf(away) === -1 && (away.y || 0) > (home.y || 0);
+                });
+                if (!below.length) {
+                    return;
+                }
+                below.sort(function (a, b) {
+                    return (a.y || 0) - (b.y || 0);
+                });
+                var away = below[0];
+                used.push(away);
+                var homeY = home.y;
+                home.y = away.y;
+                away.y = homeY;
+            });
+        });
+    }
+
+    function migrateV3Layout(layout) {
+        var pages = (layout.pages || []).map(function (page) {
+            var blocks = ((page && page.blocks) || []).map(function (block) {
+                return Object.assign({}, block);
+            });
+            swapPairYs(blocks);
+            var migrated = Object.assign({}, page || {});
+            migrated.blocks = blocks;
+            return migrated;
+        });
+        return { version: LAYOUT_VERSION, pages: pages };
+    }
+
     function bootReport() {
         var workspace = document.getElementById('report-workspace');
         if (!workspace) {
@@ -1272,7 +1337,9 @@
             window.dash_clientside.set_props('report-pane-ready', { data: '1' });
         }
         var stored = loadStored();
-        if (stored && stored.version !== LAYOUT_VERSION) {
+        if (stored && stored.version === 3) {
+            stored = migrateV3Layout(stored);
+        } else if (stored && stored.version !== LAYOUT_VERSION) {
             stored = null;
         }
         if (stored && stored.pages && stored.pages.length) {

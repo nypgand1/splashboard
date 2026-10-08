@@ -250,7 +250,7 @@ def test_report_pdf_clip_skips_cells_outside_block(page, e2e_server):
     assert verdict['tiny'] is False
 
 
-def test_report_page_four_home_lineup_stays_above_away(page, e2e_server):
+def test_report_page_four_away_lineup_stays_above_home(page, e2e_server):
     _open_report(page, e2e_server)
     _hydrate_report_page(page, 3)
     page.locator('#report-paper-page-4 .report-js-table').first.wait_for(
@@ -271,7 +271,7 @@ def test_report_page_four_home_lineup_stays_above_away(page, e2e_server):
     )
     assert order['ok'] is True
     assert order['homeH'] > 8, order
-    assert order['homeY'] < order['awayY'], order
+    assert order['awayY'] < order['homeY'], order
     fit = page.evaluate(
         '''() => {
             const paper = document.getElementById('report-paper-page-4');
@@ -355,20 +355,29 @@ def test_report_toolbar_sticks_and_pm_is_plain(page, e2e_server):
 
     pm = page.evaluate(
         '''() => {
-            const pmHeader = [...document.querySelectorAll('#report-papers th')]
-                .find((th) => (th.textContent || '').trim() === 'PM');
-            if (!pmHeader) return { found: false };
-            const idx = [...pmHeader.parentElement.children].indexOf(pmHeader);
-            const td = [...document.querySelectorAll('#report-papers tbody tr')]
-                .map((tr) => tr.children[idx])
-                .find((cell) => cell && (cell.textContent || '').trim());
-            if (!td) return { found: false };
-            return { found: true, color: getComputedStyle(td).color };
+            const headers = [...document.querySelectorAll('#report-papers th')]
+                .filter((th) => (th.textContent || '').trim() === 'PM');
+            const colors = [];
+            headers.forEach((th) => {
+                let index = 0;
+                for (const cell of th.parentElement.children) {
+                    if (cell === th) break;
+                    index += cell.colSpan || 1;
+                }
+                const table = th.closest('table');
+                if (!table) return;
+                [...table.querySelectorAll('tbody tr')].forEach((tr) => {
+                    const td = tr.children[index];
+                    if (!td || !(td.textContent || '').trim()) return;
+                    colors.push(getComputedStyle(td).color);
+                });
+            });
+            return { found: colors.length > 0, colors: colors };
         }'''
     )
     if pm.get('found'):
-        assert pm['color'] != 'rgb(0, 119, 182)'
-        assert pm['color'] != 'rgb(230, 57, 70)'
+        assert 'rgb(0, 119, 182)' not in pm['colors']
+        assert 'rgb(230, 57, 70)' not in pm['colors']
 
     page.evaluate('document.querySelector("#report-papers .report-paper:last-child").scrollIntoView()')
     page.wait_for_timeout(400)

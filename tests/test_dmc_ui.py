@@ -1220,6 +1220,68 @@ class PlayerDotColorTests(unittest.TestCase):
         ]
         self.assertEqual(lineup_dots, ['#00b4d8', '#94a3b8'])
 
+    def test_away_section_stays_above_when_the_home_name_sorts_first(self):
+        def split_json(frame):
+            return frame.to_json(orient='split')
+
+        home = 'Alpha'
+        away = 'Zebra'
+        match = {'away_team': away, 'home_team': home}
+        bs = {
+            'qt_pts_df': split_json(pd.DataFrame({'Team': [home, away], '1Q': [20, 18]})),
+            'qt_foul_df': split_json(pd.DataFrame({'Team': [home, away], '1Q': [2, 3]})),
+            'qt_tout_df': split_json(pd.DataFrame({'Team': [home, away], '1Q': [1, 0]})),
+            't_adv_df': split_json(pd.DataFrame({'Team': [home, away], 'Pace': [70.0, 68.0]})),
+            't_df': split_json(pd.DataFrame({'Team': [home, away], 'PTS': [88, 79]})),
+            'k_df': split_json(pd.DataFrame({'Team': [home, away], 'PIP': [20, 18]})),
+            'p_df_dict': {
+                home: split_json(pd.DataFrame({'Player': ['A'], 'PTS': [10]})),
+                away: split_json(pd.DataFrame({'Player': ['B'], 'PTS': [8]})),
+            },
+            'p_summary_dict': {},
+        }
+        tree = game_page.render_bs_children(json.dumps(bs), 'all', match)
+        names = [
+            node.children for node in walk(tree)
+            if isinstance(node, dmc.Text) and getattr(node, 'fw', None) == 800 and node.children in (home, away)
+        ]
+        self.assertEqual(names, [away, home])
+        dots = [
+            node.style.get('backgroundColor')
+            for node in walk(tree)
+            if isinstance(node, dmc.Box) and isinstance(getattr(node, 'style', None), dict)
+            and node.style.get('width') == '8px'
+        ]
+        self.assertEqual(dots, ['#94a3b8', '#00b4d8'])
+        team_cells = [
+            node for node in walk(tree)
+            if isinstance(node, dmc.TableTd) and node.children in (home, away)
+        ]
+        self.assertEqual(team_cells[0].children, away)
+        self.assertEqual(team_cells[0].style.get('borderLeft'), '3.5px solid #94a3b8')
+        self.assertEqual(team_cells[1].children, home)
+        self.assertEqual(team_cells[1].style.get('borderLeft'), '3.5px solid #0077b6')
+
+        lineup_store = json.dumps({
+            '5': {
+                home: split_json(pd.DataFrame({'Lineup': ['A-B'], 'PTS': [10]})),
+                away: split_json(pd.DataFrame({'Lineup': ['C-D'], 'PTS': [8]})),
+            }
+        })
+        lineup_tree = game_page.render_lineup_children(lineup_store, 5, False, match)
+        lineup_names = [
+            node.children for node in walk(lineup_tree)
+            if isinstance(node, dmc.Text) and getattr(node, 'fw', None) == 800 and node.children in (home, away)
+        ]
+        self.assertEqual(lineup_names, [away, home])
+        lineup_dots = [
+            node.style.get('backgroundColor')
+            for node in walk(lineup_tree)
+            if isinstance(node, dmc.Box) and isinstance(getattr(node, 'style', None), dict)
+            and node.style.get('width') == '8px'
+        ]
+        self.assertEqual(lineup_dots, ['#94a3b8', '#00b4d8'])
+
 
 class PbpAlignmentTests(unittest.TestCase):
     def test_pbp_columns_are_center(self):
