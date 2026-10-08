@@ -71,8 +71,104 @@ ROTATION_GRAPH_CONFIG = {
 }
 
 
+def _bs_scroll_card(scroll_id, title=None):
+    scrolled = dmc.Box(id=scroll_id, className='braves-table-scroll')
+    children = [scrolled]
+    if title:
+        children.insert(0, dmc.Text(
+            title.upper(),
+            size='xs',
+            fw=700,
+            c='dimmed',
+            mb=6,
+            style={'letterSpacing': '0.05em'},
+        ))
+    return dmc.Paper(
+        children,
+        withBorder=True,
+        radius='md',
+        p='sm',
+        shadow='xs',
+        className='braves-card-wrapper',
+    )
+
+
+def _bs_player_block(index, dot_color):
+    return html.Div(
+        [
+            dmc.Group(
+                [
+                    dmc.Box(style={
+                        'width': '8px',
+                        'height': '8px',
+                        'borderRadius': '50%',
+                        'backgroundColor': dot_color,
+                    }),
+                    dmc.Text('', id=f'bs-player-title-{index}', fw=800, fz='16px'),
+                ],
+                gap=8,
+                align='center',
+                mt='md',
+                mb=10,
+            ),
+            dmc.Paper(
+                dag.AgGrid(
+                    id=f'bs-player-grid-{index}',
+                    rowData=[],
+                    columnDefs=[],
+                    defaultColDef={
+                        'sortable': True,
+                        'filter': False,
+                        'resizable': True,
+                        'cellClassRules': {'ag-sorted-col-bg': 'params.column.isSortActive()'},
+                        'cellDataType': False,
+                    },
+                    dashGridOptions={
+                        'domLayout': 'autoHeight',
+                        'suppressHorizontalScroll': False,
+                    },
+                    className='ag-theme-alpine braves-clean-ag-grid',
+                    style={'width': '100%'},
+                    getRowId='params.data._row',
+                ),
+                id=f'bs-player-wrap-{index}',
+                withBorder=True,
+                radius='md',
+                shadow='xs',
+                mb='md',
+                className='braves-grid-wrap',
+                style={'overflowX': 'auto'},
+            ),
+        ],
+        id=f'bs-player-block-{index}',
+    )
+
+
 def _box_score_wrap():
-    matrix = html.Div(id='bs-matrix', children=loading_skeleton('cards'))
+    matrix = html.Div(
+        [
+            html.Div(loading_skeleton('cards'), id='bs-skeleton'),
+            html.Div(id='bs-status', style={'display': 'none'}),
+            html.Div(
+                [
+                    html.Div(id='bs-last-update'),
+                    dmc.SimpleGrid(
+                        cols={'base': 1, 'lg': 3},
+                        spacing='12px',
+                        children=[
+                            _bs_scroll_card('bs-score-scroll', 'Score'),
+                            _bs_scroll_card('bs-fouls-scroll', 'Fouls'),
+                            _bs_scroll_card('bs-tout-scroll', 'Timeouts'),
+                        ],
+                        style={'marginBottom': '12px'},
+                    ),
+                ],
+                id='bs-matrix-body',
+                style={'display': 'none'},
+            ),
+        ],
+        id='bs-matrix',
+    )
     bar = dmc.Group(
         [
             dmc.SegmentedControl(
@@ -89,14 +185,32 @@ def _box_score_wrap():
         gap='sm',
         style={'display': 'none'},
     )
-    detail = html.Div(id='bs-detail')
-    body = html.Div(id='pane-bs', children=[matrix, bar, detail])
-    if os.environ.get('SPLASHBOARD_E2E'):
-        return html.Div(body, id='wrap-bs')
-    return html.Div(
-        dcc.Loading(custom_spinner=loading_skeleton('cards'), children=body),
-        id='wrap-bs',
+    detail = html.Div(
+        html.Div(
+            [
+                dmc.SimpleGrid(
+                    cols={'base': 1, 'lg': 2},
+                    spacing='12px',
+                    children=[
+                        _bs_scroll_card('bs-pace-scroll', 'Pace & 4 Factors'),
+                        _bs_scroll_card(
+                            'bs-key-scroll',
+                            'Paint / 2nd Chance / Fastbreak / Off TOV / Bench',
+                        ),
+                    ],
+                    style={'marginBottom': '12px'},
+                ),
+                dmc.Box(_bs_scroll_card('bs-team-scroll'), mb='sm'),
+                _bs_player_block(0, '#00b4d8'),
+                _bs_player_block(1, '#94a3b8'),
+            ],
+            id='bs-detail-body',
+            style={'display': 'none'},
+        ),
+        id='bs-detail',
     )
+    body = html.Div(id='pane-bs', children=[matrix, bar, detail])
+    return html.Div(body, id='wrap-bs')
 
 
 def _pane(wrap_id, pane_id, kind, hidden=False):
@@ -411,6 +525,8 @@ def layout(game_id=None):
         ),
         dcc.Store(id='bs_store'),
         dcc.Store(id='bs-period', data='all'),
+        dcc.Store(id='bs-player-columns'),
+        dcc.Store(id='bs-view-reset'),
         dcc.Store(id='pbp_store'),
         dcc.Store(id='lineup_store'),
         dcc.Store(id='lineup-show-opp-sync'),
@@ -449,8 +565,9 @@ def update_bs_store(n, game_id):
         report = get_cached_report(game_id)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
-        return _error_store()
+        return _error_store(game_id=game_id)
     bs_dict = {
+        'game_id': game_id,
         'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
         'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
         'qt_tout_df': report.get_period_team_timeout_df().to_json(date_format='iso', orient='split'),
@@ -640,11 +757,14 @@ def safe_loads(val):
             return parsed
     return {}
 
-def _error_store(message=None):
-    return json.dumps({
+def _error_store(message=None, game_id=None):
+    payload = {
         '_ui': 'error',
         'message': message or ERROR_GAME,
-    })
+    }
+    if game_id is not None:
+        payload['game_id'] = game_id
+    return json.dumps(payload)
 
 
 def _last_update_span():
@@ -1740,13 +1860,7 @@ def period_bar_state(bs_store):
     return data, style
 
 
-def render_bs_sections(bs_store, period='all'):
-    bs_dict = safe_loads(bs_store)
-    if bs_dict.get('_ui') == 'error':
-        return [_error_view(bs_dict)], []
-    if not bs_dict or not bs_dict.get('qt_pts_df'):
-        return [_empty_view()], []
-
+def _bs_frames(bs_dict, period='all'):
     selected = str(period or 'all')
     slices = bs_dict.get('slices') if isinstance(bs_dict.get('slices'), dict) else {}
     view = slices.get(selected) if selected != 'all' and isinstance(slices.get(selected), dict) else bs_dict
@@ -1761,46 +1875,120 @@ def render_bs_sections(bs_store, period='all'):
     if 'PPP' in t_adv_df.columns:
         t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: _format_metric(x, 2))
 
-    t_df = read_split_frame(view['t_df'])
-    k_df = pd.read_json(io.StringIO(view['k_df']), orient='split')
+    players = []
+    p_dict = view.get('p_df_dict') if isinstance(view.get('p_df_dict'), dict) else {}
+    p_summary = view.get('p_summary_dict') if isinstance(view.get('p_summary_dict'), dict) else {}
+    for team_name, p_json in sorted(p_dict.items()):
+        players.append((
+            team_name,
+            read_split_frame(p_json),
+            p_summary.get(team_name),
+        ))
+    return {
+        'qt_pts': qt_pts_df,
+        'qt_foul': qt_foul_df,
+        'qt_tout': qt_tout_df,
+        't_adv': t_adv_df,
+        't_df': read_split_frame(view['t_df']),
+        'k_df': pd.read_json(io.StringIO(view['k_df']), orient='split'),
+        'players': players,
+        'chips': bs_dict.get('period_chips') or [{'label': 'All', 'value': 'all'}],
+    }
 
-    # Row 1: 3-column quarter summary with titles 'SCORE', 'FOULS', 'TIMEOUTS' (gap 12px)
+
+def _table_children(df, title=None):
+    card = _dmc_table_from_df(df, is_team_summary=True, title=title)
+    if isinstance(card, dmc.Paper):
+        for child in card.children:
+            if getattr(child, 'className', None) == 'braves-table-scroll':
+                return child.children
+    return card
+
+
+def _row_id_records(records, kind):
+    if not isinstance(records, list):
+        return []
+    seen = {}
+    rows = []
+    for record in records:
+        item = dict(record)
+        if kind == 'pin':
+            base = f"pin|{item.get('#', '')}|{item.get('Player', '')}"
+        else:
+            base = f"{item.get('Player', '')}|{item.get('#', '')}"
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        item['_row'] = base if count == 0 else f"{base}|{count}"
+        rows.append(item)
+    return rows
+
+
+def _player_grid_options(pinned_rows):
+    return {
+        'domLayout': 'autoHeight',
+        'suppressHorizontalScroll': False,
+        'pinnedBottomRowData': pinned_rows or [],
+    }
+
+
+def _player_model(df, pinned):
+    pin_rows = _row_id_records(pinned, 'pin') if isinstance(pinned, list) else []
+    if df is None or df.empty:
+        return {
+            'records': [],
+            'options': _player_grid_options(pin_rows),
+            'column_defs': [],
+            'columns': [],
+        }
+    card = _ag_grid_from_df(df, pinned_bottom_data=pinned)
+    column_defs = []
+    if isinstance(card, dmc.Paper):
+        column_defs = list(getattr(card.children, 'columnDefs', None) or [])
+    return {
+        'records': _row_id_records(df.to_dict('records'), 'row'),
+        'options': _player_grid_options(pin_rows),
+        'column_defs': column_defs,
+        'columns': [str(column) for column in df.columns],
+    }
+
+
+def render_bs_sections(bs_store, period='all'):
+    bs_dict = safe_loads(bs_store)
+    if bs_dict.get('_ui') == 'error':
+        return [_error_view(bs_dict)], []
+    if not bs_dict or not bs_dict.get('qt_pts_df'):
+        return [_empty_view()], []
+
+    frames = _bs_frames(bs_dict, period)
     row1 = dmc.SimpleGrid(
         cols={"base": 1, "lg": 3},
         spacing="12px",
         children=[
-            _dmc_table_from_df(qt_pts_df, is_team_summary=True, title="Score"),
-            _dmc_table_from_df(qt_foul_df, is_team_summary=True, title="Fouls"),
-            _dmc_table_from_df(qt_tout_df, is_team_summary=True, title="Timeouts"),
+            _dmc_table_from_df(frames['qt_pts'], is_team_summary=True, title="Score"),
+            _dmc_table_from_df(frames['qt_foul'], is_team_summary=True, title="Fouls"),
+            _dmc_table_from_df(frames['qt_tout'], is_team_summary=True, title="Timeouts"),
         ],
         style={"marginBottom": "12px"}
     )
-
-    # Row 2: 2-column with titles 'PACE & 4 FACTORS' and 'PAINT / 2nd CHANCE / FASTBREAK / OFF TOV / BENCH' (gap 12px)
     row2 = dmc.SimpleGrid(
         cols={"base": 1, "lg": 2},
         spacing="12px",
         children=[
-            _dmc_table_from_df(t_adv_df, is_team_summary=True, title="Pace & 4 Factors"),
-            _dmc_table_from_df(k_df, is_team_summary=True, title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench"),
+            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title="Pace & 4 Factors"),
+            _dmc_table_from_df(
+                frames['k_df'],
+                is_team_summary=True,
+                title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench",
+            ),
         ],
         style={"marginBottom": "12px"}
     )
-
-    # Row 3: Full Team Box Score
-    row3 = dmc.Box(_dmc_table_from_df(t_df, is_team_summary=True), mb="sm")
-
-    matrix = [
-        _last_update_span(),
-        row1,
-    ]
+    row3 = dmc.Box(_dmc_table_from_df(frames['t_df'], is_team_summary=True), mb="sm")
+    matrix = [_last_update_span(), row1]
     detail = [row2, row3]
-
-    p_dict = view.get('p_df_dict', {})
-    p_summary = view.get('p_summary_dict', {})
-    for idx, (team_name, p_json) in enumerate(sorted(p_dict.items())):
+    for idx, (team_name, p_df, summary_rows) in enumerate(frames['players']):
         dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
-        title_section = dmc.Group(
+        detail.append(dmc.Group(
             [
                 dmc.Box(style={
                     "width": "8px",
@@ -1814,10 +2002,7 @@ def render_bs_sections(bs_store, period='all'):
             align="center",
             mt="md",
             mb=10,
-        )
-        detail.append(title_section)
-        p_df = read_split_frame(p_json)
-        summary_rows = p_summary.get(team_name) if isinstance(p_summary, dict) else None
+        ))
         detail.append(_ag_grid_from_df(p_df, page_size=None, pinned_bottom_data=summary_rows))
     return matrix, detail
 
@@ -1825,6 +2010,150 @@ def render_bs_sections(bs_store, period='all'):
 def render_bs_children(bs_store, period='all'):
     matrix, detail = render_bs_sections(bs_store, period)
     return [*matrix, *detail]
+
+
+_BS_SHOW = {'display': 'block'}
+_BS_HIDE = {'display': 'none'}
+_BS_BAR = {'display': 'flex'}
+
+BS_SYNC_KEYS = (
+    'skeleton_style',
+    'matrix_body_style',
+    'detail_body_style',
+    'status_style',
+    'status_children',
+    'bar_style',
+    'chip_data',
+    'last_update',
+    'score',
+    'fouls',
+    'tout',
+    'pace',
+    'key',
+    'team',
+    'title0',
+    'title1',
+    'block0_style',
+    'block1_style',
+    'rows0',
+    'rows1',
+    'options0',
+    'options1',
+    'defs0',
+    'defs1',
+    'columns',
+)
+
+
+def _bs_blank(fill):
+    return {key: fill for key in BS_SYNC_KEYS}
+
+
+def box_score_screen(bs_store, period='all', game_id=None):
+    payload = bs_store if isinstance(bs_store, dict) else safe_loads(bs_store)
+    if not isinstance(payload, dict):
+        payload = {}
+    if game_id and payload.get('game_id') != game_id:
+        return {'mode': 'skeleton'}
+    if payload.get('_ui') == 'error':
+        return {'mode': 'error', 'payload': payload}
+    if not payload or not payload.get('qt_pts_df'):
+        return {'mode': 'empty'}
+    return {'mode': 'ready', 'frames': _bs_frames(payload, period)}
+
+
+def _bs_shell(mode, status=None):
+    patch = _bs_blank(no_update)
+    if mode == 'ready':
+        patch.update({
+            'skeleton_style': _BS_HIDE,
+            'matrix_body_style': _BS_SHOW,
+            'detail_body_style': _BS_SHOW,
+            'status_style': _BS_HIDE,
+            'bar_style': _BS_BAR,
+        })
+        return patch
+    patch.update({
+        'skeleton_style': _BS_SHOW if mode == 'skeleton' else _BS_HIDE,
+        'matrix_body_style': _BS_HIDE,
+        'detail_body_style': _BS_HIDE,
+        'status_style': _BS_HIDE if mode == 'skeleton' else _BS_SHOW,
+        'bar_style': _BS_HIDE,
+    })
+    if status is not None:
+        patch['status_children'] = status
+    return patch
+
+
+def _bs_player_outputs(models, names, column_state):
+    old = column_state if isinstance(column_state, dict) else {}
+    old_columns = old.get('columns') if isinstance(old.get('columns'), dict) else {}
+    new_columns = {}
+    defs = []
+    changed = False
+    for index, model in enumerate(models):
+        key = str(index)
+        new_columns[key] = model['columns']
+        if old_columns.get(key) == model['columns']:
+            defs.append(no_update)
+        else:
+            defs.append(model['column_defs'])
+            changed = True
+    titles = [(names[index] if index < len(names) else '') for index in range(2)]
+    shown = [len(names) > index for index in range(2)]
+    return {
+        'title0': titles[0],
+        'title1': titles[1],
+        'block0_style': _BS_SHOW if shown[0] else _BS_HIDE,
+        'block1_style': _BS_SHOW if shown[1] else _BS_HIDE,
+        'rows0': models[0]['records'],
+        'rows1': models[1]['records'],
+        'options0': models[0]['options'],
+        'options1': models[1]['options'],
+        'defs0': defs[0],
+        'defs1': defs[1],
+        'columns': {'columns': new_columns} if changed else no_update,
+    }
+
+
+def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, triggered_id):
+    if active_tab != 'tab-bs' and triggered_id != 'game_id':
+        return tuple(no_update for _ in BS_SYNC_KEYS)
+    screen = box_score_screen(bs_store, period, game_id)
+    if screen['mode'] == 'skeleton':
+        return tuple(_bs_shell('skeleton')[key] for key in BS_SYNC_KEYS)
+    if active_tab != 'tab-bs':
+        return tuple(no_update for _ in BS_SYNC_KEYS)
+    if screen['mode'] == 'error':
+        patch = _bs_shell('error', _error_view(screen.get('payload')))
+        return tuple(patch[key] for key in BS_SYNC_KEYS)
+    if screen['mode'] == 'empty':
+        patch = _bs_shell('empty', _empty_view())
+        return tuple(patch[key] for key in BS_SYNC_KEYS)
+
+    frames = screen['frames']
+    patch = _bs_shell('ready')
+    models = []
+    names = []
+    for team_name, frame, pinned in frames['players'][:2]:
+        names.append(team_name)
+        models.append(_player_model(frame, pinned))
+    while len(models) < 2:
+        models.append(_player_model(pd.DataFrame(), None))
+    patch.update(_bs_player_outputs(models, names, column_state))
+    patch['pace'] = _table_children(frames['t_adv'], 'Pace & 4 Factors')
+    patch['key'] = _table_children(
+        frames['k_df'],
+        'Paint / 2nd Chance / Fastbreak / Off TOV / Bench',
+    )
+    patch['team'] = _table_children(frames['t_df'])
+    if triggered_id != 'bs-period':
+        patch['chip_data'] = frames['chips']
+        patch['last_update'] = _last_update_span()
+        patch['score'] = _table_children(frames['qt_pts'], 'Score')
+        patch['fouls'] = _table_children(frames['qt_foul'], 'Fouls')
+        patch['tout'] = _table_children(frames['qt_tout'], 'Timeouts')
+    return tuple(patch[key] for key in BS_SYNC_KEYS)
 
 
 DEFAULT_ROTATION_VIEW = {
@@ -2293,18 +2622,87 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
     Input('bs-period', 'data'),
 )
 def update_pane_bs(bs_store, active_tab, period='all'):
-    if active_tab != 'tab-bs':
-        return no_update, no_update
-    return render_bs_sections(bs_store, period)
+    # The shell is mounted in the layout. sync_box_score patches the hosts.
+    return no_update, no_update
 
 
 @callback(
-    Output('bs-period-control', 'data'),
+    Output('bs-skeleton', 'style'),
+    Output('bs-matrix-body', 'style'),
+    Output('bs-detail-body', 'style'),
+    Output('bs-status', 'style'),
+    Output('bs-status', 'children'),
     Output('bs-period-bar', 'style'),
+    Output('bs-period-control', 'data'),
+    Output('bs-last-update', 'children'),
+    Output('bs-score-scroll', 'children'),
+    Output('bs-fouls-scroll', 'children'),
+    Output('bs-tout-scroll', 'children'),
+    Output('bs-pace-scroll', 'children'),
+    Output('bs-key-scroll', 'children'),
+    Output('bs-team-scroll', 'children'),
+    Output('bs-player-title-0', 'children'),
+    Output('bs-player-title-1', 'children'),
+    Output('bs-player-block-0', 'style'),
+    Output('bs-player-block-1', 'style'),
+    Output('bs-player-grid-0', 'rowData'),
+    Output('bs-player-grid-1', 'rowData'),
+    Output('bs-player-grid-0', 'dashGridOptions'),
+    Output('bs-player-grid-1', 'dashGridOptions'),
+    Output('bs-player-grid-0', 'columnDefs'),
+    Output('bs-player-grid-1', 'columnDefs'),
+    Output('bs-player-columns', 'data'),
     Input('bs_store', 'data'),
+    Input('bs-period', 'data'),
+    Input('game_id', 'children'),
+    Input('tabs', 'value'),
+    State('bs-player-columns', 'data'),
 )
-def update_bs_period_options(bs_store):
-    return period_bar_state(bs_store)
+def sync_box_score(bs_store, period, game_id, active_tab, column_state):
+    return box_score_sync_values(
+        bs_store, period, game_id, active_tab, column_state, ctx.triggered_id,
+    )
+
+
+clientside_callback(
+    """
+    function(gameId) {
+        window.__bsScrollKeep = false;
+        window.__bsScrollSaved = {};
+        document.querySelectorAll(
+            '#bs-matrix-body .braves-table-scroll, #bs-detail-body .braves-table-scroll, #bs-detail-body .braves-grid-wrap'
+        ).forEach(function(el) {
+            el.scrollLeft = 0;
+            el.scrollTop = 0;
+        });
+        ['bs-player-grid-0', 'bs-player-grid-1'].forEach(function(id) {
+            var api = null;
+            try {
+                api = window.dash_ag_grid && window.dash_ag_grid.getApi && window.dash_ag_grid.getApi(id);
+            } catch (err) {
+                api = null;
+            }
+            if (api && !(api.isDestroyed && api.isDestroyed()) && api.resetColumnState) {
+                api.resetColumnState();
+            }
+            var root = document.getElementById(id);
+            if (!root) {
+                return;
+            }
+            root.querySelectorAll(
+                '.ag-body-viewport, .ag-center-cols-viewport, .ag-body-horizontal-scroll-viewport'
+            ).forEach(function(node) {
+                node.scrollTop = 0;
+                node.scrollLeft = 0;
+            });
+        });
+        window.__bsScrollKeep = true;
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('bs-view-reset', 'data'),
+    Input('game_id', 'children'),
+)
 
 
 @callback(

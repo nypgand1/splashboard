@@ -497,6 +497,88 @@ class BoxScorePeriodUiTests(unittest.TestCase):
         self.assertNotIn('slice-frame', payload['t_df'])
         self.assertEqual(payload['slices']['1']['t_df'], 'slice-frame')
         self.assertEqual(payload['period_chips'][0]['value'], 'all')
+        self.assertEqual(payload['game_id'], 'g1')
+
+    def _sync(self, period, game_id, tab, columns, triggered, payload=None):
+        body = self._payload() if payload is None else payload
+        body = dict(body)
+        body['game_id'] = body.get('game_id', 'g1')
+        values = game_page.box_score_sync_values(
+            json.dumps(body), period, game_id, tab, columns, triggered,
+        )
+        self.assertEqual(len(values), len(game_page.BS_SYNC_KEYS))
+        return dict(zip(game_page.BS_SYNC_KEYS, values))
+
+    def test_shell_stays_mounted_and_is_outside_loading(self):
+        from dash import dcc
+        tree = game_page.layout('g1')
+        wrap = next(node for node in _nodes(tree) if getattr(node, 'id', None) == 'wrap-bs')
+        self.assertFalse(any(isinstance(node, dcc.Loading) for node in _nodes(wrap)))
+        ids = {getattr(node, 'id', None) for node in _nodes(wrap)}
+        self.assertTrue({
+            'bs-skeleton', 'bs-score-scroll', 'bs-team-scroll', 'bs-player-grid-0', 'bs-player-grid-1',
+        } <= ids)
+        self.assertEqual(
+            game_page.update_pane_bs(json.dumps(self._payload()), 'tab-bs', '1'),
+            (no_update, no_update),
+        )
+
+    def test_period_change_keeps_score_shell_and_swaps_slice_numbers(self):
+        frames = game_page._bs_frames(dict(self._payload(), game_id='g1'), '1')
+        columns = {
+            'columns': {
+                '0': [str(column) for column in frames['players'][0][1].columns],
+                '1': [str(column) for column in frames['players'][1][1].columns],
+            },
+        }
+        patch = self._sync('1', 'g1', 'tab-bs', columns, 'bs-period')
+        self.assertIs(patch['score'], no_update)
+        self.assertIs(patch['fouls'], no_update)
+        self.assertIs(patch['tout'], no_update)
+        self.assertIs(patch['last_update'], no_update)
+        self.assertIs(patch['defs0'], no_update)
+        self.assertIs(patch['columns'], no_update)
+        self.assertEqual(patch['skeleton_style'], {'display': 'none'})
+        self.assertEqual(patch['matrix_body_style'], {'display': 'block'})
+        texts = []
+        _walk_text(patch['team'], texts)
+        self.assertIn('41', texts)
+        self.assertNotIn('88', texts)
+        self.assertEqual(patch['rows0'][0]['PTS'], 3)
+        self.assertTrue(patch['rows0'][0]['_row'])
+
+    def test_live_refresh_rewrites_score_and_other_game_shows_skeleton(self):
+        patch = self._sync('all', 'g1', 'tab-bs', None, 'bs_store')
+        texts = []
+        _walk_text(patch['score'], texts)
+        self.assertIn('22', texts)
+        self.assertIsNot(patch['last_update'], no_update)
+        self.assertEqual(patch['chip_data'][1]['label'], '1Q')
+
+        stale = self._sync('all', 'g2', 'tab-bs', None, 'game_id')
+        self.assertEqual(stale['skeleton_style'], {'display': 'block'})
+        self.assertEqual(stale['matrix_body_style'], {'display': 'none'})
+        self.assertEqual(stale['bar_style'], {'display': 'none'})
+        self.assertIs(stale['score'], no_update)
+        self.assertIs(stale['rows0'], no_update)
+
+    def test_hidden_tab_does_not_patch_until_game_changes(self):
+        hidden = self._sync('1', 'g1', 'tab-lineup', None, 'bs_store')
+        self.assertTrue(all(value is no_update for value in hidden.values()))
+        changed = self._sync('1', 'g2', 'tab-lineup', None, 'game_id')
+        self.assertEqual(changed['skeleton_style'], {'display': 'block'})
+        self.assertIs(changed['team'], no_update)
+
+    def test_error_for_this_game_replaces_the_shell(self):
+        values = game_page.box_score_sync_values(
+            json.dumps({'_ui': 'error', 'message': 'Failed to load this view. Please try again later.', 'game_id': 'g1'}),
+            'all', 'g1', 'tab-bs', None, 'bs_store',
+        )
+        patch = dict(zip(game_page.BS_SYNC_KEYS, values))
+        self.assertEqual(patch['status_style'], {'display': 'block'})
+        self.assertEqual(patch['skeleton_style'], {'display': 'none'})
+        self.assertEqual(patch['bar_style'], {'display': 'none'})
+        self.assertIn('Failed to load this view. Please try again later.', str(patch['status_children']))
 
 
 def _nodes(node):
