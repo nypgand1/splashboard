@@ -452,6 +452,62 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
     page.locator('#pane-bs').get_by_text('88', exact=True).first.wait_for(timeout=10000)
 
 
+def test_box_score_period_keeps_mounted_tables(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Box Score')
+    page.locator('#bs-score-scroll table').first.wait_for(state='attached', timeout=20000)
+    page.locator('#bs-player-grid-0 .ag-header-cell[col-id="PTS"]').wait_for(timeout=20000)
+    page.locator('#pane-bs').get_by_text('88', exact=True).first.wait_for(timeout=10000)
+    placed = page.evaluate(
+        '''() => {
+            const score = document.getElementById('bs-score-scroll');
+            const grid = document.querySelector('#bs-player-grid-0 .ag-center-cols-viewport');
+            const place = (el) => {
+                if (!el) return 0;
+                const max = el.scrollWidth - el.clientWidth;
+                const next = Math.min(48, Math.max(0, max));
+                el.scrollLeft = next;
+                return el.scrollLeft;
+            };
+            window.__bsScore = score;
+            window.__bsGrid = document.getElementById('bs-player-grid-0');
+            window.__bsTeam = document.getElementById('bs-team-scroll');
+            return {score: place(score), grid: place(grid)};
+        }'''
+    )
+    assert placed['score'] > 0 or placed['grid'] > 0
+    page.locator('#bs-player-grid-0 .ag-header-cell[col-id="PTS"]').click()
+    page.wait_for_function(
+        '''() => document.querySelector('#bs-player-grid-0 .ag-header-cell[col-id="PTS"]')?.getAttribute('aria-sort') === 'descending' '''
+    )
+    page.locator('#bs-period-control').get_by_text('1Q', exact=True).click()
+    page.locator('#pane-bs').get_by_text('41', exact=True).first.wait_for(timeout=10000)
+    kept = page.evaluate(
+        '''() => ({
+            scoreNode: document.getElementById('bs-score-scroll') === window.__bsScore,
+            gridNode: document.getElementById('bs-player-grid-0') === window.__bsGrid,
+            teamNode: document.getElementById('bs-team-scroll') === window.__bsTeam,
+            score: document.getElementById('bs-score-scroll').scrollLeft,
+            grid: document.querySelector('#bs-player-grid-0 .ag-center-cols-viewport')?.scrollLeft,
+            sort: document.querySelector('#bs-player-grid-0 .ag-header-cell[col-id="PTS"]')?.getAttribute('aria-sort'),
+            skeleton: getComputedStyle(document.getElementById('bs-skeleton')).display,
+        })'''
+    )
+    assert kept['scoreNode'] is True
+    assert kept['gridNode'] is True
+    assert kept['teamNode'] is True
+    if placed['score'] > 0:
+        assert kept['score'] == placed['score']
+    if placed['grid'] > 0:
+        assert kept['grid'] == placed['grid']
+    assert kept['sort'] == 'descending'
+    assert kept['skeleton'] == 'none'
+    assert page.locator('#pane-bs').get_by_text('88', exact=True).count() == 0
+    assert page.locator('#bs-score-scroll').get_by_text('22', exact=True).count() >= 1
+
+
 def test_box_score_paint_and_table_pan(page, e2e_server):
     page.set_viewport_size({'width': 500, 'height': 900})
     page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')

@@ -242,3 +242,45 @@ dagComponentFuncs.StarterCell = function (props) {
     }
 })();
 
+(function keepBoxScoreScroll() {
+    window.__bsScrollSaved = window.__bsScrollSaved || {};
+    if (window.__bsScrollKeep === undefined) {
+        window.__bsScrollKeep = true;
+    }
+
+    function remember(el) {
+        if (!window.__bsScrollKeep || !el || !el.id || !el.classList) {
+            return;
+        }
+        if (!el.classList.contains('braves-table-scroll') || !el.closest('#pane-bs')) {
+            return;
+        }
+        window.__bsScrollSaved[el.id] = {left: el.scrollLeft, top: el.scrollTop};
+    }
+
+    document.addEventListener('scroll', function (event) {
+        remember(event.target);
+    }, true);
+
+    var observer = new MutationObserver(function () {
+        if (!window.__bsScrollKeep) {
+            window.__bsScrollSaved = {};
+            return;
+        }
+        Object.keys(window.__bsScrollSaved).forEach(function (id) {
+            var el = document.getElementById(id);
+            var pos = window.__bsScrollSaved[id];
+            if (!el || !pos) {
+                return;
+            }
+            if (el.scrollLeft !== pos.left) {
+                el.scrollLeft = pos.left;
+            }
+            if (el.scrollTop !== pos.top) {
+                el.scrollTop = pos.top;
+            }
+        });
+    });
+    observer.observe(document.documentElement, {childList: true, subtree: true});
+})();
+
