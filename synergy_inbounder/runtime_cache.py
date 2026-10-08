@@ -19,9 +19,9 @@ SEASON_LIST_TTL_SECONDS = 25
 ID_TABLE_TTL_SECONDS = 8 * 60 * 60
 
 
-def should_use_live_endpoints(status=None, game_id=None):
+def should_use_live_endpoints(status=None, game_id=None, organization_id=None):
     if status is None and game_id:
-        status = lookup_game_status(game_id)
+        status = lookup_game_status(game_id, organization_id)
     return is_live_play_status(status)
 
 
@@ -40,21 +40,28 @@ def _report_is_stale(entry):
     return (time.monotonic() - entry['fetched_at']) >= LIVE_REPORT_TTL_SECONDS
 
 
-def get_cached_report(game_id):
+def _report_key(game_id, organization_id):
+    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
+    org = organization_id or SYNERGY_ORGANIZATION_ID
+    return (org, str(game_id))
+
+
+def get_cached_report(game_id, organization_id=None):
     factory = getattr(get_cached_report, 'factory', None)
     if callable(factory):
         return factory(game_id)
     if not game_id:
         raise ValueError('game_id is required')
+    key = _report_key(game_id, organization_id)
 
     with _report_lock:
-        entry = _report_cache.get(game_id)
+        entry = _report_cache.get(key)
         if entry and not _report_is_stale(entry):
             return entry['report']
-        fut = _report_inflight.get(game_id)
+        fut = _report_inflight.get(key)
         if fut is None:
             fut = Future()
-            _report_inflight[game_id] = fut
+            _report_inflight[key] = fut
             is_builder = True
         else:
             is_builder = False
@@ -63,11 +70,13 @@ def get_cached_report(game_id):
         return fut.result()
 
     try:
+        from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
         from synergy_reporter.post_game_report import PostGameReport
-        report = PostGameReport(game_id)
-        status = lookup_game_status(game_id)
+        org = organization_id or SYNERGY_ORGANIZATION_ID
+        report = PostGameReport(game_id, org)
+        status = lookup_game_status(game_id, org)
         with _report_lock:
-            _report_cache[game_id] = {
+            _report_cache[key] = {
                 'report': report,
                 'fetched_at': time.monotonic(),
                 'status': status,
@@ -79,22 +88,27 @@ def get_cached_report(game_id):
         raise
     finally:
         with _report_lock:
-            _report_inflight.pop(game_id, None)
+            _report_inflight.pop(key, None)
 
 
-def get_cached_game_status(game_id):
+def get_cached_game_status(game_id, organization_id=None):
+    key = _report_key(game_id, organization_id)
     with _report_lock:
-        entry = _report_cache.get(game_id)
+        entry = _report_cache.get(key)
         if entry:
             return entry.get('status') or ''
     return ''
 
 
-def lookup_game_status(game_id):
-    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, plg_season_ids
+def lookup_game_status(game_id, organization_id=None):
+    from synergy_inbounder.settings import (
+        SYNERGY_ORGANIZATION_ID,
+        season_ids_for_organization,
+    )
     from synergy_inbounder.parser import Parser
 
-    row = Parser.find_game_row(SYNERGY_ORGANIZATION_ID, game_id, plg_season_ids())
+    org = organization_id or SYNERGY_ORGANIZATION_ID
+    row = Parser.find_game_row(org, game_id, season_ids_for_organization(org))
     if row is None:
         return ''
     return normalize_status(row.get('status'))
@@ -125,14 +139,18 @@ def get_cached_id_table(org_id, builder):
     return value
 
 
-def warmup_game_report(game_id, match_info=None):
+def warmup_game_report(game_id, match_info=None, organization_id=None):
     """Background warmup for finished games: computes 4,3,2 lineup combinations and rotation."""
     if not game_id:
         return
+    org = organization_id
+    if org is None and isinstance(match_info, dict):
+        org = match_info.get('organization_id')
+
     def _run():
         try:
-            report = get_cached_report(game_id)
-            status = lookup_game_status(game_id)
+            report = get_cached_report(game_id, org)
+            status = lookup_game_status(game_id, org)
             if is_finished_status(status):
                 report.get_all_lineup_stats_json_dict(sizes=(5, 4, 3, 2))
                 info = match_info or {}
@@ -147,22 +165,24 @@ def warmup_game_report(game_id, match_info=None):
     t.start()
 
 
-def prefetch_latest_games(season_df, max_games=2):
+def prefetch_latest_games(season_df, max_games=2, organization_id=None, finished_only=False):
     """Background sequential worker to prefetch up to max_games reports."""
     if season_df is None or season_df.empty:
         return
-    
+
     finished_rows = season_df[season_df['status'].apply(is_finished_status)]
     target_ids = []
     if not finished_rows.empty:
         target_ids = finished_rows.tail(max_games)['fixtureId'].tolist()
+    elif finished_only:
+        return
     else:
         target_ids = season_df.tail(max_games)['fixtureId'].tolist()
 
     def _worker():
         for gid in target_ids:
             try:
-                get_cached_report(gid)
+                get_cached_report(gid, organization_id)
             except Exception as e:
                 print(f"Prefetch error for game {gid}: {e}")
 

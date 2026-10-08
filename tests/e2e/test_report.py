@@ -68,7 +68,7 @@ def _select_game_tab(page, name, wrap_id):
 
 def _open_report(page, e2e_server):
     page.set_viewport_size({'width': 1400, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
     page.locator('#report-tab').wait_for(state='visible', timeout=20000)

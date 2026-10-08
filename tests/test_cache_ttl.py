@@ -47,7 +47,7 @@ class LiveReportTtlTests(unittest.TestCase):
         clock = {'now': 1000.0}
 
         class DummyReport:
-            def __init__(self, game_id):
+            def __init__(self, game_id, organization_id=None):
                 builds.append(game_id)
 
         def monotonic():

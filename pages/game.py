@@ -8,7 +8,8 @@ import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
-from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, plg_season_ids
+from synergy_inbounder.names import display_name
+from synergy_inbounder.settings import organization_for_league, season_ids_for_organization
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
@@ -60,7 +61,7 @@ register_page(
     __name__,
     name='Splashboard TFB | Game',
     top_nav=True,
-    path_template='/game/<game_id>'
+    path_template='/game/<league>/<game_id>'
 )
 
 ROTATION_GRAPH_CONFIG = {
@@ -470,9 +471,12 @@ def _matchup_wrap(hidden=True):
     )
 
 
-def layout(game_id=None):
+def layout(game_id=None, league='plg'):
     return html.Div([
-        html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
+        html.Div([
+            html.Span(id='game_league', children=league, hidden=True),
+            html.Span(id='game_id', children=game_id, hidden=True),
+        ]),
         
         # Game Info Banner Card (visible across all tabs)
         html.Div(id='game-info-banner-wrap'),
@@ -553,16 +557,24 @@ def layout(game_id=None):
 
 
 
+def _organization(league):
+    return organization_for_league(league)
+
+
 @callback(
     Output('bs_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_bs_store(n, game_id):
+def update_bs_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store(game_id=game_id)
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
         return _error_store(game_id=game_id)
@@ -584,22 +596,24 @@ def update_bs_store(n, game_id):
 @callback(
     Output('match_info_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_match_info_store(n, game_id):
+def update_match_info_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store(game_id=game_id)
     try:
-        row = Parser.find_game_row(
-            SYNERGY_ORGANIZATION_ID, game_id, plg_season_ids(),
-        )
+        row = Parser.find_game_row(org, game_id, season_ids_for_organization(org))
         if row is None:
             return json.dumps({})
-        id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-        
-        home_name = id_table.get(row['teamIdHome'], row['teamIdHome'])
-        away_name = id_table.get(row['teamIdAway'], row['teamIdAway'])
-        venue_name = id_table.get(row['venueId'], row['venueId'])
+        id_table = Parser.parse_id_tables(org)
+
+        home_name = display_name(id_table, row.get('teamIdHome'))
+        away_name = display_name(id_table, row.get('teamIdAway'))
+        venue_name = display_name(id_table, row.get('venueId'))
         
         dt_str = str(row['startTimeLocal'])
         try:
@@ -621,6 +635,7 @@ def update_match_info_store(n, game_id):
             'home_score': str(row.get('teamScoreHome', '')),
             'away_score': str(row.get('teamScoreAway', '')),
             'status': str(row.get('status', '')).strip(),
+            'organization_id': org,
         }
         return json.dumps(info, ensure_ascii=False)
     except Exception as e:
@@ -672,13 +687,17 @@ def toggle_report_tab(match_info_store, active_tab):
 @callback(
     Output('pbp_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_pbp_store(n, game_id):
+def update_pbp_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
     except Exception as exc:
         print(f"Error loading play-by-play: {exc}")
         return _error_store()
@@ -687,15 +706,19 @@ def update_pbp_store(n, game_id):
 @callback(
     Output('lineup_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_lineup_store(n, game_id):
+def update_lineup_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
         from synergy_inbounder.runtime_cache import warmup_game_report
-        warmup_game_report(game_id)
+        warmup_game_report(game_id, organization_id=org)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
         return _error_store()
@@ -705,16 +728,20 @@ def update_lineup_store(n, game_id):
     Output('matchup_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('match_info_store', 'data')],
+     Input('match_info_store', 'data'),
+     Input('game_league', 'children')],
 )
-def update_matchup_store(n, game_id, match_info_store):
+def update_matchup_store(n, game_id, match_info_store, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     info = safe_loads(match_info_store)
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
         return json.dumps(report.get_matchup_payload(
             home_team_id=info.get('home_team_id'),
             away_team_id=info.get('away_team_id'),
@@ -727,13 +754,17 @@ def update_matchup_store(n, game_id, match_info_store):
     Output('rotation_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('match_info_store', 'data')],
+     Input('match_info_store', 'data'),
+     Input('game_league', 'children')],
 )
-def update_rotation_store(n, game_id, match_info_store):
+def update_rotation_store(n, game_id, match_info_store, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
         info = safe_loads(match_info_store)
         return json.dumps(report.get_rotation_payload(
             home_team_id=info.get('home_team_id'),
@@ -2565,11 +2596,16 @@ def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
     return children
 
 
+def _report_org(match_info):
+    info = match_info or {}
+    return info.get('organization_id')
+
+
 def _report_rotation_figure_json(game_id, match_info):
     if not game_id:
         return json.dumps({'_ui': 'empty'})
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, _report_org(match_info))
         payload = report.get_rotation_payload(
             home_team_id=(match_info or {}).get('home_team_id'),
             away_team_id=(match_info or {}).get('away_team_id'),
@@ -2589,7 +2625,7 @@ def _report_shot_chart_json(game_id, match_info):
         return json.dumps({'_ui': 'empty'})
     info = match_info or {}
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, _report_org(info))
         payload = report_shot_chart_payload(
             report.get_play_by_play_df(),
             info.get('away_team_id'),
@@ -3032,8 +3068,9 @@ def update_pane_pbp(pbp_store, active_tab):
     Input('lineup_store', 'data'),
     State('game_id', 'children'),
     State('lineup-show-opp', 'checked'),
+    State('game_league', 'children'),
 )
-def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False, league='plg'):
     if active_tab != 'tab-lineup':
         return no_update
     try:
@@ -3044,7 +3081,7 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
-            report = get_cached_report(game_id)
+            report = get_cached_report(game_id, _organization(league))
             custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
                 return render_lineup_children(

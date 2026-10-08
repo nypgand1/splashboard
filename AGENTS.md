@@ -3,8 +3,7 @@
 Read the matching spec before changing behavior or fixing a bug.
 
 - Product behavior (pages, tabs, finished vs live, Rotation, English UI, Report canvas including GridStack / JS tables / DMC chrome / localStorage): `docs/spec.md`
-- Synergy hosts, official vs `/live`, token, roster, periodId, rate limits: `docs/synergy.md`
-- EASL hosts, unauthenticated REST, seasons, boxscore, PBP: `docs/easl.md`
+- Synergy hosts, PLG and EASL organizations, official vs `/live`, token, roster, periodId, rate limits: `docs/synergy.md`
 - Local run, tests, deploy, environment variables: `README.md`
 
 ## Daily
@@ -13,7 +12,7 @@ Read the matching spec before changing behavior or fixing a bug.
 - Browser smoke: `python3 -m pytest tests/e2e -q` (needs Chromium once: `python3 -m playwright install chromium`)
 - Report PDF text extract (when `assets/report_canvas.js` PDF/font draw, `NotoSansTC-Regular.ttf`, or pdf spec change): `python3 -m pytest tests/e2e -q -m pdf_text -o addopts='-q --tb=short'`. Assert table-cell tokens (`PT` or `Min`, plus `20:00` or `Lin`). Score titles, page-header names, and notes do not count.
 - Tests use mocks and small fixtures. They do not call live Synergy.
-- Credentials travel only as `SYNERGY_CREDENTIAL_ID` / `SYNERGY_CREDENTIAL_SECRET`. Do not commit them. Do not put them in `fly.toml` `[env]`.
+- Credentials travel only as `SYNERGY_PLG_CREDENTIAL_ID`, `SYNERGY_PLG_CREDENTIAL_SECRET`, `SYNERGY_EASL_CREDENTIAL_ID`, and `SYNERGY_EASL_CREDENTIAL_SECRET`. Do not commit them. Do not put them in `fly.toml` `[env]`.
 - Do not `git push` or `fly deploy` unless asked.
 - Git commit messages MUST be exactly a single line (one line only). Never use multi-line commit logs.
 - UI strings are English.

@@ -88,8 +88,8 @@ def test_home_schedule_filters_and_links(page, e2e_server):
         'a.home-schedule-row-clickable',
         'els => els.map(a => a.getAttribute("href"))',
     )
-    assert f'/game/{LIVE_ID}' in hrefs
-    assert f'/game/{FINISHED_ID}' not in hrefs
+    assert f'/game/plg/{LIVE_ID}' in hrefs
+    assert f'/game/plg/{FINISHED_ID}' not in hrefs
 
     list_text = page.locator('.home-schedule-list').inner_text()
     assert '2026-03-01' in list_text
@@ -102,14 +102,14 @@ def test_home_schedule_filters_and_links(page, e2e_server):
         'a.home-schedule-row-clickable',
         'els => els.map(a => a.getAttribute("href"))',
     )
-    assert f'/game/{FINISHED_ID}' in hrefs
-    assert f'/game/{LIVE_ID}' in hrefs
+    assert f'/game/plg/{FINISHED_ID}' in hrefs
+    assert f'/game/plg/{LIVE_ID}' in hrefs
     static_hrefs = page.eval_on_selector_all(
         '.home-schedule-row-static',
         'els => els.map(el => el.getAttribute("href"))',
     )
-    assert page.locator(f'a[href="/game/{CANCELLED_ID}"]').count() == 0
-    assert page.locator(f'a[href="/game/{UPCOMING_ID}"]').count() == 0
+    assert page.locator(f'a[href="/game/plg/{CANCELLED_ID}"]').count() == 0
+    assert page.locator(f'a[href="/game/plg/{UPCOMING_ID}"]').count() == 0
     assert page.locator('.home-schedule-row-static').count() >= 1
     assert all(h in (None, '') for h in static_hrefs)
 
@@ -118,11 +118,11 @@ def test_home_schedule_filters_and_links(page, e2e_server):
     time.sleep(0.3)
     assert page.url == path0
 
-    page.locator(f'a[href="/game/{FINISHED_ID}"]').first.click()
-    page.wait_for_url(f'**/game/{FINISHED_ID}', timeout=15000)
+    page.locator(f'a[href="/game/plg/{FINISHED_ID}"]').first.click()
+    page.wait_for_url(f'**/game/plg/{FINISHED_ID}', timeout=15000)
 
 
-def test_home_easl_schedule_is_not_linked_to_game(page, e2e_server):
+def test_home_easl_finished_row_links_to_its_game(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
     _wait(page, '#home-league')
@@ -151,7 +151,8 @@ def test_home_easl_schedule_is_not_linked_to_game(page, e2e_server):
         'a',
         'els => els.map((el) => el.getAttribute("href") || "")',
     )
-    assert all('easl-final' not in href and 'easl-draft' not in href for href in hrefs)
+    assert '/game/easl/easl-final' in hrefs
+    assert all('easl-draft' not in href for href in hrefs)
     assert '90 : 81' in page.locator('.home-schedule-list').inner_text() or \
         '90' in page.locator('.home-schedule-list').inner_text()
 
@@ -163,7 +164,7 @@ def test_home_interval_keeps_the_show_filter(page, e2e_server):
     _click_show(page, 'All')
     page.wait_for_function(
         '''() => [...document.querySelectorAll('a.home-schedule-row-clickable')]
-            .some((el) => (el.getAttribute('href') || '').includes('/game/fin-regular'))''',
+            .some((el) => (el.getAttribute('href') || '').includes('/game/plg/fin-regular'))''',
         timeout=10000,
     )
     page.evaluate(
@@ -182,7 +183,7 @@ def test_home_interval_keeps_the_show_filter(page, e2e_server):
         'a.home-schedule-row-clickable',
         'els => els.map(a => a.getAttribute("href"))',
     )
-    assert f'/game/{FINISHED_ID}' in hrefs
+    assert f'/game/plg/{FINISHED_ID}' in hrefs
     selected = page.locator('#home-show label, #home-show button').filter(has_text='All')
     assert selected.count() >= 1
 
@@ -216,7 +217,7 @@ def _select_tab(page, name):
 
 def test_game_tabs_and_rotation_paper(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     banner = page.locator('.game-info-banner').inner_text()
     assert HOME in banner
@@ -339,7 +340,7 @@ def _click_rotation_time(page, t, yaxis='yaxis'):
 
 def test_rotation_playhead_follows_click_time(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
@@ -382,7 +383,7 @@ def test_rotation_playhead_follows_click_time(page, e2e_server):
 
 def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
     page.set_viewport_size({'width': 375, 'height': 812})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     page.wait_for_timeout(600)
     assert page.locator('#report-tab').is_visible() is False
@@ -390,7 +391,7 @@ def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
 
 def test_report_first_paint_on_desktop(page, e2e_server):
     page.set_viewport_size({'width': 1400, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
     report_tab = page.locator('#report-tab')
@@ -430,7 +431,7 @@ def test_report_first_paint_on_desktop(page, e2e_server):
 
 def test_box_score_period_chip_filters_team_box(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
@@ -454,7 +455,7 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
 
 def test_box_score_period_keeps_mounted_tables(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#bs-score-scroll table').first.wait_for(state='attached', timeout=20000)
@@ -510,7 +511,7 @@ def test_box_score_period_keeps_mounted_tables(page, e2e_server):
 
 def test_box_score_paint_and_table_pan(page, e2e_server):
     page.set_viewport_size({'width': 500, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
@@ -604,7 +605,7 @@ def _court_boxes(page):
 
 def test_shot_chart_tab(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Shot Chart')
     page.locator('#shot-chart-court-home img').wait_for(state='visible', timeout=20000)
@@ -723,7 +724,7 @@ def _lineup_frame(page):
 
 def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     page.set_viewport_size({'width': 1210, 'height': 834})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Lineup Stats')
     landscape = _lineup_frame(page)
@@ -825,7 +826,7 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
 
 def test_lineup_show_opp_keeps_the_same_lineup_page(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Lineup Stats')
     page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
@@ -892,7 +893,7 @@ def _split_lineup(name, pts):
 
 def test_lineup_store_tick_repaints_both_tables(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Lineup Stats')
     page.locator('#pane-lineup').get_by_text('Lin-0').first.wait_for(timeout=20000)
@@ -932,7 +933,7 @@ def _matchup_lineup(page, index):
 
 def test_matchups_tab_keeps_both_fives_and_switches_viewpoint(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Matchups')
     page.locator('#matchup-grid .ag-cell[col-id="Lineup"]').first.wait_for(

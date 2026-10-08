@@ -101,9 +101,16 @@ def _is_numeric_score(val):
         return False
 
 
+def _score_token(value):
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return str(value).strip()
+
+
 def format_score_display(status, home_score=None, away_score=None):
     if not score_is_clickable(status):
         return SCORE_AT
     if _is_numeric_score(away_score) and _is_numeric_score(home_score):
-        return f"{away_score} : {home_score}"
+        return f"{_score_token(away_score)} : {_score_token(home_score)}"
     return SCORE_AT

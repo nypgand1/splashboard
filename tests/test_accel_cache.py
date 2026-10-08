@@ -132,8 +132,10 @@ class TokenTests(unittest.TestCase):
             return FakeResponse(200, {'data': {'token': 'abc'}})
 
         with patch.dict('os.environ', {
-            'SYNERGY_CREDENTIAL_ID': '',
-            'SYNERGY_CREDENTIAL_SECRET': '',
+            'SYNERGY_PLG_CREDENTIAL_ID': '',
+            'SYNERGY_PLG_CREDENTIAL_SECRET': '',
+            'SYNERGY_EASL_CREDENTIAL_ID': 'easl-id',
+            'SYNERGY_EASL_CREDENTIAL_SECRET': 'easl-secret',
         }):
             with patch('synergy_inbounder.communicator.requests.post', side_effect=post):
                 with self.assertRaises(MissingSynergyCredentials):
@@ -141,6 +143,77 @@ class TokenTests(unittest.TestCase):
                 with self.assertRaises(MissingSynergyCredentials):
                     get_synergy_credentials()
         self.assertEqual(posts, [])
+
+    def test_each_organization_keeps_its_own_bearer(self):
+        from synergy_inbounder.settings import (
+            SYNERGY_EASL_ORGANIZATION_ID,
+            SYNERGY_ORGANIZATION_ID,
+        )
+        import synergy_inbounder.communicator as communicator
+
+        def post():
+            org = communicator._active_org
+            token = 'plg-token' if org == SYNERGY_ORGANIZATION_ID else 'easl-token'
+            return FakeResponse(200, {'data': {'token': token, 'expiresIn': 3600}})
+
+        seen = []
+
+        def get(url, params=None, headers=None, **kwargs):
+            seen.append(kwargs['auth'].token)
+            return FakeResponse(200)
+
+        with patch.object(Communicator, 'post_synergy_for_token', side_effect=post), \
+                patch.object(Communicator, 'get', side_effect=get):
+            Communicator.get_synergy(
+                'https://example.test/a', organization_id=SYNERGY_ORGANIZATION_ID,
+            )
+            Communicator.get_synergy(
+                'https://example.test/b', organization_id=SYNERGY_EASL_ORGANIZATION_ID,
+            )
+            Communicator.get_synergy(
+                'https://example.test/c', organization_id=SYNERGY_ORGANIZATION_ID,
+            )
+
+        self.assertEqual(seen, ['plg-token', 'easl-token', 'plg-token'])
+
+    def test_token_post_uses_that_organizations_credentials(self):
+        from synergy_inbounder.settings import (
+            SYNERGY_EASL_ORGANIZATION_ID,
+            SYNERGY_ORGANIZATION_ID,
+        )
+
+        bodies = []
+
+        def post(url, json=None, **kwargs):
+            bodies.append(json)
+            org = json['organization']['id'][0]
+            token = 'plg-token' if org == SYNERGY_ORGANIZATION_ID else 'easl-token'
+            return FakeResponse(200, {'data': {'token': token, 'expiresIn': 3600}})
+
+        def get(url, params=None, headers=None, **kwargs):
+            return FakeResponse(200)
+
+        with patch.dict('os.environ', {
+            'SYNERGY_PLG_CREDENTIAL_ID': 'plg-id',
+            'SYNERGY_PLG_CREDENTIAL_SECRET': 'plg-secret',
+            'SYNERGY_EASL_CREDENTIAL_ID': 'easl-id',
+            'SYNERGY_EASL_CREDENTIAL_SECRET': 'easl-secret',
+        }):
+            with patch('synergy_inbounder.communicator.requests.post', side_effect=post), \
+                    patch.object(Communicator, 'get', side_effect=get):
+                Communicator.get_synergy(
+                    'https://example.test/a', organization_id=SYNERGY_ORGANIZATION_ID,
+                )
+                Communicator.get_synergy(
+                    'https://example.test/b', organization_id=SYNERGY_EASL_ORGANIZATION_ID,
+                )
+
+        self.assertEqual(bodies[0]['credentialId'], 'plg-id')
+        self.assertEqual(bodies[0]['credentialSecret'], 'plg-secret')
+        self.assertEqual(bodies[0]['organization']['id'], [SYNERGY_ORGANIZATION_ID])
+        self.assertEqual(bodies[1]['credentialId'], 'easl-id')
+        self.assertEqual(bodies[1]['credentialSecret'], 'easl-secret')
+        self.assertEqual(bodies[1]['organization']['id'], [SYNERGY_EASL_ORGANIZATION_ID])
 
     def test_401_refreshes_token(self):
         posts = []
@@ -344,7 +417,7 @@ class ReportCacheTests(unittest.TestCase):
         lock = threading.Lock()
 
         class DummyReport:
-            def __init__(self, game_id):
+            def __init__(self, game_id, organization_id=None):
                 time.sleep(0.05)
                 with lock:
                     builds.append(game_id)

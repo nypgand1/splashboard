@@ -17,9 +17,16 @@ from dash.development.base_component import Component
 import dash_mantine_components as dmc
 import pandas as pd
 
-from easl_inbounder.settings import EASL_SEASON_ID, EASL_SEASONS
+from synergy_inbounder.names import display_name
 from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
-from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID, SYNERGY_SEASONS
+from synergy_inbounder.settings import (
+    EASL_SEASON_ID,
+    EASL_SEASONS,
+    SYNERGY_EASL_ORGANIZATION_ID,
+    SYNERGY_ORGANIZATION_ID,
+    SYNERGY_SEASON_ID,
+    SYNERGY_SEASONS,
+)
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.game_status import (
     format_score_display,
@@ -196,7 +203,7 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     if scope_change:
         game_type = None
     league, season_id = _scope_values(scope, filters)
-    prefetch = league == LEAGUE_PLG and (first or scope_change)
+    prefetch = bool(first or scope_change)
     try:
         df = df_data(prefetch=prefetch, league=league, season_id=season_id)
     except Exception as exc:
@@ -368,8 +375,9 @@ def schedule_records(df, league=LEAGUE_PLG):
         start = _plain(_start_value(row))
         home_score = _plain(row.get('teamScoreHome'))
         away_score = _plain(row.get('teamScoreAway'))
-        clickable = bool(score_is_clickable(status)) and league != LEAGUE_EASL
+        clickable = bool(score_is_clickable(status))
         records.append({
+            'league': league,
             'fixtureId': str(_plain(row.get('fixtureId')) or ''),
             'status': str(status).strip(),
             'fixtureType': str(_plain(_fixture_type_value(row)) or ''),
@@ -544,9 +552,11 @@ def _compact_row(record):
     else:
         clickable = score_is_clickable(record.get('status'))
     if clickable:
+        league = record.get('league') or LEAGUE_PLG
+        slug = 'easl' if league == LEAGUE_EASL else 'plg'
         return html.A(
             inner,
-            href=f'/game/{fixture_id}',
+            href=f'/game/{slug}/{fixture_id}',
             className='home-schedule-row home-schedule-row-clickable',
             style={'display': 'block', 'textDecoration': 'none', 'color': 'inherit'},
         )
@@ -704,27 +714,32 @@ def _decorate_schedule(df):
     ]]
 
 
-def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
+def _organization_for_home_league(league):
     if league == LEAGUE_EASL:
-        from easl_inbounder.parser import Parser as EaslParser
-        frame = EaslParser.parse_season_game_list_df(season_id or EASL_SEASON_ID)
-        return _decorate_schedule(frame)
+        return SYNERGY_EASL_ORGANIZATION_ID
+    return SYNERGY_ORGANIZATION_ID
 
-    game_list_df = Parser.parse_season_game_list_df(
-        SYNERGY_ORGANIZATION_ID,
-        season_id or SYNERGY_SEASON_ID,
-    )
-    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+
+def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
+    org = _organization_for_home_league(league)
+    default_season = EASL_SEASON_ID if league == LEAGUE_EASL else SYNERGY_SEASON_ID
+    game_list_df = Parser.parse_season_game_list_df(org, season_id or default_season)
+    id_table = Parser.parse_id_tables(org)
 
     if prefetch:
         try:
             from synergy_inbounder.runtime_cache import prefetch_latest_games
-            prefetch_latest_games(game_list_df, max_games=2)
+            prefetch_latest_games(
+                game_list_df,
+                max_games=2,
+                organization_id=org,
+                finished_only=(league == LEAGUE_EASL),
+            )
         except Exception as e:
             print(f"Failed to start home prefetch: {e}")
 
     df = game_list_df.copy()
-    df['Venue'] = df.apply(lambda x: id_table.get(x['venueId'], x['venueId']), axis=1)
-    df['Home Team'] = df.apply(lambda x: id_table.get(x['teamIdHome'], x['teamIdHome']), axis=1)
-    df['Away Team'] = df.apply(lambda x: id_table.get(x['teamIdAway'], x['teamIdAway']), axis=1)
+    df['Venue'] = df.apply(lambda x: display_name(id_table, x.get('venueId')), axis=1)
+    df['Home Team'] = df.apply(lambda x: display_name(id_table, x.get('teamIdHome')), axis=1)
+    df['Away Team'] = df.apply(lambda x: display_name(id_table, x.get('teamIdAway')), axis=1)
     return _decorate_schedule(df)

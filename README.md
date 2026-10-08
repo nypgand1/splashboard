@@ -1,6 +1,6 @@
 # Splashboard
 
-A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST for PLG and a public EASL schedule, lists the selected league and season on Home, and shows Box Score, Rotation, Lineup Stats, Play-By-Play, and Report on the Game page.
+A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy basketball REST for PLG (`b1vqz`) and EASL (`b1e0z`), lists the selected league and season on Home, and shows Box Score, Rotation, Shot Chart, Lineup Stats, Matchups, Play-By-Play, and Report on the Game page.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ A game dashboard for Taipei Fubon Braves. It reads Sportradar DataCore / Synergy
 ```bash
 python3 -m pip install -r requirements.txt
 cp .env.example .env
-# fill SYNERGY_CREDENTIAL_ID and SYNERGY_CREDENTIAL_SECRET
+# fill the four SYNERGY_PLG_* and SYNERGY_EASL_* credential variables
 ```
 
 ## Local run
@@ -44,18 +44,20 @@ Smoke drives a local app with fixtures. It does not call live Synergy. `tests/e2
 
 | Variable | Purpose |
 |---|---|
-| `SYNERGY_CREDENTIAL_ID` | credential id for the token endpoint |
-| `SYNERGY_CREDENTIAL_SECRET` | credential secret for the token endpoint |
+| `SYNERGY_PLG_CREDENTIAL_ID` | PLG credential id for the token endpoint |
+| `SYNERGY_PLG_CREDENTIAL_SECRET` | PLG credential secret for the token endpoint |
+| `SYNERGY_EASL_CREDENTIAL_ID` | EASL credential id for the token endpoint |
+| `SYNERGY_EASL_CREDENTIAL_SECRET` | EASL credential secret for the token endpoint |
 | `PORT` | listen port locally or on Fly (Fly default 8080) |
 
-Hosts, organization id, and PLG season ids live in `synergy_inbounder/settings.py`. EASL season ids live in `easl_inbounder/settings.py`. Both are tracked. Do **not** put credentials in `fly.toml` `[env]`.
+Hosts, organization ids, and both season tables live in `synergy_inbounder/settings.py`. They are tracked. Do **not** put credentials in `fly.toml` `[env]`.
 
 Locally, use a gitignored `.env` (`python-dotenv` loads it when settings is imported). On Fly, use `fly secrets`.
 
 ## Deploy
 
 ```bash
-fly secrets set SYNERGY_CREDENTIAL_ID='...' SYNERGY_CREDENTIAL_SECRET='...' -a splashboard
+fly secrets set SYNERGY_PLG_CREDENTIAL_ID='...' SYNERGY_PLG_CREDENTIAL_SECRET='...' SYNERGY_EASL_CREDENTIAL_ID='...' SYNERGY_EASL_CREDENTIAL_SECRET='...' -a splashboard
 fly deploy
 ```
 

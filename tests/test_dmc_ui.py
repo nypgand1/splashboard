@@ -973,7 +973,7 @@ class HomeScheduleTests(unittest.TestCase):
         self.assertIs(stored, no_update)
 
     def test_scope_change_applies_the_if_needed_default_for_that_league(self):
-        from easl_inbounder.settings import EASL_SEASON_ID
+        from synergy_inbounder.settings import EASL_SEASON_ID
 
         filters = home_page.initial_home_filters()
         filters['game_type'] = 'REGULAR'
@@ -1026,12 +1026,12 @@ class HomeScheduleTests(unittest.TestCase):
             _home_row(status='CANCELLED', fixtureId='can', startTimeLocal='2026-01-03T19:00:00'),
         ])), show='all', game_type=None)
         hrefs = {node.href for node in _anchors(tree)}
-        self.assertIn('/game/pending', hrefs)
-        self.assertIn('/game/fin', hrefs)
-        self.assertIn('/game/abd', hrefs)
-        self.assertNotIn('/game/sched', hrefs)
-        self.assertNotIn('/game/ifn', hrefs)
-        self.assertNotIn('/game/can', hrefs)
+        self.assertIn('/game/plg/pending', hrefs)
+        self.assertIn('/game/plg/fin', hrefs)
+        self.assertIn('/game/plg/abd', hrefs)
+        self.assertNotIn('/game/plg/sched', hrefs)
+        self.assertNotIn('/game/plg/ifn', hrefs)
+        self.assertNotIn('/game/plg/can', hrefs)
 
     def test_filtered_empty_keeps_filters_not_season_empty_copy(self):
         records = home_page.schedule_records(_schedule_df([
@@ -1069,7 +1069,7 @@ class HomeScheduleTests(unittest.TestCase):
         self.assertFalse(_by_class(alert, 'home-schedule-list'))
 
     def test_failed_scope_change_clears_the_clock(self):
-        from easl_inbounder.settings import EASL_SEASON_ID
+        from synergy_inbounder.settings import EASL_SEASON_ID
 
         with patch.object(home_page, 'df_data', side_effect=RuntimeError('boom')), \
                 patch.object(home_page, '_triggered_id', return_value='home-scope-store'):
