@@ -5,7 +5,24 @@ import re
 
 import pandas as pd
 
+from synergy_inbounder.possessions import annotate_possessions
+
 CLOCK_RE = re.compile(r'PT(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', re.IGNORECASE)
+KILL_COLOR = '#e63946'
+KILL_ROW = '3+ STOPS'
+STOP_COUNT_FONT = 11
+RUN_LABEL_INK = 13
+COUNT_INK = 11
+SEAM_LINE = 11
+SUBPLOT_TITLE_FONT = 14
+RUN_SCORE_SHIFT = 2
+# The tab paints run scores with the subplot-title pass, so their ink is the
+# 2px shift plus 14px, not the 11px they are created with. The away title is
+# that same 14px, one count line above the number.
+LOWER_SEAM_INK = RUN_SCORE_SHIFT + SUBPLOT_TITLE_FONT + SUBPLOT_TITLE_FONT + COUNT_INK
+BASE_VERTICAL_SPACING = 0.06
+FIGURE_MARGIN_T = 40
+FIGURE_MARGIN_B = 48
 
 
 def clock_to_seconds(clock):
@@ -369,20 +386,144 @@ def period_clock_label(t_seconds, periods):
     return f"{int(t_seconds // 60):02d}:{int(t_seconds % 60):02d}"
 
 
+def _clock_span(start, end, periods):
+    start_str = period_clock_label(start, periods)
+    end_str = period_clock_label(end, periods)
+    start_parts = start_str.split(' ', 1)
+    end_parts = end_str.split(' ', 1)
+    if len(start_parts) == 2 and len(end_parts) == 2 and start_parts[0] == end_parts[0]:
+        return f"{start_parts[0]} {start_parts[1]}–{end_parts[1]}"
+    return f"{start_str}–{end_str}"
+
+
 def format_run_label(run, periods):
-    start_str = period_clock_label(run['start'], periods)
-    end_str = period_clock_label(run['end'], periods)
     if run.get('side') == 'away':
         pts = f"{run['away_pts']}–{run['home_pts']}"
     else:
         pts = f"{run['home_pts']}–{run['away_pts']}"
-    start_parts = start_str.split(' ', 1)
-    end_parts = end_str.split(' ', 1)
-    if len(start_parts) == 2 and len(end_parts) == 2 and start_parts[0] == end_parts[0]:
-        span = f"{start_parts[0]} {start_parts[1]}–{end_parts[1]}"
-    else:
-        span = f"{start_str}–{end_str}"
-    return f"{span}  {pts}"
+    return f"{_clock_span(run['start'], run['end'], periods)}  {pts}"
+
+
+def format_kill_label(kill, periods):
+    return f"{_clock_span(kill['start'], kill['end'], periods)}  {kill['stops']} STOPS"
+
+
+def stop_seam_spacing(figure_height, base=BASE_VERTICAL_SPACING):
+    """Paper gap between the Gantt and the margin, as a fraction of the plot area.
+
+    Run scores keep the inner 13px. Stop counts need the outer 11px. When the
+    base seam cannot hold both, grow it by one count line.
+    """
+    plot_h = max(1.0, float(figure_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
+    seam = base * plot_h
+    if seam < RUN_LABEL_INK + COUNT_INK:
+        seam += SEAM_LINE
+    return seam / plot_h
+
+
+def away_lane_height(base_height):
+    """Figure height once the lower seam can hold the away title and the count."""
+    plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
+    seam = stop_seam_spacing(base_height) * plot_h
+    return float(base_height) + max(0.0, LOWER_SEAM_INK - seam)
+
+
+def _made_shot(value):
+    return value == 1 or value is True
+
+
+def _event_points(event_type, success):
+    if not _made_shot(success):
+        return 0
+    if event_type == '3pt':
+        return 3
+    if event_type == 'freeThrow':
+        return 1
+    if event_type == '2pt':
+        return 2
+    return 0
+
+
+def _elapsed_on_period(period_id, clock, periods):
+    remaining = clock_to_seconds(clock)
+    if remaining is None:
+        return None
+    for period in periods or []:
+        if _same_id(period.get('id'), period_id):
+            return period['start'] + max(0.0, float(period['seconds']) - remaining)
+    return None
+
+
+def possession_trips(df, periods):
+    """Ended stats trips in frame order, with elapsed start and end."""
+    annotated = annotate_possessions(df)
+    if 'poss_id' not in getattr(annotated, 'columns', []):
+        return []
+    grouped = {}
+    order = []
+    for row in annotated.to_dict('records'):
+        poss_id = row.get('poss_id')
+        if poss_id is None or (isinstance(poss_id, float) and pd.isna(poss_id)):
+            continue
+        if poss_id not in grouped:
+            grouped[poss_id] = []
+            order.append(poss_id)
+        grouped[poss_id].append(row)
+    trips = []
+    for poss_id in order:
+        rows = grouped[poss_id]
+        end_row = None
+        for row in rows:
+            if row.get('poss_end'):
+                end_row = row
+        if end_row is None:
+            continue
+        start_t = _elapsed_on_period(rows[0].get('periodId'), rows[0].get('clock'), periods)
+        end_t = _elapsed_on_period(end_row.get('periodId'), end_row.get('clock'), periods)
+        if start_t is None or end_t is None:
+            continue
+        points = sum(_event_points(row.get('eventType'), row.get('success')) for row in rows)
+        trips.append({
+            'offense': end_row.get('poss_team_id'),
+            'points': points,
+            'start': float(start_t),
+            'end': float(max(start_t, end_t)),
+        })
+    return trips
+
+
+def _close_kill_streak(streak, side, kills):
+    if len(streak) < 3:
+        return []
+    kills.append({
+        'side': side,
+        'stops': len(streak),
+        'start': float(streak[0]['start']),
+        'end': float(streak[-1]['end']),
+    })
+    return []
+
+
+def detect_kills(trips, home_team_id, away_team_id):
+    """One kill is three or more consecutive opponent trips that score 0.
+
+    The defending side's own trips are skipped. A longer streak is one kill.
+    """
+    kills = []
+    for side, offense_id in (('home', away_team_id), ('away', home_team_id)):
+        if offense_id is None:
+            continue
+        streak = []
+        for trip in trips or []:
+            if not _same_id(trip.get('offense'), offense_id):
+                continue
+            if int(trip.get('points') or 0) <= 0:
+                streak.append(trip)
+            else:
+                streak = _close_kill_streak(streak, side, kills)
+        _close_kill_streak(streak, side, kills)
+    kills.sort(key=lambda kill: (kill['start'], 0 if kill['side'] == 'home' else 1))
+    return kills
 
 
 def clamp_time_window(x0, x1, game_end, width):
@@ -538,6 +679,7 @@ def build_rotation_payload(
         'teams': [],
         'margin': [],
         'runs': [],
+        'kills': [],
     }
     if pbp_df is None or getattr(pbp_df, 'empty', True):
         return empty
@@ -719,6 +861,7 @@ def build_rotation_payload(
         score_events.append((game_end, curr_h, curr_a))
 
     runs = detect_runs(score_events, min_delta=8)
+    kills = detect_kills(possession_trips(df, periods), home_team_id, away_team_id)
 
 
     # Function to query net score margin diff between two timestamps for stint +/-
@@ -799,6 +942,7 @@ def build_rotation_payload(
         'teams': teams,
         'margin': margin,
         'runs': runs,
+        'kills': kills,
     }
 
 
@@ -813,29 +957,33 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     home = next((team for team in teams if team.get('side') == 'home'), teams[0] if teams else None)
     away = next((team for team in teams if team.get('side') == 'away'), teams[1] if len(teams) > 1 else None)
 
+    kills = (payload or {}).get('kills') or []
+    home_kills = [kill for kill in kills if kill.get('side') == 'home']
+    away_kills = [kill for kill in kills if kill.get('side') == 'away']
     home_players = visible_players(home, show_dnp) or [{'label': '—', 'stints': []}]
     away_players = visible_players(away, show_dnp) or [{'label': '—', 'stints': []}]
-    home_n = len(home_players) or 1
-    away_n = len(away_players) or 1
+    home_n = len(home_players) + 1 or 1
+    away_n = len(away_players) + 1 or 1
 
     h_weight = max(0.25, min(0.45, (home_n * 22) / (home_n * 22 + away_n * 22 + 180)))
     a_weight = max(0.25, min(0.45, (away_n * 22) / (home_n * 22 + away_n * 22 + 180)))
     m_weight = max(0.18, 1.0 - h_weight - a_weight)
 
-    total_height = max(520, home_n * 22 + away_n * 22 + 200)
+    base_height = max(520, home_n * 22 + away_n * 22 + 200)
 
     fig = make_subplots(
         rows=3,
         cols=1,
         shared_xaxes=True,
         row_heights=[h_weight, m_weight, a_weight],
-        vertical_spacing=0.06,
+        vertical_spacing=stop_seam_spacing(base_height),
         subplot_titles=(
             (home or {}).get('team_name') or 'Home',
             '',
             (away or {}).get('team_name') or 'Away',
         ),
     )
+    total_height = _open_lower_seam(fig, base_height)
 
 
     game_end = periods[-1]['end'] if periods else 1
@@ -868,9 +1016,15 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             return f'● {base}'
         return f'  {base}'
 
-    def add_gantt(team, row, bar_color, players):
+    def add_gantt(team, row, bar_color, players, side_kills, kill_edge):
         players_rev = list(reversed(players))
         y_cats = [axis_label(p) for p in players_rev]
+        # categoryarray[0] is the bottom of the panel. Home's last row and
+        # away's first row are the two edges that face the margin.
+        if kill_edge == 'bottom':
+            y_cats = [KILL_ROW] + y_cats
+        else:
+            y_cats = y_cats + [KILL_ROW]
         fig.add_trace(
             go.Scatter(
                 x=[0] * len(y_cats),
@@ -922,16 +1076,41 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
                     row=row,
                     col=1,
                 )
-        fig.update_yaxes(
+        if side_kills:
+            for kill in sorted(side_kills, key=lambda item: item['start']):
+                fig.add_trace(
+                    go.Bar(
+                        x=[max(0.0, kill['end'] - kill['start'])],
+                        y=[KILL_ROW],
+                        base=[kill['start']],
+                        orientation='h',
+                        marker=dict(
+                            color=KILL_COLOR,
+                            opacity=1.0,
+                            line=dict(width=0),
+                        ),
+                        hovertext=format_kill_label(kill, periods),
+                        hoverinfo='text',
+                        showlegend=False,
+                    ),
+                    row=row,
+                    col=1,
+                )
+        axis = dict(
             ticksuffix='  ',
             categoryorder='array',
             categoryarray=y_cats,
-            row=row,
-            col=1,
         )
+        if KILL_ROW in y_cats:
+            axis.update(
+                tickmode='array',
+                tickvals=y_cats,
+                ticktext=['' if cat == KILL_ROW else cat for cat in y_cats],
+            )
+        fig.update_yaxes(row=row, col=1, **axis)
         return y_cats
 
-    home_labels = add_gantt(home, 1, home_color, home_players)
+    home_labels = add_gantt(home, 1, home_color, home_players, home_kills, 'bottom')
 
     # 2. Score Margin Step-line with Dual-Color Fill & Rich Hover Tooltips
     margin_x = [point['t'] for point in margin] or [0]
@@ -1031,7 +1210,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     )
 
 
-    away_labels = add_gantt(away, 3, away_color, away_players)
+    away_labels = add_gantt(away, 3, away_color, away_players, away_kills, 'top')
 
     view_start, view_end = 0, game_end
     if x_range and len(x_range) == 2 and x_range[0] is not None and x_range[1] is not None:
@@ -1117,14 +1296,14 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         autosize=True,
         dragmode='pan',
         barmode='overlay',
-        margin=dict(l=112, r=112, t=40, b=48),
+        margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#334155', size=12),
         hovermode='closest',
         uirevision=uirevision if uirevision is not None else f'{view_end - view_start:.3f}',
     )
-    fig.update_annotations(font=dict(size=14, color='#1e293b'))
+    fig.update_annotations(font=dict(size=SUBPLOT_TITLE_FONT, color='#1e293b'))
 
     def layout_axis(ref):
         if ref == 'y':
@@ -1133,14 +1312,23 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
 
     def mirror_categories(dest, overlay, anchor, labels):
         labels = list(labels or ['—'])
+        tick_labels = dict(
+            categoryorder='array',
+            categoryarray=labels,
+        )
+        if KILL_ROW in labels:
+            tick_labels.update(
+                tickmode='array',
+                tickvals=labels,
+                ticktext=['' if label == KILL_ROW else label for label in labels],
+            )
         fig.update_layout(**{dest: dict(
             overlaying=overlay,
             side='right',
             anchor=anchor,
             domain=list(fig.layout[layout_axis(overlay)].domain),
-            categoryorder='array',
-            categoryarray=labels,
             range=[-0.5, len(labels) - 0.5],
+            **tick_labels,
             tickprefix='  ',
             showgrid=False,
             zeroline=False,
@@ -1195,7 +1383,123 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     mirror_categories('yaxis4', 'y', 'x', home_labels)
     mirror_numbers('yaxis5', 'yaxis2', 'y2', 'x2')
     mirror_categories('yaxis6', 'y3', 'x3', away_labels)
+    _add_kill_annotations(fig)
+    _add_stop_counts(fig, kills, periods)
+    _raise_away_title(fig)
     return fig
+
+
+def _open_lower_seam(fig, base_height):
+    """Keep the upper seam and the panel pixel sizes. Grow only the lower seam.
+
+    The added pixels go into the figure height. The away count stays on the
+    panel edge; the team name moves up into the new room.
+    """
+    plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
+    seam = stop_seam_spacing(base_height) * plot_h
+    shortfall = max(0.0, LOWER_SEAM_INK - seam)
+    new_plot_h = plot_h + shortfall
+
+    def span_px(domain):
+        return (float(domain[1]) - float(domain[0])) * plot_h
+
+    home = fig.layout.yaxis.domain
+    margin = fig.layout.yaxis2.domain
+    away = fig.layout.yaxis3.domain
+    home_px = span_px(home)
+    margin_px = span_px(margin)
+    away_px = span_px(away)
+    upper_px = (float(home[0]) - float(margin[1])) * plot_h
+    lower_px = upper_px + shortfall
+
+    cursor = 1.0
+    home_top = cursor
+    cursor -= home_px / new_plot_h
+    home_bottom = cursor
+    cursor -= upper_px / new_plot_h
+    margin_top = cursor
+    cursor -= margin_px / new_plot_h
+    margin_bottom = cursor
+    cursor -= lower_px / new_plot_h
+    away_top = cursor
+    cursor -= away_px / new_plot_h
+    away_bottom = 0.0 if abs(cursor) < 1e-6 else cursor
+
+    fig.layout.yaxis.domain = (home_bottom, home_top)
+    fig.layout.yaxis2.domain = (margin_bottom, margin_top)
+    fig.layout.yaxis3.domain = (away_bottom, away_top)
+    return base_height + shortfall
+
+
+def _raise_away_title(fig):
+    away_top = float(fig.layout.yaxis3.domain[1])
+    titles = [
+        ann for ann in fig.layout.annotations or []
+        if getattr(ann, 'xref', None) == 'paper'
+        and getattr(ann, 'yref', None) == 'paper'
+        and getattr(ann, 'yanchor', None) == 'bottom'
+        and ann.text
+        and ann.text != KILL_ROW
+        and not str(ann.text).isdigit()
+    ]
+    if len(titles) < 2:
+        return
+    away = min(titles, key=lambda ann: float(ann.y))
+    away.y = away_top
+    away.yshift = STOP_COUNT_FONT
+
+
+def _add_kill_annotations(fig):
+    for yref, xref in (('y', 'x'), ('y3', 'x3')):
+        for x, anchor, shift in ((0, 'right', -6), (1, 'left', 6)):
+            fig.add_annotation(
+                x=x,
+                xref=f'{xref} domain',
+                y=KILL_ROW,
+                yref=yref,
+                text=KILL_ROW,
+                font=dict(size=12, color=KILL_COLOR),
+                xanchor=anchor,
+                showarrow=False,
+                xshift=shift,
+            )
+
+
+def _is_stop_count(ann):
+    return (
+        getattr(ann, 'yref', None) == 'paper'
+        and getattr(ann, 'xref', None) == 'x2'
+        and str(ann.text or '').isdigit()
+    )
+
+
+def _add_stop_counts(fig, kills, periods):
+    home_bottom = float(fig.layout.yaxis.domain[0])
+    away_top = float(fig.layout.yaxis3.domain[1])
+    for kill in kills or []:
+        home = kill.get('side') == 'home'
+        fig.add_annotation(
+            x=(float(kill['start']) + float(kill['end'])) / 2.0,
+            xref='x2',
+            y=home_bottom if home else away_top,
+            yref='paper',
+            text=str(int(kill['stops'])),
+            font=dict(size=STOP_COUNT_FONT, color=KILL_COLOR),
+            xanchor='center',
+            yanchor='top' if home else 'bottom',
+            showarrow=False,
+            hovertext=format_kill_label(kill, periods),
+        )
+
+
+def _paint_kill_annotations(fig):
+    for ann in fig.layout.annotations or []:
+        if ann.text == KILL_ROW:
+            ann.font.color = KILL_COLOR
+            ann.font.size = 12
+        elif _is_stop_count(ann):
+            ann.font.color = KILL_COLOR
+            ann.font.size = STOP_COUNT_FONT
 
 
 def report_rotation_figure(payload):
@@ -1207,9 +1511,11 @@ def report_rotation_figure(payload):
     )
     fig.update_layout(
         font=dict(size=12, color='#334155'),
-        margin=dict(l=112, r=112, t=40, b=48),
+        margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
     )
     fig.update_annotations(font=dict(size=12, color='#1e293b'))
+    _paint_kill_annotations(fig)
+    _raise_away_title(fig)
     fig.update_yaxes(tickfont=dict(size=12), row=2, col=1)
     fig.layout.yaxis5.tickfont.size = 12
     return fig

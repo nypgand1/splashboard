@@ -2300,23 +2300,34 @@ def _find_period(periods, period_value):
     return None
 
 
+def _rotation_chip(label, kind, index, side):
+    return dmc.Button(
+        label,
+        id={'type': kind, 'index': index},
+        color='blue' if side == 'home' else 'gray',
+        variant='light' if kind == 'rotation-run' else 'outline',
+        size='compact-xs',
+        radius='sm',
+        px=8,
+    )
+
+
 def _render_run_buttons(runs, periods):
-    if not runs:
+    items = []
+    for index, run in enumerate(runs or []):
+        items.append((run.get('start') or 0, index, run))
+    if not items:
         return None
-    buttons = []
-    for index, run in enumerate(runs):
-        is_home = run.get('side') == 'home'
-        buttons.append(
-            dmc.Button(
-                format_run_label(run, periods),
-                id={'type': 'rotation-run', 'index': index},
-                color='blue' if is_home else 'gray',
-                variant='light',
-                size='compact-xs',
-                radius='sm',
-                px=8,
-            )
+    items.sort(key=lambda item: item[0])
+    buttons = [
+        _rotation_chip(
+            format_run_label(run, periods),
+            'rotation-run',
+            index,
+            run.get('side'),
         )
+        for _start, index, run in items
+    ]
     return dmc.Group(
         buttons,
         gap=6,
@@ -2869,7 +2880,8 @@ def update_rotation_view(
         return no_update, no_update, no_update
     if triggered_id == 'game_id':
         return result, 'all', False
-    if isinstance(ctx.triggered_id, dict) and ctx.triggered_id.get('type') == 'rotation-run':
+    chip = ctx.triggered_id if isinstance(ctx.triggered_id, dict) else None
+    if chip and chip.get('type') == 'rotation-run':
         return result, 'all', no_update
     if triggered_id == 'rotation-graph.relayoutData':
         return result, result.get('period') or 'all', no_update

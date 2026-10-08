@@ -4,14 +4,20 @@ import unittest
 import pandas as pd
 
 from synergy_reporter.rotation import (
+    KILL_COLOR,
+    KILL_ROW,
+    LOWER_SEAM_INK,
     apply_camera_relayout,
+    away_lane_height,
     build_rotation_figure,
     build_rotation_payload,
     report_rotation_figure,
+    stop_seam_spacing,
     clamp_time_window,
     clock_to_seconds,
     contrast_text_color,
     detect_runs,
+    format_kill_label,
     format_run_label,
     live_playhead_t,
     margin_tick_span,
@@ -25,6 +31,34 @@ from synergy_reporter.rotation import (
 
 def _pbp(rows):
     return pd.DataFrame(rows)
+
+
+def _kill_frame(home, away, rows):
+    frame = []
+    for row in rows:
+        item = {
+            'periodId': 1,
+            'subType': None,
+            'success': None,
+            'entityId': home,
+            'personId': None,
+            'scores': None,
+            home: ['p1'],
+            away: ['p2'],
+        }
+        item.update(row)
+        frame.append(item)
+    return _pbp(frame)
+
+
+def _kill_payload(home, away, rows):
+    return build_rotation_payload(
+        _kill_frame(home, away, rows),
+        starter_dict={home: ['p1'], away: ['p2']},
+        id_table={home: 'Home', away: 'Away', 'p1': 'A', 'p2': 'B'},
+        home_team_id=home,
+        away_team_id=away,
+    )
 
 
 class MarginTickTests(unittest.TestCase):
@@ -344,6 +378,74 @@ class RotationPayloadTests(unittest.TestCase):
         self.assertTrue(players[1]['dnp'])
 
 
+class KillDetectionTests(unittest.TestCase):
+    def test_three_empty_opponent_trips_are_one_kill_when_we_score(self):
+        home, away = 'home-id', 'away-id'
+        payload = _kill_payload(home, away, [
+            {'clock': 'PT02M00S', 'eventType': 'period', 'subType': 'start'},
+            {'clock': 'PT01M40S', 'eventType': '2pt', 'success': 0, 'entityId': away},
+            {'clock': 'PT01M30S', 'eventType': 'rebound', 'subType': 'defensive', 'entityId': home},
+            {'clock': 'PT01M10S', 'eventType': '2pt', 'success': 1, 'entityId': home},
+            {'clock': 'PT00M50S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'clock': 'PT00M30S', 'eventType': '2pt', 'success': 0, 'entityId': away},
+            {'clock': 'PT00M10S', 'eventType': 'rebound', 'subType': 'defensive', 'entityId': home},
+            {'clock': 'PT00M00S', 'eventType': 'period', 'subType': 'end', 'entityId': None},
+        ])
+        self.assertEqual(len(payload['kills']), 1)
+        kill = payload['kills'][0]
+        self.assertEqual(kill['side'], 'home')
+        self.assertEqual(kill['stops'], 3)
+        self.assertAlmostEqual(kill['start'], 20.0)
+        self.assertAlmostEqual(kill['end'], 110.0)
+
+    def test_one_made_free_throw_breaks_the_streak(self):
+        home, away = 'home-id', 'away-id'
+        payload = _kill_payload(home, away, [
+            {'clock': 'PT02M00S', 'eventType': 'period', 'subType': 'start'},
+            {'clock': 'PT01M50S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'clock': 'PT01M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'clock': 'PT01M20S', 'eventType': 'freeThrow', 'subType': '1Of1', 'success': 1, 'entityId': away},
+            {'clock': 'PT01M00S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+        ])
+        self.assertEqual(payload['kills'], [])
+
+    def test_five_stops_stay_one_kill_across_the_quarter(self):
+        home, away = 'home-id', 'away-id'
+        payload = _kill_payload(home, away, [
+            {'periodId': 1, 'clock': 'PT01M00S', 'eventType': 'period', 'subType': 'start'},
+            {'periodId': 1, 'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 1, 'clock': 'PT00M20S', 'eventType': '2pt', 'success': 1, 'entityId': home},
+            {'periodId': 1, 'clock': 'PT00M05S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 1, 'clock': 'PT00M00S', 'eventType': 'period', 'subType': 'end', 'entityId': None},
+            {'periodId': 2, 'clock': 'PT01M00S', 'eventType': 'period', 'subType': 'start'},
+            {'periodId': 2, 'clock': 'PT00M50S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 2, 'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 2, 'clock': 'PT00M20S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+        ])
+        self.assertEqual(len(payload['kills']), 1)
+        kill = payload['kills'][0]
+        self.assertEqual(kill['side'], 'home')
+        self.assertEqual(kill['stops'], 5)
+        self.assertAlmostEqual(kill['start'], 20.0)
+        self.assertAlmostEqual(kill['end'], 100.0)
+
+    def test_technical_free_throw_does_not_break_or_count(self):
+        home, away = 'home-id', 'away-id'
+        payload = _kill_payload(home, away, [
+            {'clock': 'PT02M00S', 'eventType': 'period', 'subType': 'start'},
+            {'clock': 'PT01M40S', 'eventType': '2pt', 'success': 0, 'entityId': away},
+            {'clock': 'PT01M30S', 'eventType': 'rebound', 'subType': 'defensive', 'entityId': home},
+            {'clock': 'PT01M10S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'clock': 'PT01M00S', 'eventType': 'foul', 'subType': 'technical', 'entityId': home},
+            {'clock': 'PT00M55S', 'eventType': 'freeThrow', 'subType': '1Of1', 'success': 1, 'entityId': away},
+            {'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+        ])
+        self.assertEqual(len(payload['kills']), 1)
+        self.assertEqual(payload['kills'][0]['stops'], 3)
+        self.assertEqual(payload['kills'][0]['side'], 'home')
+
+
 class ContrastTextTests(unittest.TestCase):
     def test_luminance_black_is_zero_white_is_one(self):
         self.assertAlmostEqual(relative_luminance('#000000'), 0.0, places=4)
@@ -534,17 +636,17 @@ class RotationFigureTests(unittest.TestCase):
 
         self.assertEqual(fig.layout.yaxis4.side, 'right')
         self.assertEqual(fig.layout.yaxis4.overlaying, 'y')
-        self.assertEqual(categories(fig.layout.yaxis4), ['● A'])
+        self.assertEqual(categories(fig.layout.yaxis4), ['3+ STOPS', '● A'])
         self.assertEqual(fig.layout.yaxis6.side, 'right')
         self.assertEqual(fig.layout.yaxis6.overlaying, 'y3')
-        self.assertEqual(categories(fig.layout.yaxis6), ['  B'])
+        self.assertEqual(categories(fig.layout.yaxis6), ['  B', '3+ STOPS'])
         self.assertEqual(numbers(fig.layout.yaxis5), numbers(fig.layout.yaxis2))
         self.assertEqual(fig.layout.yaxis5.side, 'right')
         self.assertEqual(fig.layout.yaxis5.overlaying, 'y2')
         self.assertTrue(any(getattr(trace, 'yaxis', None) == 'y5' for trace in fig.data))
         self.assertTrue(any(getattr(trace, 'yaxis', None) == 'y5' for trace in report.data))
-        self.assertEqual(categories(report.layout.yaxis4), ['A'])
-        self.assertEqual(categories(report.layout.yaxis6), ['B'])
+        self.assertEqual(categories(report.layout.yaxis4), ['3+ STOPS', 'A'])
+        self.assertEqual(categories(report.layout.yaxis6), ['B', '3+ STOPS'])
         self.assertFalse(any('●' in label for label in categories(report.layout.yaxis4)))
         self.assertEqual(numbers(report.layout.yaxis5), numbers(report.layout.yaxis2))
         self.assertEqual(report.layout.yaxis5.tickfont.size, 12)
@@ -571,10 +673,15 @@ class RotationFigureTests(unittest.TestCase):
         })
         hidden = build_rotation_figure(payload, show_dnp=False)
         shown = build_rotation_figure(payload, show_dnp=True)
-        hidden_y = [trace.y[0] for trace in hidden.data if getattr(trace, 'y', None)]
-        shown_y = [trace.y[0] for trace in shown.data if getattr(trace, 'y', None)]
-        self.assertFalse(any('Sit' in str(label) for label in hidden_y))
-        self.assertTrue(any('Sit' in str(label) for label in shown_y))
+        def labels(fig):
+            found = []
+            for trace in fig.data:
+                if getattr(trace, 'y', None):
+                    found.extend(str(item) for item in trace.y)
+            return found
+
+        self.assertFalse(any('Sit' in label for label in labels(hidden)))
+        self.assertTrue(any('Sit' in label for label in labels(shown)))
 
     def test_zoom_range_sets_xaxis(self):
         fig = build_rotation_figure(self._payload(), x_range=(10, 50))
@@ -618,6 +725,199 @@ class RotationFigureTests(unittest.TestCase):
             self.assertEqual(list(figure.layout.xaxis.range), [0, 240])
 
 
+class KillFigureTests(unittest.TestCase):
+    def _payload(self):
+        return {
+            'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],
+            'teams': [
+                {
+                    'team_id': 'h',
+                    'team_name': 'Home',
+                    'side': 'home',
+                    'players': [
+                        {'label': 'A', 'stints': [{'start': 0.0, 'end': 40.0, 'pm': 2}]},
+                        {'label': '#2 Sit', 'dnp': True, 'stints': []},
+                    ],
+                },
+                {
+                    'team_id': 'a',
+                    'team_name': 'Away',
+                    'side': 'away',
+                    'players': [
+                        {'label': 'B', 'stints': [{'start': 40.0, 'end': 120.0, 'pm': -2}]},
+                        {'label': '#3 Sit', 'dnp': True, 'stints': []},
+                    ],
+                },
+            ],
+            'margin': [{'t': 0.0, 'margin': 0}, {'t': 120.0, 'margin': 4}],
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 0, 'start': 10.0, 'end': 100.0, 'delta': 10}],
+            'kills': [
+                {'side': 'home', 'stops': 3, 'start': 10.0, 'end': 50.0},
+                {'side': 'home', 'stops': 4, 'start': 60.0, 'end': 80.0},
+                {'side': 'away', 'stops': 3, 'start': 20.0, 'end': 70.0},
+            ],
+        }
+
+    def _categories(self, fig, axis):
+        return list(getattr(fig.layout[axis], 'categoryarray', None) or [])
+
+    def _kill_bars(self, fig):
+        return [
+            trace for trace in fig.data
+            if trace.type == 'bar' and trace.marker.color == KILL_COLOR
+        ]
+
+    def test_kill_rows_face_the_margin_and_keep_dnp_on_the_player_side(self):
+        fig = build_rotation_figure(self._payload(), show_dnp=True, playhead=100.0)
+        home = self._categories(fig, 'yaxis')
+        away = self._categories(fig, 'yaxis3')
+        self.assertEqual(home[0], KILL_ROW)
+        self.assertIn('Sit', home[1])
+        self.assertNotIn('●', home[0])
+        self.assertEqual(away[-1], KILL_ROW)
+        self.assertIn('Sit', away[0])
+        self.assertEqual(self._categories(fig, 'yaxis4')[0], KILL_ROW)
+        self.assertEqual(self._categories(fig, 'yaxis6')[-1], KILL_ROW)
+
+    def test_kill_bars_are_red_above_the_run_and_do_not_dim(self):
+        payload = self._payload()
+        fig = build_rotation_figure(payload, playhead=100.0)
+        bars = self._kill_bars(fig)
+        self.assertEqual(len(bars), 3)
+        for bar in bars:
+            self.assertEqual(bar.marker.opacity, 1.0)
+            self.assertEqual(bar.marker.line.width, 0)
+        for bar in bars:
+            self.assertFalse(bar.text)
+        away_bar = next(bar for bar in bars if bar.yaxis == 'y3')
+        self.assertIn('3 STOPS', away_bar.hovertext)
+        counts = {
+            round(float(ann.x), 5): ann
+            for ann in fig.layout.annotations or []
+            if ann.yref == 'paper' and str(ann.text or '').isdigit()
+        }
+        self.assertEqual(counts[30.0].text, '3')
+        self.assertEqual(counts[70.0].text, '4')
+        self.assertEqual(counts[45.0].text, '3')
+        self.assertEqual(counts[30.0].font.color, KILL_COLOR)
+        self.assertEqual(counts[30.0].font.size, 11)
+        self.assertEqual(counts[30.0].yanchor, 'top')
+        self.assertAlmostEqual(float(counts[30.0].y), fig.layout.yaxis.domain[0])
+        self.assertEqual(counts[45.0].yanchor, 'bottom')
+        self.assertAlmostEqual(float(counts[45.0].y), fig.layout.yaxis3.domain[1])
+        run_labels = [
+            ann for ann in fig.layout.annotations or []
+            if ann.yref == 'y2' and ann.text and '10' in str(ann.text)
+        ]
+        self.assertEqual(run_labels[0].yanchor, 'bottom')
+        self.assertEqual(run_labels[0].yshift, 2)
+        washes = [
+            shape for shape in fig.layout.shapes or []
+            if getattr(shape, 'fillcolor', None) and shape.fillcolor.startswith('rgba(0, 119, 182')
+        ]
+        self.assertTrue(washes)
+        player_bars = [
+            trace for trace in fig.data
+            if trace.type == 'bar' and trace.marker.color != KILL_COLOR and trace.y and 'A' in str(trace.y[0])
+        ]
+        self.assertTrue(player_bars)
+        self.assertEqual(player_bars[0].marker.opacity, 0.32)
+
+    def test_report_keeps_red_kill_labels_on_both_sides(self):
+        fig = report_rotation_figure(self._payload())
+        labels = [ann for ann in fig.layout.annotations or [] if ann.text == KILL_ROW]
+        self.assertEqual(len(labels), 4)
+        for ann in labels:
+            self.assertEqual(ann.font.color, KILL_COLOR)
+        self.assertEqual(list(fig.layout.yaxis.ticktext)[0], '')
+        self.assertEqual(list(fig.layout.yaxis3.ticktext)[-1], '')
+        counts = [
+            ann for ann in fig.layout.annotations or []
+            if ann.yref == 'paper' and str(ann.text or '').isdigit()
+        ]
+        self.assertEqual(len(counts), 3)
+        for ann in counts:
+            self.assertEqual(ann.font.color, KILL_COLOR)
+            self.assertEqual(ann.font.size, 11)
+
+    def test_a_team_with_no_kill_still_has_the_stops_row(self):
+        payload = self._payload()
+        payload['kills'] = []
+        fig = build_rotation_figure(payload, show_dnp=True)
+        self.assertEqual(self._categories(fig, 'yaxis')[0], KILL_ROW)
+        self.assertEqual(self._categories(fig, 'yaxis3')[-1], KILL_ROW)
+        self.assertEqual(KILL_ROW, '3+ STOPS')
+        self.assertFalse(self._kill_bars(fig))
+        labels = [ann for ann in fig.layout.annotations or [] if ann.text == KILL_ROW]
+        self.assertEqual(len(labels), 4)
+
+    def test_short_seam_grows_by_one_count_line(self):
+        self.assertAlmostEqual(stop_seam_spacing(520), 0.06)
+        plot_h = 400 - 40 - 48
+        self.assertAlmostEqual(stop_seam_spacing(400) * plot_h, 0.06 * plot_h + 11)
+
+    def _seam_px(self, fig, top_domain, bottom_domain):
+        plot_h = float(fig.layout.height) - 40 - 48
+        return (float(top_domain[0]) - float(bottom_domain[1])) * plot_h
+
+    def test_away_title_sits_above_the_stop_count(self):
+        fig = build_rotation_figure(self._payload(), playhead=100.0)
+        base_plot = 520 - 40 - 48
+        upper = self._seam_px(fig, fig.layout.yaxis.domain, fig.layout.yaxis2.domain)
+        lower = self._seam_px(fig, fig.layout.yaxis2.domain, fig.layout.yaxis3.domain)
+        self.assertAlmostEqual(upper, 0.06 * base_plot)
+        self.assertAlmostEqual(lower, LOWER_SEAM_INK)
+        self.assertAlmostEqual(fig.layout.height, away_lane_height(520))
+        self.assertGreater(fig.layout.height, 520)
+        away_title = next(ann for ann in fig.layout.annotations if ann.text == 'Away')
+        home_title = next(ann for ann in fig.layout.annotations if ann.text == 'Home')
+        self.assertEqual(away_title.yshift, 11)
+        self.assertAlmostEqual(float(away_title.y), float(fig.layout.yaxis3.domain[1]))
+        self.assertFalse(home_title.yshift)
+        away_count = next(
+            ann for ann in fig.layout.annotations
+            if ann.text == '3' and ann.yanchor == 'bottom'
+        )
+        self.assertFalse(away_count.yshift)
+        self.assertAlmostEqual(float(away_count.y), float(fig.layout.yaxis3.domain[1]))
+        self.assertEqual(
+            [round(float(value), 6) for value in fig.layout.yaxis6.domain],
+            [round(float(value), 6) for value in fig.layout.yaxis3.domain],
+        )
+
+        bare_payload = self._payload()
+        bare_payload['kills'] = []
+        bare = build_rotation_figure(bare_payload)
+        bare_title = next(ann for ann in bare.layout.annotations if ann.text == 'Away')
+        self.assertEqual(bare_title.yshift, 11)
+        self.assertAlmostEqual(bare.layout.height, fig.layout.height)
+
+        report = report_rotation_figure(self._payload())
+        report_title = next(ann for ann in report.layout.annotations if ann.text == 'Away')
+        self.assertEqual(report_title.yshift, 11)
+        self.assertEqual(report_title.font.size, 12)
+        self.assertAlmostEqual(report.layout.height, fig.layout.height)
+
+    def test_tall_figure_keeps_its_height_and_still_raises_the_away_title(self):
+        payload = self._payload()
+        players = [
+            {'label': f'P{index}', 'stints': [{'start': 0.0, 'end': 60.0, 'pm': 0}]}
+            for index in range(14)
+        ]
+        payload['teams'][0]['players'] = players
+        payload['teams'][1]['players'] = list(players)
+        fig = build_rotation_figure(payload)
+        base = 15 * 22 + 15 * 22 + 200
+        self.assertAlmostEqual(fig.layout.height, base)
+        self.assertAlmostEqual(away_lane_height(base), base)
+        away_title = next(ann for ann in fig.layout.annotations if ann.text == 'Away')
+        self.assertEqual(away_title.yshift, 11)
+        upper = self._seam_px(fig, fig.layout.yaxis.domain, fig.layout.yaxis2.domain)
+        lower = self._seam_px(fig, fig.layout.yaxis2.domain, fig.layout.yaxis3.domain)
+        self.assertAlmostEqual(lower, upper)
+        self.assertGreaterEqual(lower, LOWER_SEAM_INK)
+
+
 class RunLabelTests(unittest.TestCase):
     def test_same_period_omits_repeated_quarter(self):
         periods = [{'id': 1, 'label': '1Q', 'seconds': 720, 'start': 0.0, 'end': 720.0}]
@@ -637,6 +937,14 @@ class RunLabelTests(unittest.TestCase):
             periods,
         )
         self.assertEqual(label, '1Q 00:30–2Q 01:30  8–0')
+
+    def test_kill_label_counts_stops(self):
+        periods = [{'id': 1, 'label': '1Q', 'seconds': 600, 'start': 0.0, 'end': 600.0}]
+        label = format_kill_label(
+            {'side': 'home', 'stops': 4, 'start': 96.0, 'end': 216.0},
+            periods,
+        )
+        self.assertEqual(label, '1Q 08:24–06:24  4 STOPS')
 
 
 class CameraWindowTests(unittest.TestCase):

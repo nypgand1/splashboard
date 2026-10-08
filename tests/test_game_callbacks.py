@@ -193,6 +193,9 @@ class RotationViewTests(unittest.TestCase):
             'runs': [
                 {'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 30.0, 'end': 80.0, 'delta': 8},
             ],
+            'kills': [
+                {'side': 'away', 'stops': 3, 'start': 90.0, 'end': 140.0},
+            ],
             'teams': [{'side': 'home', 'players': []}],
         }
 
@@ -230,6 +233,21 @@ class RotationViewTests(unittest.TestCase):
         self.assertIsNone(view['x0'])
         self.assertIsNone(view['x1'])
         self.assertIsNone(view['slice_width'])
+
+    def test_kill_trigger_does_not_move_the_playhead(self):
+        store = json.dumps(self._payload())
+        view = game_page.apply_rotation_view_event(
+            {'type': 'rotation-kill', 'index': 0},
+            '1',
+            False,
+            [],
+            None,
+            store,
+            'g1',
+            {'period': '1', 'x0': 0.0, 'x1': 120.0, 'slice_width': 120.0, 't': 0.0},
+            {},
+        )
+        self.assertIs(view, no_update)
 
     def test_relayout_updates_period_chip_from_window(self):
         store = json.dumps(self._payload())

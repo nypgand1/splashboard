@@ -539,6 +539,29 @@ class FourStateTests(unittest.TestCase):
         self.assertTrue(buttons)
         self.assertEqual(buttons[0].children, '1Q 02:00–01:00  10–2')
         self.assertEqual(buttons[0].id, {'type': 'rotation-run', 'index': 0})
+        self.assertEqual(buttons[0].variant, 'light')
+
+    def test_kills_do_not_become_chips(self):
+        payload = {
+            'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],
+            'teams': [
+                {'team_id': 'h', 'team_name': 'Home', 'side': 'home', 'players': [{'label': 'A'}]},
+                {'team_id': 'a', 'team_name': 'Away', 'side': 'away', 'players': [{'label': 'B'}]},
+            ],
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 40.0, 'end': 80.0, 'delta': 8}],
+            'kills': [
+                {'side': 'away', 'stops': 4, 'start': 10.0, 'end': 30.0},
+                {'side': 'home', 'stops': 3, 'start': 50.0, 'end': 90.0},
+            ],
+        }
+        tree = game_page.render_rotation_children(json.dumps(payload))
+        buttons = find_type(tree, dmc.Button)
+        self.assertEqual(
+            [button.children for button in buttons],
+            ['1Q 01:20–00:40  10–2'],
+        )
+        self.assertEqual(buttons[0].id, {'type': 'rotation-run', 'index': 0})
+        self.assertEqual(buttons[0].variant, 'light')
 
 
 def _schedule_df(rows):

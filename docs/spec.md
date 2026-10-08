@@ -117,14 +117,14 @@ Wrap chrome, top to bottom, all outside the graph Paper:
 
 1. `Last Update` (first child of `#wrap-rotation`).
 2. Controls: **Live** chip to the left of the period `dmc.SegmentedControl`, then **Show DNP** (default off).
-3. Run chips (in `#pane-rotation` when any run exists).
+3. Run chips (in `#pane-rotation` when any run exists). One wrapping row, sorted by start.
 4. Graph `dmc.Paper` (`withBorder`, `radius="md"`, `shadow="xs"`, `className="braves-card-wrapper"`, `overflow: hidden`).
 
 Live chip: hidden when the game is not live-play. Filled = follow now; light = unfollowed. Clicking the chart unfollows. Clicking Live reattaches follow and snaps the playhead to now. The live-play 30s interval updates the playhead only while following.
 
 Period chips: `All` plus each period label. `All` shows the full game (`x` from 0 to `game_end`). A period chip zooms the camera to that period's seconds, then the user can pan a fixed-width window across the game. Clamp the window to `[0, game_end]`. After pan, the selected chip follows the period with majority overlap (> 50%); otherwise keep the current chip.
 
-Run chips: `1Q 08:24–05:10  10–2` (same-period labels omit the repeated quarter; color = side, home blue / away gray). Click always returns the camera to `All` and sets the playhead to the run start.
+Run chips: `1Q 08:24–05:10  10–2` (same-period labels omit the repeated quarter; light fill; color = side, home blue / away gray). Click always returns the camera to `All` and sets the playhead to the run start. Kills are not chips.
 
 Playhead `T`: not a draggable object. Chart pan moves the camera, not `T`. Any click on the chart sets `T` to that clock time. Other `T` movers are labels only (period start, Run start, Live now). Finished games default `T` to game end. Live-play defaults to follow now.
 
@@ -132,12 +132,14 @@ On-court names stay on the Gantt Y axis (`#jersey full name`). At `T`, on-court 
 
 Run detection: net margin delta ≥ 8, opponent scored ≤ 4 in the interval, wave breaks when the opponent scores 4 consecutive unanswered points. The end is the max-delta instant (not trailing opponent points). The start trims to the first scorer of the tightest qualifying suffix.
 
+Kill detection: three or more consecutive opponent stats possessions that score 0. Trips come from `annotate_possessions` (a shot, free throw, or turnover ends a used trip; an offensive rebound stays in the trip; technical and unsportsmanlike free throws stay outside it). Points on the trip are made field goals and free throws, including an and-one. One made free throw is not a stop. The defending side's own trips are skipped, not a reset. A longer streak is still one kill. Quarters, halves, and timeouts do not reset it. The span runs from the first stop to the last stop. A team with no kill still gets the `3+ STOPS` row.
+
 Chart:
 
 - Shared X (game elapsed seconds) with 3 subplots: home Gantt (`#0077b6`), margin step-line (`hv`) with dual-color fill (home lead `rgba(0, 119, 182, 0.20)`, away lead `rgba(148, 163, 184, 0.25)`) plus full-height run `vrect` bands and score annotations, away Gantt (`#94a3b8`). Each row label is repeated on the right: player names on both Gantt panels (including the on-court `●` prefix and the bench spacer), and the margin chart's numeric ticks on both sides. `margin.l` and `margin.r` are both 112. Vertical rules mark each period start after the first, and one more at `game_end`, all `#94a3b8` width 1. The x-axis stays `[0, game_end]`.
 - Width 100%. `fig.layout.autosize = True`; do not set `layout.width`. Graph style width `100%`. `config`: `displayModeBar=False`, `responsive=True`, `scrollZoom=False`, `doubleClick=False`. `layout.dragmode='pan'`. X bounded (`minallowed=0`, `maxallowed=game_end`). Y-axes `fixedrange=True`.
 - Margin ticks in steps of 5.
-- Player rows sort by first time on court, then jersey; DNP rows last (hidden unless Show DNP).
+- Player rows sort by first time on court, then jersey; DNP rows last (hidden unless Show DNP). Each team has one `3+ STOPS` row on the Gantt edge that faces the margin: the last home row, the first away row, including a team with no kill. Show DNP does not move that row onto the outer edge. The label is `3+ STOPS` in `#e63946` on both axes, with no on-court dot and no bench indent. Each kill is an opaque `#e63946` bar on that row only (no white stint stroke, no text on the bar). The playhead does not dim it. The stop count is an 11px `#e63946` annotation at the time midpoint, in the seam between that row and the margin chart, on the side nearer the bar. Home counts hang down from the bottom of the home panel. Away counts hang up from the top of the away panel. Run score anchors stay on the margin edge (home grows up from the top, away grows down from the bottom) and do not share pixels with the count. The upper seam, between the home panel and the margin, is `vertical_spacing` 0.06 of the plot area inside the 40px top and 48px bottom margins. When that seam is shorter than 24px, it grows by one 11px line and the run anchors stay. The away team name is the subplot title on the top edge of the away panel. It is shifted up by the 11px count line, and the count stays on that edge. Run scores are painted at 14px with a 2px shift and the title is 14px, so the lower seam holds 41px. Any shortfall is added to the figure height; the upper seam and the panel pixel sizes stay. The lane is reserved even when the away side has no kill. Every count is drawn. Hover is the clock span plus the count: `1Q 08:24–05:10  4 STOPS`. Run washes stay full-height and underneath; an overlapping kill keeps both. Report draws this same figure. Report has no chips.
 - Period labels: 1–4 → `1Q`–`4Q`; official OT `periodId` 11 → `OT`, 12 → `2OT`; legacy `periodId` 5 still reads as `OT`.
 - Stint hover: `#12 林志傑 (+7)` / `1Q 08:24 – 02:15 (06:09)`. Margin hover only on score-change events.
 
