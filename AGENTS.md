@@ -18,17 +18,19 @@ Read the matching spec before changing behavior or fixing a bug.
 - UI strings are English.
 
 - Resume unfinished work by querying `codebase-memory` MCP first and checking `git status -s` for modified file names. NEVER run bare `git diff` across the entire workspace. Inspect specific files (`git diff path/to/file.py`) only when strictly necessary. Do not reread whole page modules (`pages/game.py`, `pages/home.py`) when the targeted diff or graph already names the change.
-- Save progress summary to `codebase-memory` (e.g. updating ADR) before ending the turn.
-- Grill or lock product decisions before editing. Implementation is cheap; a second full-page browser pass is not.
-- When changing user-visible UI (layout, tabs, routing, rendered data), walk the related pages in a browser. A single static screenshot is not enough.
+- Save product decisions to `codebase-memory` by updating the ADR before ending the turn. Keep the test ladder in this file, out of the ADR.
+- Grill or lock product decisions before editing. Implementation is cheap; a second Playwright run is not.
+- When changing user-visible UI (layout, tabs, routing, rendered data), run the Playwright command in Verification cadence. A single static screenshot is not enough.
 
 ## Verification cadence
+
+When the diff only changes `AGENTS.md`, skip the unit suite and Playwright.
 
 1. After every code change, run the full unit suite (`python3 -m unittest discover -s tests -v`).
 2. Run Playwright (`python3 -m pytest tests/e2e -q`) before `git commit`, or when the user says the UI work is done, whichever comes first. Skip a second run if this round already ran one. Non-UI changes (parser, cache, status helpers with no layout change) skip browser tests. Report first-paint, delete page, notes, PDF, and sticky live in `tests/e2e` with Home and Game.
 3. Repair failures in this same session. Use the pytest short traceback and assertion message. Do not dump the page accessibility tree, inner HTML, or a screenshot into the transcript. Screenshots may be written under `scratch/` and left unread.
 
-Acceptance for browser checks is the Playwright process exit code. Interactive browser-protocol stepping (page snapshots, per-click dumps, live `evaluate` in the session) is not the acceptance path.
+Acceptance for browser checks is the Playwright process exit code. That command is how this repo satisfies a generic instruction to verify in the browser. If the pytest traceback is not enough to fix the failure and a developer decision is required, ask the developer and wait. Leave chrome-devtools, Playwright MCP, and interactive browser-protocol sessions (page snapshots, per-click dumps, live `evaluate`) closed until that reply explicitly allows one.
 
 ## UI, DMC & AG-Grid contracts
 
