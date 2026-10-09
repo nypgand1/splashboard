@@ -215,6 +215,38 @@ def _select_tab(page, name):
     time.sleep(0.5)
 
 
+_ROTATION_LANE_JS = '''() => {
+    const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+    if (!gd || !gd.layout || !gd.layout.margin || !gd.layout.yaxis4) return null;
+    const anns = gd.layout.annotations || [];
+    const rightKill = anns.filter((a) => a && a.text === '3+ STOPS' && +a.x === 1
+        && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+    return {
+        r: gd.layout.margin.r,
+        y4: gd.layout.yaxis4.visible !== false,
+        rightKillCount: rightKill.length,
+        rightKillShown: rightKill.length > 0 && rightKill.every((a) => a.visible !== false),
+    };
+}'''
+
+_ROTATION_LANE_NARROW = '''() => {
+    const lane = (__LANE__)();
+    return !!(lane && lane.r === 24 && lane.y4 === false
+        && lane.rightKillCount > 0 && lane.rightKillShown === false);
+}'''.replace('__LANE__', _ROTATION_LANE_JS)
+
+_ROTATION_LANE_WIDE = '''() => {
+    const lane = (__LANE__)();
+    return !!(lane && lane.r === 112 && lane.y4 === true && lane.rightKillShown === true);
+}'''.replace('__LANE__', _ROTATION_LANE_JS)
+
+
+def _rotation_right_lane(page):
+    lane = page.evaluate('(' + _ROTATION_LANE_JS + ')()')
+    assert lane, 'rotation plot layout not ready'
+    return lane
+
+
 def test_game_tabs_and_rotation_paper(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
@@ -274,7 +306,10 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert rot['graphW'] != 1220
     assert rot['graphW'] > 400
     assert rot['graphH'] > 200
-
+    wide_lane = _rotation_right_lane(page)
+    assert wide_lane['r'] == 112
+    assert wide_lane['y4'] is True
+    assert wide_lane['rightKillShown'] is True
 
     page.set_viewport_size({'width': 375, 'height': 812})
     page.wait_for_timeout(800)
@@ -289,6 +324,30 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert not narrow.get('missing')
     assert narrow['graphW'] != 1220
     assert narrow['graphW'] < 400
+    page.wait_for_function(_ROTATION_LANE_NARROW)
+    before_rev = page.evaluate(
+        '''() => {
+            const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+            return (gd && gd.layout && gd.layout.uirevision) || '';
+        }'''
+    )
+    page.locator('#rotation-period').get_by_text('1Q', exact=True).click()
+    page.wait_for_function(
+        '''(before) => {
+            const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+            if (!gd || !gd.layout || !gd.layout.margin || !gd.layout.yaxis4) return false;
+            const anns = gd.layout.annotations || [];
+            const rightKill = anns.filter((a) => a && a.text === '3+ STOPS' && +a.x === 1
+                && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+            const updated = gd.layout.uirevision !== before;
+            return updated && gd.layout.margin.r === 24 && gd.layout.yaxis4.visible === false
+                && rightKill.length > 0 && rightKill.every((a) => a.visible === false);
+        }''',
+        arg=before_rev,
+    )
+
+    page.set_viewport_size({'width': 768, 'height': 900})
+    page.wait_for_function(_ROTATION_LANE_WIDE)
 
 
 def _playhead_t(page):
