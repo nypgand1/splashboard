@@ -1245,6 +1245,10 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(cdefs[1]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[1]['cellClass'], 'ag-cell-align-center')
         self.assertEqual(cdefs[1]['width'], 95)
+        self.assertEqual(cdefs[1]['tooltipField'], '_playerFull')
+        self.assertNotIn('tooltipValueGetter', cdefs[1])
+        self.assertIn('match[2].toLowerCase()', cdefs[1]['comparator']['function'])
+        self.assertIn('!ka || !kb', cdefs[1]['comparator']['function'])
 
         self.assertEqual(cdefs[2]['field'], 'S')
         self.assertEqual(cdefs[2]['pinned'], 'left')

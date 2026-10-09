@@ -1285,6 +1285,20 @@ a.home-schedule-row {
     flex-shrink: 0;
 }
 
+.team-name-narrow {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .team-name-wide {
+        display: none !important;
+    }
+    .team-name-narrow {
+        display: flex !important;
+        flex-direction: column !important;
+    }
+}
+
 .home-schedule-list .home-schedule-row:last-child {
     border-bottom: none;
 }

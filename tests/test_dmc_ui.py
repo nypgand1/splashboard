@@ -1333,10 +1333,16 @@ class PlayerGridSortTests(unittest.TestCase):
         self.assertIn("indexOf(':')", field('Min')['comparator']['function'])
         self.assertIn("replace('%'", field('eFG%')['comparator']['function'])
         self.assertIn('DNP', field('Min')['comparator']['function'])
-        for name in ('Player', 'S', 'PM'):
+        for name in ('S', 'PM'):
             col = field(name)
             self.assertIsNone(col.get('sortingOrder'), name)
             self.assertIsNone(col.get('comparator'), name)
+        player = field('Player')
+        self.assertIsNone(player.get('sortingOrder'))
+        self.assertIn('match[2].toLowerCase()', player['comparator']['function'])
+        self.assertIn('!ka || !kb', player['comparator']['function'])
+        self.assertEqual(player.get('tooltipField'), '_playerFull')
+        self.assertNotIn('tooltipValueGetter', player)
 
 
 class GameBannerStatusTests(unittest.TestCase):

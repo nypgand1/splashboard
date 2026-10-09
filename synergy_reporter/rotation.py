@@ -5,6 +5,7 @@ import re
 
 import pandas as pd
 
+from synergy_inbounder.names import person_name, player_label
 from synergy_inbounder.possessions import annotate_possessions
 
 CLOCK_RE = re.compile(r'PT(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', re.IGNORECASE)
@@ -166,7 +167,7 @@ def _infer_period_seconds(clocks):
 
 
 def _shirt_label(person_id, id_table, roster_by_id):
-    name = id_table.get(person_id, person_id)
+    name = person_name(id_table, person_id)
     shirt = (roster_by_id.get(str(person_id)) or {}).get('shirtNumber')
     if shirt in (None, ''):
         return str(name)
@@ -825,7 +826,13 @@ def build_rotation_payload(
             
             # Scorer / event detail
             pid = row.get('personId')
-            player_name = str(id_table.get(pid, row.get('Player') or ''))
+            player_name = person_name(id_table, pid)
+            if not player_name or player_name == str(pid).strip():
+                fallback = row.get('Player') or ''
+                if str(fallback).strip():
+                    player_name = player_label(str(fallback).strip())
+                elif player_name == '':
+                    player_name = ''
             shot_type = _clean_shot_type(row.get('eventType'), row.get('subType'))
             desc = f"{player_name} {shot_type}".strip() if player_name else shot_type
             

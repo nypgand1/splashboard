@@ -2,6 +2,7 @@
 """5v5 matchup pairs from play-by-play on-court lists."""
 import pandas as pd
 
+from synergy_inbounder.names import person_name
 from synergy_inbounder.possessions import annotate_possessions
 from synergy_inbounder.pre_processing_func import _option_on
 from synergy_reporter.post_game_report import lineup_ppp_display, shot_pct_display
@@ -91,9 +92,7 @@ def _shirt(player_id, shirts):
 
 
 def _player_name(player_id, id_table):
-    if player_id in id_table:
-        return str(id_table[player_id])
-    return str(id_table.get(str(player_id), player_id))
+    return person_name(id_table, player_id)
 
 
 def _sort_key(player_id, shirts, id_table):

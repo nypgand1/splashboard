@@ -134,6 +134,8 @@ def _bs_player_block(index, dot_color):
                     dashGridOptions={
                         'domLayout': 'autoHeight',
                         'suppressHorizontalScroll': False,
+                        'enableBrowserTooltips': True,
+                        'tooltipShowDelay': 200,
                     },
                     className='ag-theme-alpine braves-clean-ag-grid',
                     style={'width': '100%'},
@@ -1281,6 +1283,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         else:
             col_def["minWidth"] = 95
             col_def["width"] = 95
+            if first_col == 'Player':
+                # tooltipField is a data key. A tooltipValueGetter string is
+                # compiled as `params => expr`, and a function expression there
+                # becomes the browser title instead of the full name.
+                col_def["tooltipField"] = "_playerFull"
         column_defs.append(col_def)
 
     if 'S' in col_set:
@@ -1566,8 +1573,34 @@ def _lineup_pair_comparator(field):
     }
 
 
+# Family, then the initial run. J.Lee sorts with K.Lee. dash-ag-grid's
+# function walker rejects var/if/for and prewalks with null arguments.
+_PLAYER_NAME_COMPARATOR = {
+    "function": (
+        "(function(a, b) {"
+        "return (function(keyOf) {"
+        "return (function(ka, kb) {"
+        "return !ka || !kb ? 0"
+        " : ka[0] < kb[0] ? -1 : ka[0] > kb[0] ? 1"
+        " : ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0;"
+        "})(keyOf ? keyOf(a) : null, keyOf ? keyOf(b) : null);"
+        "})(function(label) {"
+        "return (function(text) {"
+        "return (function(match) {"
+        "return match ? [match[2].toLowerCase(), match[1].toLowerCase()]"
+        " : [(text && text.toLowerCase) ? text.toLowerCase() : '', ''];"
+        "})(text && text.match ? text.match(/^((?:[A-Z]\\.)+)(.+)$/) : null);"
+        "})(label == null ? '' : '' + label);"
+        "});"
+        "})"
+    ),
+}
+
 def _apply_click_sort(col):
     field = col.get('field')
+    if field == 'Player':
+        col['comparator'] = _PLAYER_NAME_COMPARATOR
+        return
     if field not in _DESC_SORT_FIELDS:
         return
     col['sortingOrder'] = list(DESC_FIRST_SORT)
@@ -1973,6 +2006,8 @@ def _player_grid_options(pinned_rows):
         'domLayout': 'autoHeight',
         'suppressHorizontalScroll': False,
         'pinnedBottomRowData': pinned_rows or [],
+        'enableBrowserTooltips': True,
+        'tooltipShowDelay': 200,
     }
 
 
@@ -2557,14 +2592,20 @@ def render_pbp_children(pbp_store):
     col_list.extend(team_name_list)
     col_list = [c for c in col_list if c in pbp_df.columns]
     pbp_df = pbp_df[col_list][::-1]
-    grid = dag.AgGrid(
-        rowData=pbp_df.to_dict('records'),
-        columnDefs=[{
-            "field": c,
+    column_defs = []
+    for column in pbp_df.columns:
+        col_def = {
+            "field": column,
             "headerClass": "ag-header-align-center",
             "cellClass": "ag-cell-align-center",
             "cellStyle": {"textAlign": "center"},
-        } for c in pbp_df.columns],
+        }
+        if column == 'Player':
+            col_def['comparator'] = _PLAYER_NAME_COMPARATOR
+        column_defs.append(col_def)
+    grid = dag.AgGrid(
+        rowData=pbp_df.to_dict('records'),
+        columnDefs=column_defs,
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
         dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
         columnSize="autoSize",

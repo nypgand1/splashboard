@@ -2,7 +2,7 @@ import pandas as pd
 import json
 import os
 
-from synergy_inbounder.names import display_name
+from synergy_inbounder.names import display_name, person_full_name, person_name
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import possession_counts
@@ -585,7 +585,8 @@ class PostGameReport():
 
             p_df_t = pd.DataFrame()
             p_df_t['#'] = p_df['personId'].apply(lambda pid: str(roster_shirt_dict.get(pid, '')) if roster_shirt_dict.get(pid) is not None else '')
-            p_df_t['Player'] = p_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+            p_df_t['Player'] = p_df['personId'].apply(lambda pid: person_name(self.id_table, pid))
+            p_df_t['_playerFull'] = p_df['personId'].apply(lambda pid: person_full_name(self.id_table, pid))
             p_df_t['S'] = p_df['personId'].apply(lambda pid: '○' if (roster_starter_dict.get(pid) or pid in starters_for_team) else '')
 
             is_participated = p_df['participated'].fillna(True) if 'participated' in p_df.columns else pd.Series(True, index=p_df.index)
@@ -680,11 +681,11 @@ class PostGameReport():
                     return (0, int(bib_str))
                 except Exception:
                     pass
-            return (1, str(self.id_table.get(pid, pid)))
+            return (1, person_name(self.id_table, pid))
 
         def decode_lineup(lineup):
             sorted_players = sorted(lineup, key=_player_sort_key)
-            return "-".join([str(self.id_table.get(p, p)) for p in sorted_players])
+            return "-".join(person_name(self.id_table, p) for p in sorted_players)
 
         u_df_dict = dict()
         for t in lineup_df_dict:
@@ -993,7 +994,7 @@ class PostGameReport():
         team_id_list = df['entityId'].dropna().unique()
         
         df['Team'] = df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        df['Player'] = df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+        df['Player'] = df['personId'].apply(lambda pid: person_name(self.id_table, pid))
         team_name_list = df['Team'].dropna().unique()
         
         def decode_scores(scores):
@@ -1004,7 +1005,7 @@ class PostGameReport():
         df['scores'] = df['scores'].apply(lambda x: decode_scores(x))
     
         def decode_lineup(lineup):
-            return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
+            return str(sorted(person_name(self.id_table, p) for p in lineup))[1:-1].replace('\'', '')
         for t in team_id_list:
             df[self.id_table.get(t, f"name_{t}")] = df[t].apply(lambda x: decode_lineup(x))
         

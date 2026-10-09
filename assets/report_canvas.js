@@ -250,14 +250,23 @@
         if (!obj || !obj.columns || !obj.data) {
             return null;
         }
+        var columns = [];
+        var indexes = [];
+        obj.columns.forEach(function (col, i) {
+            if (String(col).charAt(0) === '_') {
+                return;
+            }
+            columns.push(col);
+            indexes.push(i);
+        });
         var rows = obj.data.map(function (row) {
             var rec = {};
-            obj.columns.forEach(function (col, i) {
-                rec[col] = row[i];
+            columns.forEach(function (col, i) {
+                rec[col] = row[indexes[i]];
             });
             return rec;
         });
-        return { columns: obj.columns.slice(), rows: rows };
+        return { columns: columns, rows: rows };
     }
 
     function rotationFigure() {
