@@ -1,6 +1,7 @@
 import dash
 from dash import Dash, page_container
 import dash_mantine_components as dmc
+from asset_url import stamp_asset_urls
 from navbar import create_navbar
 
 # Configure React 18 for DMC 2.8.0
@@ -49,6 +50,8 @@ app = Dash(
     backend="fastapi"
 )
 server = app.server
+stamp_asset_urls(app.css._resources)
+stamp_asset_urls(app.scripts._resources)
 
 NAVBAR = create_navbar()
 app.layout = dmc.MantineProvider(
