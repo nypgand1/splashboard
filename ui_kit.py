@@ -113,7 +113,11 @@ TEAM_NAME_PHONE_LIMIT = 12
 
 
 def team_name_lines(name, limit=TEAM_NAME_PHONE_LIMIT):
-    """Phone split for a long Latin team name. Line 2 is the last two words."""
+    """Phone split for a long Latin team name.
+
+    Three words whose first two fit in the limit: those two, then the last
+    word. The space counts. Otherwise line 2 is the last two words.
+    """
     text = '' if name is None else str(name).strip()
     if (
         not text
@@ -124,6 +128,8 @@ def team_name_lines(name, limit=TEAM_NAME_PHONE_LIMIT):
     ):
         return (text, None)
     words = text.split()
+    if len(words) == 3 and len(words[0]) + 1 + len(words[1]) <= limit:
+        return (f'{words[0]} {words[1]}', words[2])
     if len(words) == 2:
         return (words[0], words[1])
     return (' '.join(words[:-2]), ' '.join(words[-2:]))

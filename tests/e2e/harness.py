@@ -23,6 +23,7 @@ def apply_patches():
     names.update({
         'easl-home': 'Taoyuan Pauian Pilots',
         'easl-away': 'Utsunomiya Brex',
+        'easl-eastern': 'Hong Kong Eastern',
         'easl-venue': 'Studio City Event Center',
     })
     easl_frame = pd.DataFrame([
@@ -36,6 +37,17 @@ def apply_patches():
             'teamScoreHome': 81,
             'teamIdAway': 'easl-away',
             'teamScoreAway': 90,
+        },
+        {
+            'startTimeLocal': '2026-10-03T19:10:00',
+            'fixtureId': 'easl-eastern',
+            'fixtureType': 'FINAL',
+            'status': 'CONFIRMED',
+            'venueId': 'easl-venue',
+            'teamIdHome': 'easl-home',
+            'teamScoreHome': 79,
+            'teamIdAway': 'easl-eastern',
+            'teamScoreAway': 72,
         },
         {
             'startTimeLocal': '2027-03-09T00:00:00',

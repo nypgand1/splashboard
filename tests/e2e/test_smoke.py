@@ -188,6 +188,88 @@ def test_home_interval_keeps_the_show_filter(page, e2e_server):
     assert selected.count() >= 1
 
 
+def _long_team_name_geom(page):
+    return page.evaluate(
+        '''() => {
+            const wide = [...document.querySelectorAll('.team-name-wide')]
+                .find((el) => (el.textContent || '').trim() === 'Hong Kong Eastern');
+            const narrow = wide && wide.parentElement
+                ? wide.parentElement.querySelector('.team-name-narrow')
+                : null;
+            const ws = wide ? getComputedStyle(wide) : null;
+            const ns = narrow ? getComputedStyle(narrow) : null;
+            const box = wide ? wide.getBoundingClientRect() : null;
+            return {
+                found: !!(wide && narrow),
+                wideDisplay: ws && ws.display,
+                wideVisibility: ws && ws.visibility,
+                widePosition: ws && ws.position,
+                wideW: box ? box.width : null,
+                wideH: box ? box.height : null,
+                wideOverflow: ws && ws.overflow,
+                narrowDisplay: ns && ns.display,
+                narrowText: narrow ? narrow.innerText : '',
+            };
+        }'''
+    )
+
+
+def test_long_team_name_hides_the_wide_line_on_phone(page, e2e_server):
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    _wait(page, '#home-league')
+    page.locator('#home-league').get_by_text('EASL', exact=True).click()
+    page.wait_for_function(
+        "() => document.body.innerText.includes('TBD')",
+        timeout=10000,
+    )
+    _click_show(page, 'All')
+    page.wait_for_function(
+        '''() => [...document.querySelectorAll('.team-name-narrow')]
+            .some((el) => {
+                const text = el.innerText || '';
+                return text.includes('Hong Kong') && text.includes('Eastern');
+            })''',
+        timeout=10000,
+    )
+    phone = _long_team_name_geom(page)
+    assert phone['found'] is True
+    assert phone['wideDisplay'] == 'none'
+    assert phone['wideVisibility'] == 'hidden'
+    assert phone['widePosition'] == 'absolute'
+    assert phone['wideW'] == 0
+    assert phone['wideH'] == 0
+    assert phone['wideOverflow'] == 'hidden'
+    assert phone['narrowDisplay'] == 'flex'
+    narrow_lines = [line.strip() for line in phone['narrowText'].splitlines() if line.strip()]
+    assert narrow_lines == ['Hong Kong', 'Eastern']
+    row = page.locator('.home-schedule-row').filter(has_text='Eastern')
+    assert 'Hong Kong Eastern' not in row.inner_text()
+    overflow = page.evaluate(
+        'document.documentElement.scrollWidth > document.documentElement.clientWidth + 4'
+    )
+    assert overflow is False
+
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.wait_for_function(
+        '''() => {
+            const wide = [...document.querySelectorAll('.team-name-wide')]
+                .find((el) => (el.textContent || '').trim() === 'Hong Kong Eastern');
+            return !!(wide && getComputedStyle(wide).display !== 'none'
+                && wide.getBoundingClientRect().width > 0);
+        }''',
+        timeout=10000,
+    )
+    desktop = _long_team_name_geom(page)
+    assert desktop['found'] is True
+    assert desktop['wideDisplay'] != 'none'
+    assert desktop['wideVisibility'] == 'visible'
+    assert desktop['widePosition'] != 'absolute'
+    assert desktop['wideW'] > 0
+    assert desktop['narrowDisplay'] == 'none'
+    assert 'Hong Kong Eastern' in row.inner_text()
+
+
 def test_home_viewports(page, e2e_server):
     page.set_viewport_size({'width': 375, 'height': 812})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')

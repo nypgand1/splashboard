@@ -86,11 +86,16 @@ class PlayerLabelTests(unittest.TestCase):
 class TeamNameLineTests(unittest.TestCase):
     def test_phone_split_budget(self):
         self.assertEqual(team_name_lines('Ryukyu Golden Kings'), ('Ryukyu', 'Golden Kings'))
+        self.assertEqual(team_name_lines('Taoyuan Pauian Pilots'), ('Taoyuan', 'Pauian Pilots'))
         self.assertEqual(
             team_name_lines('Anyang Jung Kwan Jang Red Boosters'),
             ('Anyang Jung Kwan Jang', 'Red Boosters'),
         )
-        self.assertEqual(team_name_lines('Hong Kong Eastern'), ('Hong', 'Kong Eastern'))
+        self.assertEqual(team_name_lines('Goyang Sono Skygunners'), ('Goyang Sono', 'Skygunners'))
+        self.assertEqual(team_name_lines('Hong Kong Eastern'), ('Hong Kong', 'Eastern'))
+        self.assertEqual(team_name_lines('Taipei Fubon Braves'), ('Taipei Fubon', 'Braves'))
+        self.assertEqual(team_name_lines('Macau Hou Chon'), ('Macau Hou', 'Chon'))
+        self.assertEqual(team_name_lines('New Taipei Kings'), ('New Taipei', 'Kings'))
         self.assertEqual(team_name_lines('Formosa Dreamers'), ('Formosa', 'Dreamers'))
         self.assertEqual(team_name_lines('Hiroshima Dragonflies'), ('Hiroshima', 'Dragonflies'))
         self.assertEqual(team_name_lines('Chiba Jets'), ('Chiba Jets', None))
@@ -152,12 +157,18 @@ class PlayerColumnContractTests(unittest.TestCase):
             css = handle.read()
         start = css.find('.team-name-narrow')
         self.assertGreater(start, 0)
-        block = css[start:start + 500]
-        self.assertIn('display: none !important', block)
-        media = block.find('@media (max-width: 768px)')
-        self.assertGreater(media, 0)
-        phone = block[media:]
-        self.assertIn('.team-name-wide', phone)
+        media = css.find('@media (max-width: 768px)', start)
+        self.assertIn('display: none !important', css[start:media])
+        self.assertGreater(media, start)
+        phone = css[media:css.find('.home-schedule-list', media)]
+        wide = phone.split('.team-name-narrow', 1)[0]
+        self.assertIn('.team-name-wide', wide)
+        self.assertIn('display: none !important', wide)
+        self.assertIn('visibility: hidden !important', wide)
+        self.assertIn('position: absolute !important', wide)
+        self.assertIn('width: 0 !important', wide)
+        self.assertIn('height: 0 !important', wide)
+        self.assertIn('overflow: hidden !important', wide)
         self.assertIn('display: flex !important', phone)
 
 
