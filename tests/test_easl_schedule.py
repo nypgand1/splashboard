@@ -62,7 +62,7 @@ class SeasonCatalogTests(unittest.TestCase):
                 'b6d36761-3d8e-11ed-a1f2-d5490a4ddc81',
             ],
         )
-        self.assertEqual(SYNERGY_SEASON_ID, '00ab711f-938c-11f0-91bb-4b1b779ef3d9')
+        self.assertEqual(SYNERGY_SEASON_ID, '94b08c7c-bb00-11f1-ba8e-bd03fe15a10b')
         self.assertEqual(
             [label for label, _season_id in EASL_SEASONS],
             ['2026-27', '2025-26', '2024-25', '2023-24'],
@@ -174,7 +174,7 @@ class HomeLeagueScheduleTests(unittest.TestCase):
             )
         self.assertEqual(listed.call_args.args[0], SYNERGY_EASL_ORGANIZATION_ID)
         self.assertEqual(prefetch.call_args.kwargs['organization_id'], SYNERGY_EASL_ORGANIZATION_ID)
-        self.assertTrue(prefetch.call_args.kwargs['finished_only'])
+        self.assertNotIn('finished_only', prefetch.call_args.kwargs)
         self.assertEqual(loaded.iloc[0]['Home Team'], 'Taoyuan Pauian Pilots')
         self.assertEqual(loaded.iloc[0]['Venue'], TEAM_TBD)
         self.assertEqual(display_name(names, None), TEAM_TBD)
@@ -189,7 +189,6 @@ class HomeLeagueScheduleTests(unittest.TestCase):
             prefetch_latest_games(
                 frame,
                 organization_id=SYNERGY_EASL_ORGANIZATION_ID,
-                finished_only=True,
             )
         cached.assert_not_called()
 
@@ -212,10 +211,17 @@ class HomeLeagueScheduleTests(unittest.TestCase):
         self.assertEqual(seen['league'], 'EASL')
         self.assertEqual(seen['season_id'], dict(EASL_SEASONS)['2025-26'])
         self.assertTrue(seen['prefetch'])
-        markup = str(tree)
-        self.assertIn('Utsunomiya Brex', markup)
-        self.assertIn(TEAM_TBD, markup)
-        self.assertIn('/game/easl/easl-final', markup)
+        page, stored = tree
+        from tests.test_dmc_ui import _by_class, _segmented
+        self.assertEqual(_segmented(page, 'home-show').value, 'upcoming')
+        self.assertIsNone(_segmented(page, 'home-game-type').value)
+        listed = str(_by_class(page, 'home-schedule-list')[0])
+        self.assertIn(TEAM_TBD, listed)
+        self.assertNotIn('Utsunomiya Brex', listed)
+        self.assertNotIn('/game/easl/easl-final', listed)
+        self.assertEqual(stored['show'], 'upcoming')
+        self.assertIsNone(stored['game_type'])
+        self.assertEqual(stored['league'], 'EASL')
 
 
 class PlgGameLookupTests(unittest.TestCase):

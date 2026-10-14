@@ -4,12 +4,16 @@ import time
 import unittest
 from unittest.mock import patch
 
+import pandas as pd
+
 from synergy_inbounder.communicator import Communicator, SynergyApiError, payload_from_response
 from synergy_inbounder.settings import MissingSynergyCredentials, get_synergy_credentials
 from synergy_inbounder.runtime_cache import (
     clear_runtime_caches,
     get_cached_report,
     is_finished_status,
+    latest_finished_fixture_ids,
+    prefetch_latest_games,
 )
 
 
@@ -491,6 +495,73 @@ class BackgroundWarmupTests(unittest.TestCase):
                 patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='FINISHED'):
             prefetch_latest_games(sample_df, max_games=2)
             time.sleep(0.05)
+
+
+class _InlineThread:
+    def __init__(self, target=None, daemon=None):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+class LatestFinishedPrefetchTests(unittest.TestCase):
+    def test_latest_pair_skips_unplayed_live_and_abandoned(self):
+        frame = pd.DataFrame([
+            {'fixtureId': 'early', 'status': 'FINISHED', 'startTimeLocal': '2026-10-01T12:00:00'},
+            {'fixtureId': 'draft', 'status': 'DRAFT', 'startTimeLocal': '2026-12-01T12:00:00'},
+            {'fixtureId': 'live', 'status': 'IN_PROGRESS', 'startTimeLocal': '2026-11-01T12:00:00'},
+            {'fixtureId': 'mid', 'status': 'CONFIRMED', 'startTimeLocal': '2026-10-20T12:00:00'},
+            {'fixtureId': 'abandoned', 'status': 'ABANDONED', 'startTimeLocal': '2026-11-15T12:00:00'},
+            {'fixtureId': 'late', 'status': 'FINISHED', 'startTimeLocal': '2026-11-02T12:00:00'},
+        ])
+        self.assertEqual(latest_finished_fixture_ids(frame, 2), ['mid', 'late'])
+
+    def test_equal_start_times_keep_schedule_order(self):
+        frame = pd.DataFrame([
+            {'fixtureId': 'early', 'status': 'FINISHED', 'startTimeLocal': '2026-10-01T12:00:00'},
+            {'fixtureId': 'same-early', 'status': 'FINISHED', 'startTimeLocal': '2026-10-20T12:00:00'},
+            {'fixtureId': 'same-late', 'status': 'CONFIRMED', 'startTimeLocal': '2026-10-20T12:00:00'},
+        ])
+        self.assertEqual(latest_finished_fixture_ids(frame, 2), ['same-early', 'same-late'])
+
+    def test_missing_start_time_stays_out_unless_every_finished_row_lacks_one(self):
+        mixed = pd.DataFrame([
+            {'fixtureId': 'no-time', 'status': 'FINISHED', 'startTimeLocal': None},
+            {'fixtureId': 'early', 'status': 'FINISHED', 'startTimeLocal': '2026-10-01T12:00:00'},
+            {'fixtureId': 'late', 'status': 'FINISHED', 'startTimeLocal': '2026-11-02T12:00:00'},
+        ])
+        self.assertEqual(latest_finished_fixture_ids(mixed, 2), ['early', 'late'])
+        blank = pd.DataFrame([
+            {'fixtureId': 'first', 'status': 'FINISHED', 'startTimeLocal': ''},
+            {'fixtureId': 'second', 'status': 'CONFIRMED', 'startTimeLocal': None},
+            {'fixtureId': 'third', 'status': 'FINISHED', 'startTimeLocal': '  '},
+        ])
+        self.assertEqual(latest_finished_fixture_ids(blank, 2), ['second', 'third'])
+
+    def test_no_finished_game_does_not_prefetch(self):
+        frame = pd.DataFrame([
+            {'fixtureId': 'draft', 'status': 'DRAFT', 'startTimeLocal': '2026-10-24T19:00:00'},
+            {'fixtureId': 'later', 'status': 'SCHEDULED', 'startTimeLocal': '2027-05-02T19:00:00'},
+        ])
+        with patch('synergy_inbounder.runtime_cache.get_cached_report') as cached:
+            prefetch_latest_games(frame)
+        cached.assert_not_called()
+
+    def test_prefetch_requests_the_latest_finished_pair_in_order(self):
+        frame = pd.DataFrame([
+            {'fixtureId': 'early', 'status': 'FINISHED', 'startTimeLocal': '2026-10-01T12:00:00'},
+            {'fixtureId': 'late', 'status': 'FINISHED', 'startTimeLocal': '2026-11-02T12:00:00'},
+            {'fixtureId': 'draft', 'status': 'DRAFT', 'startTimeLocal': '2027-05-02T19:00:00'},
+        ])
+        with patch('synergy_inbounder.runtime_cache.threading.Thread', _InlineThread), \
+                patch('synergy_inbounder.runtime_cache.get_cached_report') as cached:
+            prefetch_latest_games(frame, organization_id='b1vqz')
+        self.assertEqual(
+            [call.args[0] for call in cached.call_args_list],
+            ['early', 'late'],
+        )
+        self.assertTrue(all(call.args[1] == 'b1vqz' for call in cached.call_args_list))
 
 
 if __name__ == '__main__':

@@ -4,6 +4,8 @@ import threading
 import time
 from concurrent.futures import Future
 
+import pandas as pd
+
 from synergy_inbounder.game_status import (
     FINISHED_STATUSES,
     is_finished_status,
@@ -165,19 +167,73 @@ def warmup_game_report(game_id, match_info=None, organization_id=None):
     t.start()
 
 
-def prefetch_latest_games(season_df, max_games=2, organization_id=None, finished_only=False):
-    """Background sequential worker to prefetch up to max_games reports."""
-    if season_df is None or season_df.empty:
-        return
+def _parse_start_time(value):
+    if value is None or value == '':
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    try:
+        parsed = pd.to_datetime(value)
+    except Exception:
+        return None
+    try:
+        if pd.isna(parsed):
+            return None
+    except Exception:
+        pass
+    return parsed
 
-    finished_rows = season_df[season_df['status'].apply(is_finished_status)]
-    target_ids = []
-    if not finished_rows.empty:
-        target_ids = finished_rows.tail(max_games)['fixtureId'].tolist()
-    elif finished_only:
+
+def _fixture_id(value):
+    if value is None:
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except Exception:
+        pass
+    text = str(value).strip()
+    if not text or text.lower() == 'nan':
+        return ''
+    return text
+
+
+def latest_finished_fixture_ids(season_df, max_games=2):
+    """Up to max_games finished fixtures, latest startTimeLocal last.
+
+    A missing start time stays out unless every finished row is missing one.
+    Equal times keep schedule order: the later row is later.
+    """
+    if max_games <= 0 or season_df is None or getattr(season_df, 'empty', True):
+        return []
+    columns = set(getattr(season_df, 'columns', []))
+    if 'status' not in columns or 'fixtureId' not in columns:
+        return []
+    finished = season_df[season_df['status'].map(is_finished_status)]
+    if finished.empty:
+        return []
+    timed = []
+    untimed = []
+    for position, row in enumerate(finished.to_dict('records')):
+        fixture_id = _fixture_id(row.get('fixtureId'))
+        if not fixture_id:
+            continue
+        start = _parse_start_time(row.get('startTimeLocal'))
+        (timed if start is not None else untimed).append((position, start, fixture_id))
+    pool = sorted(timed, key=lambda item: (item[1], item[0])) if timed else untimed
+    if not pool:
+        return []
+    return [item[2] for item in pool[-max_games:]]
+
+
+def prefetch_latest_games(season_df, max_games=2, organization_id=None):
+    """Background sequential worker to prefetch up to max_games finished reports."""
+    target_ids = latest_finished_fixture_ids(season_df, max_games)
+    if not target_ids:
         return
-    else:
-        target_ids = season_df.tail(max_games)['fixtureId'].tolist()
 
     def _worker():
         for gid in target_ids:

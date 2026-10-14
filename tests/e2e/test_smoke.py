@@ -127,7 +127,7 @@ def test_home_easl_finished_row_links_to_its_game(page, e2e_server):
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
     _wait(page, '#home-league')
     _wait(page, '#home-season')
-    assert _season_label(page) == '2025-26'
+    assert _season_label(page) == '2026-27'
     assert _season_is_not_editable(page) is True
     assert 'PLG' in page.locator('#home-league').inner_text()
 

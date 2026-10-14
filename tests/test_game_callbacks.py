@@ -1,7 +1,7 @@
 import base64
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import dash_mantine_components as dmc
 import pandas as pd
@@ -17,6 +17,37 @@ class SafeLoadsTests(unittest.TestCase):
         self.assertEqual(game_page.safe_loads('not-json'), {})
         self.assertEqual(game_page.safe_loads('null'), {})
         self.assertEqual(game_page.safe_loads('{"status": "FINISHED"}'), {'status': 'FINISHED'})
+
+
+class WarmupGateTests(unittest.TestCase):
+    def _load(self, n, triggered, status):
+        report = Mock()
+        report.get_all_lineup_stats_json_dict.return_value = {'size': 5}
+        with patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, 'get_cached_game_status', return_value=status), \
+                patch.object(game_page, 'warmup_game_report') as warmup, \
+                patch.object(game_page, '_triggered_id', return_value=triggered):
+            payload = game_page.update_lineup_store(n, 'gid', 'plg')
+        return payload, warmup
+
+    def test_finished_load_starts_warmup_before_the_interval_ticks(self):
+        payload, warmup = self._load(0, 'interval-component', 'FINISHED')
+        warmup.assert_called_once_with('gid', organization_id='b1vqz')
+        self.assertIn('"size": 5', payload)
+
+    def test_game_or_league_change_warms_a_finished_game(self):
+        _, by_game = self._load(4, 'game_id', 'CONFIRMED')
+        by_game.assert_called_once_with('gid', organization_id='b1vqz')
+        _, by_league = self._load(4, 'game_league', 'FINISHED')
+        by_league.assert_called_once_with('gid', organization_id='b1vqz')
+
+    def test_later_tick_and_unfinished_load_do_not_start_warmup(self):
+        _, later = self._load(3, 'interval-component', 'FINISHED')
+        later.assert_not_called()
+        _, live = self._load(0, 'game_id', 'IN_PROGRESS')
+        live.assert_not_called()
+        _, abandoned = self._load(0, 'game_id', 'ABANDONED')
+        abandoned.assert_not_called()
 
 
 class IntervalGateTests(unittest.TestCase):

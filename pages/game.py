@@ -13,9 +13,12 @@ from synergy_inbounder.settings import organization_for_league, season_ids_for_o
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
+    get_cached_game_status,
     get_cached_report,
+    warmup_game_report,
 )
 from synergy_inbounder.game_status import (
+    is_finished_status,
     is_live_play_status,
     status_bucket,
 )
@@ -570,6 +573,20 @@ def _organization(league):
     return organization_for_league(league)
 
 
+def _triggered_id():
+    try:
+        return ctx.triggered_id
+    except Exception:
+        return None
+
+
+def _is_game_load(n_intervals, triggered):
+    """A load is a game or league change, or the callback before the interval ticks."""
+    if triggered in ('game_id', 'game_league'):
+        return True
+    return not isinstance(n_intervals, int) or n_intervals == 0
+
+
 @callback(
     Output('bs_store', 'data'),
     [Input('interval-component', 'n_intervals'),
@@ -726,8 +743,11 @@ def update_lineup_store(n, game_id, league='plg'):
         return _error_store()
     try:
         report = get_cached_report(game_id, org)
-        from synergy_inbounder.runtime_cache import warmup_game_report
-        warmup_game_report(game_id, organization_id=org)
+        if (
+            _is_game_load(n, _triggered_id())
+            and is_finished_status(get_cached_game_status(game_id, org))
+        ):
+            warmup_game_report(game_id, organization_id=org)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
         return _error_store()

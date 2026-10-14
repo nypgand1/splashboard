@@ -10,7 +10,7 @@ Product behavior is in `docs/spec.md`. This file covers the external API and how
 
 Organization ids and both season tables live in `synergy_inbounder/settings.py`.
 
-- PLG is `b1vqz`. `SYNERGY_SEASON_ID` is the `2025-26` season. Home can select the other regular seasons in that table. Game status lookup searches the PLG default season first, then the rest of that table.
+- PLG is `b1vqz`. `SYNERGY_SEASON_ID` is the `2026-27` season. Home can select the other regular seasons in that table. Game status lookup searches the PLG default season first, then the rest of that table.
 - EASL is `b1e0z`. `EASL_SEASON_ID` is the `2026-27` season. The menu is the four regular seasons in that table, newest first. Champions Week 2023 is not in the menu. Home does not call a seasons catalog. Game status lookup searches the EASL default season first, then the rest of that table.
 - There is no cross-organization fallback.
 

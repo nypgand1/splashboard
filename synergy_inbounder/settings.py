@@ -47,7 +47,7 @@ SYNERGY_SEASONS = (
     ('2021-22', 'b84d0073-3d8e-11ed-bbf9-2d934c23ac1b'),
     ('2020-21', 'b6d36761-3d8e-11ed-a1f2-d5490a4ddc81'),
 )
-SYNERGY_SEASON_ID = dict(SYNERGY_SEASONS)['2025-26']
+SYNERGY_SEASON_ID = dict(SYNERGY_SEASONS)['2026-27']
 
 
 def plg_season_ids():
