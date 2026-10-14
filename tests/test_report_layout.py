@@ -562,6 +562,10 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('function lineupNameLines', js)
         self.assertIn('td.report-lineup-name', css)
         self.assertIn('white-space: normal', css)
+        second_head = css.split('.report-js-table thead tr:nth-child(2) th', 1)[1].split('}', 1)[0]
+        self.assertIn('padding-left: 0', second_head)
+        self.assertIn('padding-right: 0', second_head)
+        self.assertIn('font-size: 8px', second_head)
         self.assertNotIn('measureContentPx(item) + 3', js)
         self.assertIn('function syncPageOneSideNote', js)
         self.assertNotIn('clone.className = card.className', js)

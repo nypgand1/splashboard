@@ -898,6 +898,12 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.report-js-table thead tr:nth-child(2) th {
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 8px;
+}
+
 .report-js-table tbody tr:nth-of-type(odd) {
     background-color: var(--row-alt);
 }
