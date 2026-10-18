@@ -88,8 +88,8 @@ def test_home_schedule_filters_and_links(page, e2e_server):
         'a.home-schedule-row-clickable',
         'els => els.map(a => a.getAttribute("href"))',
     )
-    assert f'/game/{LIVE_ID}' in hrefs
-    assert f'/game/{FINISHED_ID}' not in hrefs
+    assert f'/game/plg/{LIVE_ID}' in hrefs
+    assert f'/game/plg/{FINISHED_ID}' not in hrefs
 
     list_text = page.locator('.home-schedule-list').inner_text()
     assert '2026-03-01' in list_text
@@ -102,14 +102,14 @@ def test_home_schedule_filters_and_links(page, e2e_server):
         'a.home-schedule-row-clickable',
         'els => els.map(a => a.getAttribute("href"))',
     )
-    assert f'/game/{FINISHED_ID}' in hrefs
-    assert f'/game/{LIVE_ID}' in hrefs
+    assert f'/game/plg/{FINISHED_ID}' in hrefs
+    assert f'/game/plg/{LIVE_ID}' in hrefs
     static_hrefs = page.eval_on_selector_all(
         '.home-schedule-row-static',
         'els => els.map(el => el.getAttribute("href"))',
     )
-    assert page.locator(f'a[href="/game/{CANCELLED_ID}"]').count() == 0
-    assert page.locator(f'a[href="/game/{UPCOMING_ID}"]').count() == 0
+    assert page.locator(f'a[href="/game/plg/{CANCELLED_ID}"]').count() == 0
+    assert page.locator(f'a[href="/game/plg/{UPCOMING_ID}"]').count() == 0
     assert page.locator('.home-schedule-row-static').count() >= 1
     assert all(h in (None, '') for h in static_hrefs)
 
@@ -118,16 +118,16 @@ def test_home_schedule_filters_and_links(page, e2e_server):
     time.sleep(0.3)
     assert page.url == path0
 
-    page.locator(f'a[href="/game/{FINISHED_ID}"]').first.click()
-    page.wait_for_url(f'**/game/{FINISHED_ID}', timeout=15000)
+    page.locator(f'a[href="/game/plg/{FINISHED_ID}"]').first.click()
+    page.wait_for_url(f'**/game/plg/{FINISHED_ID}', timeout=15000)
 
 
-def test_home_easl_schedule_is_not_linked_to_game(page, e2e_server):
+def test_home_easl_finished_row_links_to_its_game(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
     _wait(page, '#home-league')
     _wait(page, '#home-season')
-    assert _season_label(page) == '2025-26'
+    assert _season_label(page) == '2026-27'
     assert _season_is_not_editable(page) is True
     assert 'PLG' in page.locator('#home-league').inner_text()
 
@@ -151,7 +151,8 @@ def test_home_easl_schedule_is_not_linked_to_game(page, e2e_server):
         'a',
         'els => els.map((el) => el.getAttribute("href") || "")',
     )
-    assert all('easl-final' not in href and 'easl-draft' not in href for href in hrefs)
+    assert '/game/easl/easl-final' in hrefs
+    assert all('easl-draft' not in href for href in hrefs)
     assert '90 : 81' in page.locator('.home-schedule-list').inner_text() or \
         '90' in page.locator('.home-schedule-list').inner_text()
 
@@ -163,7 +164,7 @@ def test_home_interval_keeps_the_show_filter(page, e2e_server):
     _click_show(page, 'All')
     page.wait_for_function(
         '''() => [...document.querySelectorAll('a.home-schedule-row-clickable')]
-            .some((el) => (el.getAttribute('href') || '').includes('/game/fin-regular'))''',
+            .some((el) => (el.getAttribute('href') || '').includes('/game/plg/fin-regular'))''',
         timeout=10000,
     )
     page.evaluate(
@@ -182,9 +183,91 @@ def test_home_interval_keeps_the_show_filter(page, e2e_server):
         'a.home-schedule-row-clickable',
         'els => els.map(a => a.getAttribute("href"))',
     )
-    assert f'/game/{FINISHED_ID}' in hrefs
+    assert f'/game/plg/{FINISHED_ID}' in hrefs
     selected = page.locator('#home-show label, #home-show button').filter(has_text='All')
     assert selected.count() >= 1
+
+
+def _long_team_name_geom(page):
+    return page.evaluate(
+        '''() => {
+            const wide = [...document.querySelectorAll('.team-name-wide')]
+                .find((el) => (el.textContent || '').trim() === 'Hong Kong Eastern');
+            const narrow = wide && wide.parentElement
+                ? wide.parentElement.querySelector('.team-name-narrow')
+                : null;
+            const ws = wide ? getComputedStyle(wide) : null;
+            const ns = narrow ? getComputedStyle(narrow) : null;
+            const box = wide ? wide.getBoundingClientRect() : null;
+            return {
+                found: !!(wide && narrow),
+                wideDisplay: ws && ws.display,
+                wideVisibility: ws && ws.visibility,
+                widePosition: ws && ws.position,
+                wideW: box ? box.width : null,
+                wideH: box ? box.height : null,
+                wideOverflow: ws && ws.overflow,
+                narrowDisplay: ns && ns.display,
+                narrowText: narrow ? narrow.innerText : '',
+            };
+        }'''
+    )
+
+
+def test_long_team_name_hides_the_wide_line_on_phone(page, e2e_server):
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    _wait(page, '#home-league')
+    page.locator('#home-league').get_by_text('EASL', exact=True).click()
+    page.wait_for_function(
+        "() => document.body.innerText.includes('TBD')",
+        timeout=10000,
+    )
+    _click_show(page, 'All')
+    page.wait_for_function(
+        '''() => [...document.querySelectorAll('.team-name-narrow')]
+            .some((el) => {
+                const text = el.innerText || '';
+                return text.includes('Hong Kong') && text.includes('Eastern');
+            })''',
+        timeout=10000,
+    )
+    phone = _long_team_name_geom(page)
+    assert phone['found'] is True
+    assert phone['wideDisplay'] == 'none'
+    assert phone['wideVisibility'] == 'hidden'
+    assert phone['widePosition'] == 'absolute'
+    assert phone['wideW'] == 0
+    assert phone['wideH'] == 0
+    assert phone['wideOverflow'] == 'hidden'
+    assert phone['narrowDisplay'] == 'flex'
+    narrow_lines = [line.strip() for line in phone['narrowText'].splitlines() if line.strip()]
+    assert narrow_lines == ['Hong Kong', 'Eastern']
+    row = page.locator('.home-schedule-row').filter(has_text='Eastern')
+    assert 'Hong Kong Eastern' not in row.inner_text()
+    overflow = page.evaluate(
+        'document.documentElement.scrollWidth > document.documentElement.clientWidth + 4'
+    )
+    assert overflow is False
+
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.wait_for_function(
+        '''() => {
+            const wide = [...document.querySelectorAll('.team-name-wide')]
+                .find((el) => (el.textContent || '').trim() === 'Hong Kong Eastern');
+            return !!(wide && getComputedStyle(wide).display !== 'none'
+                && wide.getBoundingClientRect().width > 0);
+        }''',
+        timeout=10000,
+    )
+    desktop = _long_team_name_geom(page)
+    assert desktop['found'] is True
+    assert desktop['wideDisplay'] != 'none'
+    assert desktop['wideVisibility'] == 'visible'
+    assert desktop['widePosition'] != 'absolute'
+    assert desktop['wideW'] > 0
+    assert desktop['narrowDisplay'] == 'none'
+    assert 'Hong Kong Eastern' in row.inner_text()
 
 
 def test_home_viewports(page, e2e_server):
@@ -214,9 +297,41 @@ def _select_tab(page, name):
     time.sleep(0.5)
 
 
+_ROTATION_LANE_JS = '''() => {
+    const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+    if (!gd || !gd.layout || !gd.layout.margin || !gd.layout.yaxis4) return null;
+    const anns = gd.layout.annotations || [];
+    const rightKill = anns.filter((a) => a && a.text === '3+ STOPS' && +a.x === 1
+        && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+    return {
+        r: gd.layout.margin.r,
+        y4: gd.layout.yaxis4.visible !== false,
+        rightKillCount: rightKill.length,
+        rightKillShown: rightKill.length > 0 && rightKill.every((a) => a.visible !== false),
+    };
+}'''
+
+_ROTATION_LANE_NARROW = '''() => {
+    const lane = (__LANE__)();
+    return !!(lane && lane.r === 24 && lane.y4 === false
+        && lane.rightKillCount > 0 && lane.rightKillShown === false);
+}'''.replace('__LANE__', _ROTATION_LANE_JS)
+
+_ROTATION_LANE_WIDE = '''() => {
+    const lane = (__LANE__)();
+    return !!(lane && lane.r === 112 && lane.y4 === true && lane.rightKillShown === true);
+}'''.replace('__LANE__', _ROTATION_LANE_JS)
+
+
+def _rotation_right_lane(page):
+    lane = page.evaluate('(' + _ROTATION_LANE_JS + ')()')
+    assert lane, 'rotation plot layout not ready'
+    return lane
+
+
 def test_game_tabs_and_rotation_paper(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     banner = page.locator('.game-info-banner').inner_text()
     assert HOME in banner
@@ -273,7 +388,10 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert rot['graphW'] != 1220
     assert rot['graphW'] > 400
     assert rot['graphH'] > 200
-
+    wide_lane = _rotation_right_lane(page)
+    assert wide_lane['r'] == 112
+    assert wide_lane['y4'] is True
+    assert wide_lane['rightKillShown'] is True
 
     page.set_viewport_size({'width': 375, 'height': 812})
     page.wait_for_timeout(800)
@@ -288,6 +406,30 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert not narrow.get('missing')
     assert narrow['graphW'] != 1220
     assert narrow['graphW'] < 400
+    page.wait_for_function(_ROTATION_LANE_NARROW)
+    before_rev = page.evaluate(
+        '''() => {
+            const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+            return (gd && gd.layout && gd.layout.uirevision) || '';
+        }'''
+    )
+    page.locator('#rotation-period').get_by_text('1Q', exact=True).click()
+    page.wait_for_function(
+        '''(before) => {
+            const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+            if (!gd || !gd.layout || !gd.layout.margin || !gd.layout.yaxis4) return false;
+            const anns = gd.layout.annotations || [];
+            const rightKill = anns.filter((a) => a && a.text === '3+ STOPS' && +a.x === 1
+                && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+            const updated = gd.layout.uirevision !== before;
+            return updated && gd.layout.margin.r === 24 && gd.layout.yaxis4.visible === false
+                && rightKill.length > 0 && rightKill.every((a) => a.visible === false);
+        }''',
+        arg=before_rev,
+    )
+
+    page.set_viewport_size({'width': 768, 'height': 900})
+    page.wait_for_function(_ROTATION_LANE_WIDE)
 
 
 def _playhead_t(page):
@@ -339,7 +481,7 @@ def _click_rotation_time(page, t, yaxis='yaxis'):
 
 def test_rotation_playhead_follows_click_time(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     for name in ('Box Score', 'Lineup Stats', 'Play-By-Play', 'Rotation'):
         _select_tab(page, name)
@@ -382,7 +524,7 @@ def test_rotation_playhead_follows_click_time(page, e2e_server):
 
 def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
     page.set_viewport_size({'width': 375, 'height': 812})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     page.wait_for_timeout(600)
     assert page.locator('#report-tab').is_visible() is False
@@ -390,7 +532,7 @@ def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
 
 def test_report_first_paint_on_desktop(page, e2e_server):
     page.set_viewport_size({'width': 1400, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
     report_tab = page.locator('#report-tab')
@@ -430,7 +572,7 @@ def test_report_first_paint_on_desktop(page, e2e_server):
 
 def test_box_score_period_chip_filters_team_box(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
@@ -454,7 +596,7 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
 
 def test_box_score_period_keeps_mounted_tables(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#bs-score-scroll table').first.wait_for(state='attached', timeout=20000)
@@ -510,7 +652,7 @@ def test_box_score_period_keeps_mounted_tables(page, e2e_server):
 
 def test_box_score_paint_and_table_pan(page, e2e_server):
     page.set_viewport_size({'width': 500, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
@@ -604,7 +746,7 @@ def _court_boxes(page):
 
 def test_shot_chart_tab(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Shot Chart')
     page.locator('#shot-chart-court-home img').wait_for(state='visible', timeout=20000)
@@ -704,6 +846,9 @@ def _lineup_frame(page):
     page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
         state='attached', timeout=20000,
     )
+    page.locator('#pane-lineup .ag-header-cell[col-id="PIP"]').first.wait_for(
+        state='attached', timeout=20000,
+    )
     _reveal_loading(page, 'wrap-lineup')
     return page.evaluate(
         '''() => {
@@ -711,11 +856,21 @@ def _lineup_frame(page):
             const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="Lineup"]');
             const viewport = document.querySelector('#pane-lineup .ag-center-cols-viewport');
             const cs = getComputedStyle(wrap);
+            const pip = document.querySelector('#pane-lineup .ag-header-cell[col-id="PIP"]');
+            const minHead = document.querySelector('#pane-lineup .ag-header-cell[col-id="Min"]');
+            const group = document.querySelector('#pane-lineup .ag-header-group-cell');
+            const pipCs = pip ? getComputedStyle(pip) : null;
+            const minCs = minHead ? getComputedStyle(minHead) : null;
+            const groupCs = group ? getComputedStyle(group) : null;
             return {
                 marginLeft: cs.marginLeft,
                 marginRight: cs.marginRight,
                 headerW: header ? Math.round(header.getBoundingClientRect().width) : 0,
                 overflow: viewport ? viewport.scrollWidth > viewport.clientWidth + 2 : null,
+                pipFont: pipCs ? pipCs.fontSize : '',
+                pipPad: pipCs ? pipCs.paddingLeft : '',
+                minFont: minCs ? minCs.fontSize : '',
+                groupFont: groupCs ? groupCs.fontSize : '',
             };
         }'''
     )
@@ -723,13 +878,59 @@ def _lineup_frame(page):
 
 def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     page.set_viewport_size({'width': 1210, 'height': 834})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Lineup Stats')
     landscape = _lineup_frame(page)
     assert landscape['marginLeft'] == '-18px'
     assert landscape['marginRight'] == '-18px'
-    assert 240 <= landscape['headerW'] <= 260
+    assert landscape['headerW'] == 250
+    assert landscape['overflow'] is False
+    assert landscape['pipFont'] == '10px'
+    assert landscape['pipPad'] == '0px'
+    assert landscape['minFont'] == '12px'
+    assert landscape['groupFont'] == '12px'
+    fitted = page.evaluate(
+        '''() => new Promise((resolve) => {
+            const w = window.splashboardLineupColumnWidth;
+            const formula = w(1156, 756, 250, 341) === 341
+                && w(1156, 756, 250, 100) === 250
+                && w(900, 756, 250, 341) === 250
+                && w(1400, 756, 250, 341) === 341
+                && w(0, 756, 250, 341) === null;
+            const api = window.dash_ag_grid.getApi('lineup-grid-0');
+            const host = document.getElementById('lineup-grid-0');
+            const header = host.querySelector('.ag-header-cell[col-id="Lineup"]');
+            const saved = [];
+            api.forEachNode(node => {
+                if (node.data && Object.prototype.hasOwnProperty.call(node.data, 'Lineup')) {
+                    saved.push([node, node.data.Lineup]);
+                    node.data.Lineup = 'Y.W.Chen-J.Pickett-K.Y.Chou-M.Todorovic-C.W.Lee';
+                }
+            });
+            const afterPaint = (fn) => requestAnimationFrame(() => requestAnimationFrame(fn));
+            window.splashboardFitLineupWidth({api: api, clientWidth: host.clientWidth});
+            afterPaint(() => {
+                const grown = Math.round(header.getBoundingClientRect().width);
+                const cap = host.clientWidth - 772;
+                saved.forEach(pair => { pair[0].data.Lineup = pair[1]; });
+                window.splashboardFitLineupWidth({api: api, clientWidth: host.clientWidth});
+                afterPaint(() => {
+                    api.refreshCells({force: true, columns: ['Lineup']});
+                    resolve({
+                        formula: formula,
+                        grown: grown,
+                        cap: cap,
+                        restored: Math.round(header.getBoundingClientRect().width),
+                    });
+                });
+            });
+        })'''
+    )
+    assert fitted['formula'] is True
+    assert fitted['grown'] > 300
+    assert fitted['grown'] < fitted['cap'] - 20
+    assert fitted['restored'] == 250
     places = page.evaluate(
         '''() => {
             const size = document.getElementById('lineup_size_dropdown').getBoundingClientRect();
@@ -763,8 +964,10 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     sort = page.evaluate(
         '''() => {
             const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
-            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
-            const rows = [...center.querySelectorAll('.ag-row')];
+            const pane = document.getElementById('pane-lineup');
+            const holders = [...pane.querySelectorAll('.ag-pinned-left-cols-container, .ag-center-cols-container')];
+            const holder = holders.find((el) => el.querySelector('.ag-cell[col-id="Lineup"]'));
+            const rows = holder ? [...holder.querySelectorAll('.ag-row')] : [];
             rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
             const labels = rows.slice(0, 4).map(row => {
                 const cell = row.querySelector('.ag-cell[col-id="Lineup"]');
@@ -781,11 +984,7 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     page.locator('#lineup-show-opp').click()
     page.wait_for_function(
         '''() => {
-            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
-            if (!center) {
-                return false;
-            }
-            return [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+            return [...document.querySelectorAll('#pane-lineup .ag-cell[col-id="Lineup"]')]
                 .filter(el => el.innerText.trim() === 'Opp').length === 0;
         }''',
         timeout=20000,
@@ -793,11 +992,13 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     hidden = page.evaluate(
         '''() => {
             const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
-            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
-            const rows = [...center.querySelectorAll('.ag-row')];
+            const pane = document.getElementById('pane-lineup');
+            const holders = [...pane.querySelectorAll('.ag-pinned-left-cols-container, .ag-center-cols-container')];
+            const holder = holders.find((el) => el.querySelector('.ag-cell[col-id="Lineup"]'));
+            const rows = holder ? [...holder.querySelectorAll('.ag-row')] : [];
             rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
             const cell = rows[0] && rows[0].querySelector('.ag-cell[col-id="Lineup"]');
-            const opp = [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+            const opp = [...pane.querySelectorAll('.ag-cell[col-id="Lineup"]')]
                 .filter(el => el.innerText.trim() === 'Opp').length;
             return {dir: header ? header.getAttribute('aria-sort') : '', first: cell ? cell.innerText.trim() : '', opp};
         }'''
@@ -815,7 +1016,8 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     desktop = _lineup_frame(page)
     assert desktop['marginLeft'] == '0px'
     assert desktop['marginRight'] == '0px'
-    assert 240 <= desktop['headerW'] <= 260
+    assert desktop['headerW'] == 250
+    assert desktop['overflow'] is False
 
     page.set_viewport_size({'width': 834, 'height': 1210})
     page.wait_for_timeout(400)
@@ -825,7 +1027,7 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
 
 def test_lineup_show_opp_keeps_the_same_lineup_page(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Lineup Stats')
     page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
@@ -892,7 +1094,7 @@ def _split_lineup(name, pts):
 
 def test_lineup_store_tick_repaints_both_tables(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Lineup Stats')
     page.locator('#pane-lineup').get_by_text('Lin-0').first.wait_for(timeout=20000)
@@ -932,7 +1134,7 @@ def _matchup_lineup(page, index):
 
 def test_matchups_tab_keeps_both_fives_and_switches_viewpoint(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
-    page.goto(e2e_server + f'/game/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Matchups')
     page.locator('#matchup-grid .ag-cell[col-id="Lineup"]').first.wait_for(

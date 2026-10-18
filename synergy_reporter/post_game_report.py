@@ -2,6 +2,7 @@ import pandas as pd
 import json
 import os
 
+from synergy_inbounder.names import display_name, person_full_name, person_name
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import possession_counts
@@ -290,7 +291,8 @@ def _chip_spec(value):
 
 
 class PostGameReport():
-    def __init__(self, game_id):
+    def __init__(self, game_id, organization_id=None):
+        org = organization_id or SYNERGY_ORGANIZATION_ID
         (
             self.team_stats_df,
             self.team_stats_periods_df,
@@ -300,7 +302,7 @@ class PostGameReport():
             self.id_table,
             self.roster,
             self.player_stats_periods_df,
-        ) = Parser.parse_game_bundle(SYNERGY_ORGANIZATION_ID, game_id)
+        ) = Parser.parse_game_bundle(org, game_id)
         self._play_by_play_view = None
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None
@@ -309,7 +311,7 @@ class PostGameReport():
 
     def get_period_team_pts_df(self):
         qt_pts_df = pd.DataFrame()
-        qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        qt_pts_df['Team'] = self.team_stats_periods_df.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
         qt_pts_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
         qt_pts_df['PTS'] = self.team_stats_periods_df['points']
 
@@ -323,7 +325,7 @@ class PostGameReport():
     
     def get_period_team_fouls_df(self):
         qt_foul_df = pd.DataFrame()
-        qt_foul_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        qt_foul_df['Team'] = self.team_stats_periods_df.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
         qt_foul_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
         qt_foul_df['Foul'] = self.team_stats_periods_df.get('foulsTotal', '')
         qt_foul_df = qt_foul_df.pivot(index='Team', columns='Period', values='Foul').reset_index()
@@ -332,7 +334,7 @@ class PostGameReport():
         
     def get_period_team_timeout_df(self):
         qt_tout_df = pd.DataFrame()
-        qt_tout_df['Team'] = self.team_stats_periods_df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        qt_tout_df['Team'] = self.team_stats_periods_df.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
         qt_tout_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
         qt_tout_df['TOut'] = self.team_stats_periods_df.get('timeoutsUsed', '')
         qt_tout_df = qt_tout_df.pivot(index='Team', columns='Period', values='TOut').reset_index()
@@ -342,7 +344,7 @@ class PostGameReport():
     def get_team_advance_stats_df(self, source=None, period_ids=None):
         stats = (self.team_stats_df if source is None else source).copy()
         t_adv_df = pd.DataFrame()
-        t_adv_df['Team'] = stats.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        t_adv_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
         stats['poss'] = self._possession_totals(stats, period_ids)
         stats['duration'] = pd.to_timedelta(stats['minutes'].fillna('PT0S').astype(str).str.replace('PT', '', regex=False) \
                                                                                     .str.replace('M', ' min ', regex=False) \
@@ -512,7 +514,7 @@ class PostGameReport():
     def get_team_stats_df(self, source=None):
         stats = self.team_stats_df if source is None else source
         t_df = pd.DataFrame()
-        t_df['Team'] = stats.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        t_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
         t_df['Min'] = stats['minutes'].map(minutes_to_mmss)
         t_df['2M'] = stats['pointsTwoMade'].fillna(0).astype(int)
         t_df['2A'] = stats['pointsTwoAttempted'].fillna(0).astype(int)
@@ -548,7 +550,7 @@ class PostGameReport():
     def get_team_key_stats_df(self, source=None):
         stats = self.team_stats_df if source is None else source
         k_df = pd.DataFrame()
-        k_df['Team'] = stats.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
+        k_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
         k_df['PIPM'] = stats['pointsInThePaintMade'].fillna(0).astype(int)
         k_df['PIPA'] = stats['pointsInThePaintAttempted'].fillna(0).astype(int)
         k_df['PIP'] = stats['pointsInThePaint'].fillna(0).astype(int)
@@ -568,7 +570,7 @@ class PostGameReport():
         players = self.player_stats_df if source is None else source
         p_df_dict = dict()
         for t in self.team_stats_df['entityId'].to_list():
-            team_name = self.id_table.get(t, t)
+            team_name = display_name(self.id_table, t)
             p_df = players[players['entityId']==t]
             if p_df.empty:
                 p_df_dict[team_name] = pd.DataFrame(columns=[
@@ -583,7 +585,8 @@ class PostGameReport():
 
             p_df_t = pd.DataFrame()
             p_df_t['#'] = p_df['personId'].apply(lambda pid: str(roster_shirt_dict.get(pid, '')) if roster_shirt_dict.get(pid) is not None else '')
-            p_df_t['Player'] = p_df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+            p_df_t['Player'] = p_df['personId'].apply(lambda pid: person_name(self.id_table, pid))
+            p_df_t['_playerFull'] = p_df['personId'].apply(lambda pid: person_full_name(self.id_table, pid))
             p_df_t['S'] = p_df['personId'].apply(lambda pid: '○' if (roster_starter_dict.get(pid) or pid in starters_for_team) else '')
 
             is_participated = p_df['participated'].fillna(True) if 'participated' in p_df.columns else pd.Series(True, index=p_df.index)
@@ -678,11 +681,11 @@ class PostGameReport():
                     return (0, int(bib_str))
                 except Exception:
                     pass
-            return (1, str(self.id_table.get(pid, pid)))
+            return (1, person_name(self.id_table, pid))
 
         def decode_lineup(lineup):
             sorted_players = sorted(lineup, key=_player_sort_key)
-            return "-".join([str(self.id_table.get(p, p)) for p in sorted_players])
+            return "-".join(person_name(self.id_table, p) for p in sorted_players)
 
         u_df_dict = dict()
         for t in lineup_df_dict:
@@ -812,7 +815,7 @@ class PostGameReport():
         summary_dict = dict()
         team_df = self.team_stats_df if source is None else source
         for t in team_df['entityId'].to_list():
-            team_name = self.id_table.get(t, t)
+            team_name = display_name(self.id_table, t)
             team_rows = team_df[team_df['entityId'] == t]
             if team_rows.empty:
                 continue
@@ -991,7 +994,7 @@ class PostGameReport():
         team_id_list = df['entityId'].dropna().unique()
         
         df['Team'] = df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)
-        df['Player'] = df.apply(lambda x: self.id_table.get(x['personId'], x['personId']), axis=1)
+        df['Player'] = df['personId'].apply(lambda pid: person_name(self.id_table, pid))
         team_name_list = df['Team'].dropna().unique()
         
         def decode_scores(scores):
@@ -1002,7 +1005,7 @@ class PostGameReport():
         df['scores'] = df['scores'].apply(lambda x: decode_scores(x))
     
         def decode_lineup(lineup):
-            return str(sorted([self.id_table.get(p ,p) for p in lineup]))[1:-1].replace('\'', '')
+            return str(sorted(person_name(self.id_table, p) for p in lineup))[1:-1].replace('\'', '')
         for t in team_id_list:
             df[self.id_table.get(t, f"name_{t}")] = df[t].apply(lambda x: decode_lineup(x))
         

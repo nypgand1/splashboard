@@ -17,9 +17,16 @@ from dash.development.base_component import Component
 import dash_mantine_components as dmc
 import pandas as pd
 
-from easl_inbounder.settings import EASL_SEASON_ID, EASL_SEASONS
+from synergy_inbounder.names import display_name
 from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
-from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, SYNERGY_SEASON_ID, SYNERGY_SEASONS
+from synergy_inbounder.settings import (
+    EASL_SEASON_ID,
+    EASL_SEASONS,
+    SYNERGY_EASL_ORGANIZATION_ID,
+    SYNERGY_ORGANIZATION_ID,
+    SYNERGY_SEASON_ID,
+    SYNERGY_SEASONS,
+)
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.game_status import (
     format_score_display,
@@ -149,7 +156,7 @@ def _season_map(filters):
     return raw
 
 
-def apply_home_filters(show, game_type, league, season_id, filters, triggered):
+def apply_home_filters(show, game_type, league, season_id, filters, triggered, records=None):
     filters = filters if isinstance(filters, dict) else {}
     seasons = _season_map(filters)
     current = filters.get('league') or LEAGUE_PLG
@@ -160,6 +167,9 @@ def apply_home_filters(show, game_type, league, season_id, filters, triggered):
     scope = None
     if triggered == 'home-show':
         next_show = show or SHOW_UPCOMING
+        next_type = game_type
+        if isinstance(records, list):
+            next_type = game_type_after_show_change(records, next_show, game_type)
     elif triggered == 'home-game-type':
         next_type = game_type
     elif triggered == 'home-league':
@@ -193,10 +203,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     triggered = _triggered_id()
     scope_change = triggered == 'home-scope-store'
     show, game_type = _home_filter_values(filters)
-    if scope_change:
-        game_type = None
     league, season_id = _scope_values(scope, filters)
-    prefetch = league == LEAGUE_PLG and (first or scope_change)
+    prefetch = bool(first or scope_change)
     try:
         df = df_data(prefetch=prefetch, league=league, season_id=season_id)
     except Exception as exc:
@@ -212,12 +220,18 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
             ), no_update
         return no_update, no_update
     records = [] if df is None or df.empty else schedule_records(df, league=league)
-    show, game_type, persist = resolve_home_view(
-        records,
-        show,
-        game_type,
-        apply_if_needed_default=first or scope_change,
-    )
+    if first or scope_change:
+        show, game_type = entry_home_view(records)
+        page = render_home_page(
+            records,
+            show=show,
+            game_type=game_type,
+            league=league,
+            season_id=season_id,
+        )
+        return page, home_filters_after_default(
+            filters, league, season_id, show, game_type,
+        )
     page = render_home_page(
         records,
         show=show,
@@ -225,28 +239,31 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
         league=league,
         season_id=season_id,
     )
-    if not persist:
-        return page, no_update
-    return page, home_filters_after_default(filters, league, season_id, show, game_type)
+    return page, no_update
 
 
 @callback(
     Output('home-filter-store', 'data', allow_duplicate=True),
     Output('home-scope-store', 'data'),
+    Output('home-game-type', 'value'),
     Input('home-show', 'value'),
     Input('home-game-type', 'value'),
     Input('home-league', 'value'),
     Input('home-season', 'value'),
     State('home-filter-store', 'data'),
+    State('home-schedule-store', 'data'),
     prevent_initial_call=True,
 )
-def remember_home_filters(show, game_type, league, season_id, filters):
+def remember_home_filters(show, game_type, league, season_id, filters, records):
     data, scope = apply_home_filters(
-        show, game_type, league, season_id, filters, ctx.triggered_id,
+        show, game_type, league, season_id, filters, ctx.triggered_id, records,
     )
+    type_out = no_update
+    if scope is None and data.get('game_type') != game_type:
+        type_out = data.get('game_type')
     if scope is None:
-        return data, no_update
-    return data, scope
+        return data, no_update, type_out
+    return data, scope, no_update
 
 
 @callback(
@@ -259,7 +276,10 @@ def remember_home_filters(show, game_type, league, season_id, filters):
 def update_home_view(records, show, game_type):
     if isinstance(records, dict) and records.get('_ui') == 'error':
         return error_alert(ERROR_HOME)
-    return render_schedule_list(records or [], show, game_type)
+    rows = records or []
+    if _triggered_id() == 'home-show':
+        game_type = game_type_after_show_change(rows, show, game_type)
+    return render_schedule_list(rows, show, game_type)
 
 
 def _jsonable(node):
@@ -368,8 +388,9 @@ def schedule_records(df, league=LEAGUE_PLG):
         start = _plain(_start_value(row))
         home_score = _plain(row.get('teamScoreHome'))
         away_score = _plain(row.get('teamScoreAway'))
-        clickable = bool(score_is_clickable(status)) and league != LEAGUE_EASL
+        clickable = bool(score_is_clickable(status))
         records.append({
+            'league': league,
             'fixtureId': str(_plain(row.get('fixtureId')) or ''),
             'status': str(status).strip(),
             'fixtureType': str(_plain(_fixture_type_value(row)) or ''),
@@ -399,55 +420,137 @@ def game_type_options(records):
     return options
 
 
-def default_game_type(records):
-    for record in records:
-        if status_bucket(record.get('status')) == 'live':
-            return record.get('fixtureType') or None
-    for record in records:
-        if status_bucket(record.get('status')) == 'unplayed':
-            return record.get('fixtureType') or None
-    finished = [
-        record for record in records
-        if status_bucket(record.get('status')) == 'finished'
-    ]
-    if finished:
-        return finished[-1].get('fixtureType') or None
-    return (records[0].get('fixtureType') or None) if records else None
-
-
-def _latest_finished(records):
-    finished = [
-        record for record in records or []
-        if status_bucket(record.get('status')) == 'finished'
-    ]
-    if not finished:
+def _stage(record):
+    value = _fixture_type_value(record)
+    if value is None:
         return None
-    return max(
-        finished,
-        key=lambda record: _parse_start(record.get('startTimeLocal')) or pd.Timestamp.min,
+    text = str(value).strip()
+    return text or None
+
+
+def _is_if_needed(record):
+    return str(_status_value(record) or '').strip() == 'IF_NEEDED'
+
+
+def _bucket(record):
+    return status_bucket(_status_value(record))
+
+
+def _by_start(records):
+    return sorted(
+        records,
+        key=lambda record: (
+            _parse_start(record.get('startTimeLocal')) is None,
+            _parse_start(record.get('startTimeLocal')) or pd.Timestamp.max,
+        ),
     )
 
 
-def resolve_home_view(records, show, game_type, *, apply_if_needed_default):
-    show = show or SHOW_UPCOMING
-    if show != SHOW_UPCOMING:
-        return show, game_type, False
-    upcoming = [
-        record for record in records or []
-        if status_bucket(record.get('status')) in ('live', 'unplayed')
+def _earliest(records):
+    ordered = _by_start(records)
+    dated = [
+        record for record in ordered
+        if _parse_start(record.get('startTimeLocal')) is not None
     ]
-    all_if_needed = bool(upcoming) and all(
-        str(record.get('status') or '').strip() == 'IF_NEEDED'
-        for record in upcoming
+    pool = dated or ordered
+    return pool[0] if pool else None
+
+
+def _latest(records):
+    ordered = _by_start(records)
+    dated = [
+        record for record in ordered
+        if _parse_start(record.get('startTimeLocal')) is not None
+    ]
+    pool = dated or ordered
+    return pool[-1] if pool else None
+
+
+def _matching(records, predicate):
+    return [record for record in records or [] if predicate(record)]
+
+
+def entry_home_view(records):
+    records = list(records or [])
+    live = _matching(records, lambda record: _bucket(record) == 'live')
+    real = _matching(
+        records,
+        lambda record: _bucket(record) == 'unplayed' and not _is_if_needed(record),
     )
-    switch = not upcoming or (all_if_needed and apply_if_needed_default)
-    if not switch:
-        return show, game_type, False
-    latest = _latest_finished(records)
-    if latest is None:
-        return SHOW_UPCOMING, game_type, False
-    stage = str(latest.get('fixtureType') or '').strip() or None
-    return SHOW_FINISHED, stage, True
+    if live:
+        return SHOW_UPCOMING, _stage(_earliest(live))
+    if real:
+        return SHOW_UPCOMING, _stage(_earliest(real))
+    finished = _matching(records, lambda record: _bucket(record) == 'finished')
+    if finished:
+        return SHOW_FINISHED, _stage(_latest(finished))
+    needed = _matching(records, _is_if_needed)
+    if needed:
+        return SHOW_UPCOMING, _stage(_earliest(needed))
+    if records:
+        return SHOW_UPCOMING, _stage(_earliest(records))
+    return SHOW_UPCOMING, None
+
+
+def _in_show(record, show):
+    bucket = _bucket(record)
+    if show == SHOW_UPCOMING:
+        return bucket in ('live', 'unplayed')
+    if show == SHOW_FINISHED:
+        return bucket == 'finished'
+    return True
+
+
+def stage_has_games(records, show, game_type):
+    stage = _stage({'fixtureType': game_type})
+    if not stage:
+        return False
+    return any(
+        _stage(record) == stage and _in_show(record, show)
+        for record in records or []
+    )
+
+
+def default_stage_for_show(records, show):
+    records = list(records or [])
+    if show == SHOW_FINISHED:
+        finished = _matching(records, lambda record: _bucket(record) == 'finished')
+        return _stage(_latest(finished)) if finished else None
+    if show == SHOW_ALL:
+        _picked_show, stage = entry_home_view(records)
+        if stage and stage_has_games(records, SHOW_ALL, stage):
+            return stage
+        return None
+    live = _matching(records, lambda record: _bucket(record) == 'live')
+    if live:
+        return _stage(_earliest(live))
+    real = _matching(
+        records,
+        lambda record: _bucket(record) == 'unplayed' and not _is_if_needed(record),
+    )
+    if real:
+        return _stage(_earliest(real))
+    needed = _matching(records, _is_if_needed)
+    if needed:
+        return _stage(_earliest(needed))
+    return None
+
+
+def game_type_after_show_change(records, show, game_type):
+    records = list(records or [])
+    show = show or SHOW_UPCOMING
+    if stage_has_games(records, show, game_type):
+        return game_type
+    fallback = default_stage_for_show(records, show)
+    if fallback:
+        return fallback
+    if show == SHOW_UPCOMING and _matching(
+        records, lambda record: _bucket(record) in ('live', 'unplayed'),
+    ):
+        return None
+    if show == SHOW_ALL and records:
+        return None
+    return game_type
 
 
 def home_filters_after_default(filters, league, season_id, show, game_type):
@@ -544,9 +647,11 @@ def _compact_row(record):
     else:
         clickable = score_is_clickable(record.get('status'))
     if clickable:
+        league = record.get('league') or LEAGUE_PLG
+        slug = 'easl' if league == LEAGUE_EASL else 'plg'
         return html.A(
             inner,
-            href=f'/game/{fixture_id}',
+            href=f'/game/{slug}/{fixture_id}',
             className='home-schedule-row home-schedule-row-clickable',
             style={'display': 'block', 'textDecoration': 'none', 'color': 'inherit'},
         )
@@ -608,7 +713,7 @@ def render_home_page(
         season_id = default_season_id(league)
     rows = [] if failed else list(records or [])
     options = game_type_options(rows)
-    selected_type = game_type if game_type is not None else default_game_type(rows)
+    selected_type = game_type or None
     league_control = dmc.SegmentedControl(
         id='home-league',
         data=LEAGUE_OPTIONS,
@@ -704,27 +809,31 @@ def _decorate_schedule(df):
     ]]
 
 
-def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
+def _organization_for_home_league(league):
     if league == LEAGUE_EASL:
-        from easl_inbounder.parser import Parser as EaslParser
-        frame = EaslParser.parse_season_game_list_df(season_id or EASL_SEASON_ID)
-        return _decorate_schedule(frame)
+        return SYNERGY_EASL_ORGANIZATION_ID
+    return SYNERGY_ORGANIZATION_ID
 
-    game_list_df = Parser.parse_season_game_list_df(
-        SYNERGY_ORGANIZATION_ID,
-        season_id or SYNERGY_SEASON_ID,
-    )
-    id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
+
+def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
+    org = _organization_for_home_league(league)
+    default_season = EASL_SEASON_ID if league == LEAGUE_EASL else SYNERGY_SEASON_ID
+    game_list_df = Parser.parse_season_game_list_df(org, season_id or default_season)
+    id_table = Parser.parse_id_tables(org)
 
     if prefetch:
         try:
             from synergy_inbounder.runtime_cache import prefetch_latest_games
-            prefetch_latest_games(game_list_df, max_games=2)
+            prefetch_latest_games(
+                game_list_df,
+                max_games=2,
+                organization_id=org,
+            )
         except Exception as e:
             print(f"Failed to start home prefetch: {e}")
 
     df = game_list_df.copy()
-    df['Venue'] = df.apply(lambda x: id_table.get(x['venueId'], x['venueId']), axis=1)
-    df['Home Team'] = df.apply(lambda x: id_table.get(x['teamIdHome'], x['teamIdHome']), axis=1)
-    df['Away Team'] = df.apply(lambda x: id_table.get(x['teamIdAway'], x['teamIdAway']), axis=1)
+    df['Venue'] = df.apply(lambda x: display_name(id_table, x.get('venueId')), axis=1)
+    df['Home Team'] = df.apply(lambda x: display_name(id_table, x.get('teamIdHome')), axis=1)
+    df['Away Team'] = df.apply(lambda x: display_name(id_table, x.get('teamIdAway')), axis=1)
     return _decorate_schedule(df)

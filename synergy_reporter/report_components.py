@@ -14,6 +14,7 @@ from synergy_reporter.report_layout import (
     normalize_layout,
     pdf_filename,
 )
+from synergy_reporter.team_order import order_team_split_json, side_names
 
 
 def lineup_tables_for_size(lineup_store_data, lineup_size=5):
@@ -159,11 +160,12 @@ def _sorted_player_split(bs_dict, match_info, side):
 def report_table_payload(bs_dict, lineup_store_data, match_info):
     bs_dict = bs_dict or {}
     match_info = match_info or {}
+    away_name, home_name = side_names(match_info)
     return {
-        'score_group': bs_dict.get('qt_pts_df'),
-        't_adv_df': bs_dict.get('t_adv_df'),
-        't_df': bs_dict.get('t_df'),
-        'k_df': bs_dict.get('k_df'),
+        'score_group': order_team_split_json(bs_dict.get('qt_pts_df'), away_name, home_name),
+        't_adv_df': order_team_split_json(bs_dict.get('t_adv_df'), away_name, home_name),
+        't_df': order_team_split_json(bs_dict.get('t_df'), away_name, home_name),
+        'k_df': order_team_split_json(bs_dict.get('k_df'), away_name, home_name),
         'p_df_home': _sorted_player_split(bs_dict, match_info, 'home'),
         'p_df_away': _sorted_player_split(bs_dict, match_info, 'away'),
         'lineup_home': _lineup_table_json(lineup_store_data, match_info, 'home'),

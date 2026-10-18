@@ -1,3 +1,5 @@
+import re
+
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
@@ -8,6 +10,7 @@ from synergy_inbounder.game_status import (
     format_score_display,
     status_bucket,
 )
+from synergy_inbounder.names import contains_cjk
 
 SCORE_COLOR = '#0077b6'
 SCORE_FZ = '22px'
@@ -105,15 +108,68 @@ def matchup_score_parts(status, home_score, away_score):
     return away_text, home_text
 
 
+_LATIN = re.compile(r'[A-Za-z]')
+TEAM_NAME_PHONE_LIMIT = 12
+
+
+def team_name_lines(name, limit=TEAM_NAME_PHONE_LIMIT):
+    """Phone split for a long Latin team name.
+
+    Three words whose first two fit in the limit: those two, then the last
+    word. The space counts. Otherwise line 2 is the last two words.
+    """
+    text = '' if name is None else str(name).strip()
+    if (
+        not text
+        or contains_cjk(text)
+        or not _LATIN.search(text)
+        or len(text) <= limit
+        or ' ' not in text
+    ):
+        return (text, None)
+    words = text.split()
+    if len(words) == 3 and len(words[0]) + 1 + len(words[1]) <= limit:
+        return (f'{words[0]} {words[1]}', words[2])
+    if len(words) == 2:
+        return (words[0], words[1])
+    return (' '.join(words[:-2]), ' '.join(words[-2:]))
+
+
 def team_name_text(name, ta):
-    return dmc.Text(
-        name,
-        fw=800,
-        fz='16px',
-        ta=ta,
-        truncate=True,
+    shown = '' if name is None else name
+    props = dict(fw=800, fz='16px', ta=ta, truncate=True, flex=1, miw=0)
+    first, second = team_name_lines(shown)
+    if second is None:
+        return dmc.Text(shown, **props)
+    wide = dmc.Text(shown, className='team-name-wide', **props)
+    narrow = dmc.Stack(
+        [
+            dmc.Text(
+                first,
+                fw=800,
+                fz='16px',
+                ta=ta,
+                truncate=True,
+                style={'lineHeight': '1.15', 'whiteSpace': 'nowrap'},
+            ),
+            dmc.Text(
+                second,
+                fw=800,
+                fz='16px',
+                ta=ta,
+                truncate=False,
+                style={'lineHeight': '1.15', 'whiteSpace': 'nowrap'},
+            ),
+        ],
+        gap=0,
+        className='team-name-narrow',
+        w='100%',
+    )
+    return dmc.Box(
+        [wide, narrow],
         flex=1,
         miw=0,
+        style={'minWidth': 0, 'overflow': 'hidden'},
     )
 
 

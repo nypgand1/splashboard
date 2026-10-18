@@ -887,6 +887,12 @@ body {
     white-space: nowrap;
 }
 
+.report-js-table.report-lineup-table th,
+.report-js-table.report-lineup-table td {
+    padding-left: 2px;
+    padding-right: 2px;
+}
+
 .report-js-table td.report-lineup-name {
     white-space: normal;
 }
@@ -896,6 +902,12 @@ body {
     background-color: var(--thead-bg);
     color: var(--thead-text);
     border-bottom: 1px solid var(--border);
+}
+
+.report-js-table thead tr:nth-child(2) th {
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 7.5px;
 }
 
 .report-js-table tbody tr:nth-of-type(odd) {
@@ -1233,6 +1245,47 @@ body {
     overflow: visible;
 }
 
+.braves-lineup-grid .ag-header-cell:is(
+    [col-id="2M"],
+    [col-id="2A"],
+    [col-id="2FG%"],
+    [col-id="3M"],
+    [col-id="3A"],
+    [col-id="3FG%"],
+    [col-id="FTM"],
+    [col-id="FTA"],
+    [col-id="FT%"],
+    [col-id="OR"],
+    [col-id="DR"],
+    [col-id="REB"],
+    [col-id="PIP"],
+    [col-id="SCP"],
+    [col-id="FBP"],
+    [col-id="POT"]
+),
+.braves-lineup-grid .ag-header-cell:is(
+    [col-id="2M"],
+    [col-id="2A"],
+    [col-id="2FG%"],
+    [col-id="3M"],
+    [col-id="3A"],
+    [col-id="3FG%"],
+    [col-id="FTM"],
+    [col-id="FTA"],
+    [col-id="FT%"],
+    [col-id="OR"],
+    [col-id="DR"],
+    [col-id="REB"],
+    [col-id="PIP"],
+    [col-id="SCP"],
+    [col-id="FBP"],
+    [col-id="POT"]
+) .ag-header-cell-label {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    font-size: 10px !important;
+}
+
 @media (max-width: 1024px) {
     .braves-lineup-grid .ag-pinned-left-header,
     .braves-lineup-grid .ag-pinned-left-cols-container {
@@ -1283,6 +1336,26 @@ a.home-schedule-row {
 
 .home-score-well {
     flex-shrink: 0;
+}
+
+.team-name-narrow {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    /* iPhone Chrome still paints this line when only display:none is set. */
+    .team-name-wide {
+        display: none !important;
+        visibility: hidden !important;
+        position: absolute !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+    }
+    .team-name-narrow {
+        display: flex !important;
+        flex-direction: column !important;
+    }
 }
 
 .home-schedule-list .home-schedule-row:last-child {

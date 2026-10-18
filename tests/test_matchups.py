@@ -364,7 +364,16 @@ class MatchupTabTests(unittest.TestCase):
             lineup['cellClassRules']['ag-cell-align-left'],
             '!(params.data && params.data._opp)',
         )
-        self.assertEqual(sum(_leaf_widths(grid.columnDefs).values()), 1136)
+        self.assertEqual(sum(_leaf_widths(grid.columnDefs).values()), 1022)
+        self.assertNotIn('onGridSizeChanged', grid.dashGridOptions)
+        self.assertEqual(
+            grid.eventListeners['gridSizeChanged'],
+            ['splashboardFitLineupWidth(params)'],
+        )
+        self.assertEqual(
+            grid.eventListeners['firstDataRendered'],
+            ['splashboardFitLineupWidth(params)'],
+        )
         with open(game_page.__file__, encoding='utf-8') as handle:
             source = handle.read()
         self.assertIn("active_tab === 'tab-matchups'", source)

@@ -8,13 +8,17 @@ import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
-from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID, plg_season_ids
+from synergy_inbounder.names import display_name
+from synergy_inbounder.settings import organization_for_league, season_ids_for_organization
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
+    get_cached_game_status,
     get_cached_report,
+    warmup_game_report,
 )
 from synergy_inbounder.game_status import (
+    is_finished_status,
     is_live_play_status,
     status_bucket,
 )
@@ -36,6 +40,13 @@ from synergy_reporter.rotation import (
     report_rotation_figure,
 )
 from synergy_reporter.matchups import matchup_grid_records
+from synergy_reporter.team_order import (
+    order_named_items,
+    order_team_frame,
+    section_dot,
+    side_names,
+    team_stripe,
+)
 from synergy_reporter.shot_chart import (
     court_data_uri,
     court_zones,
@@ -60,7 +71,7 @@ register_page(
     __name__,
     name='Splashboard TFB | Game',
     top_nav=True,
-    path_template='/game/<game_id>'
+    path_template='/game/<league>/<game_id>'
 )
 
 ROTATION_GRAPH_CONFIG = {
@@ -126,6 +137,8 @@ def _bs_player_block(index, dot_color):
                     dashGridOptions={
                         'domLayout': 'autoHeight',
                         'suppressHorizontalScroll': False,
+                        'enableBrowserTooltips': True,
+                        'tooltipShowDelay': 200,
                     },
                     className='ag-theme-alpine braves-clean-ag-grid',
                     style={'width': '100%'},
@@ -201,8 +214,8 @@ def _box_score_wrap():
                     style={'marginBottom': '12px'},
                 ),
                 dmc.Box(_bs_scroll_card('bs-team-scroll'), mb='sm'),
-                _bs_player_block(0, '#00b4d8'),
-                _bs_player_block(1, '#94a3b8'),
+                _bs_player_block(0, '#94a3b8'),
+                _bs_player_block(1, '#00b4d8'),
             ],
             id='bs-detail-body',
             style={'display': 'none'},
@@ -470,9 +483,12 @@ def _matchup_wrap(hidden=True):
     )
 
 
-def layout(game_id=None):
+def layout(game_id=None, league='plg'):
     return html.Div([
-        html.Div(html.Span(id='game_id', children=game_id, hidden=True)),
+        html.Div([
+            html.Span(id='game_league', children=league, hidden=True),
+            html.Span(id='game_id', children=game_id, hidden=True),
+        ]),
         
         # Game Info Banner Card (visible across all tabs)
         html.Div(id='game-info-banner-wrap'),
@@ -553,16 +569,38 @@ def layout(game_id=None):
 
 
 
+def _organization(league):
+    return organization_for_league(league)
+
+
+def _triggered_id():
+    try:
+        return ctx.triggered_id
+    except Exception:
+        return None
+
+
+def _is_game_load(n_intervals, triggered):
+    """A load is a game or league change, or the callback before the interval ticks."""
+    if triggered in ('game_id', 'game_league'):
+        return True
+    return not isinstance(n_intervals, int) or n_intervals == 0
+
+
 @callback(
     Output('bs_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_bs_store(n, game_id):
+def update_bs_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store(game_id=game_id)
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
         return _error_store(game_id=game_id)
@@ -584,22 +622,24 @@ def update_bs_store(n, game_id):
 @callback(
     Output('match_info_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_match_info_store(n, game_id):
+def update_match_info_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store(game_id=game_id)
     try:
-        row = Parser.find_game_row(
-            SYNERGY_ORGANIZATION_ID, game_id, plg_season_ids(),
-        )
+        row = Parser.find_game_row(org, game_id, season_ids_for_organization(org))
         if row is None:
             return json.dumps({})
-        id_table = Parser.parse_id_tables(SYNERGY_ORGANIZATION_ID)
-        
-        home_name = id_table.get(row['teamIdHome'], row['teamIdHome'])
-        away_name = id_table.get(row['teamIdAway'], row['teamIdAway'])
-        venue_name = id_table.get(row['venueId'], row['venueId'])
+        id_table = Parser.parse_id_tables(org)
+
+        home_name = display_name(id_table, row.get('teamIdHome'))
+        away_name = display_name(id_table, row.get('teamIdAway'))
+        venue_name = display_name(id_table, row.get('venueId'))
         
         dt_str = str(row['startTimeLocal'])
         try:
@@ -621,6 +661,7 @@ def update_match_info_store(n, game_id):
             'home_score': str(row.get('teamScoreHome', '')),
             'away_score': str(row.get('teamScoreAway', '')),
             'status': str(row.get('status', '')).strip(),
+            'organization_id': org,
         }
         return json.dumps(info, ensure_ascii=False)
     except Exception as e:
@@ -672,13 +713,17 @@ def toggle_report_tab(match_info_store, active_tab):
 @callback(
     Output('pbp_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_pbp_store(n, game_id):
+def update_pbp_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
     except Exception as exc:
         print(f"Error loading play-by-play: {exc}")
         return _error_store()
@@ -687,15 +732,22 @@ def update_pbp_store(n, game_id):
 @callback(
     Output('lineup_store', 'data'),
     [Input('interval-component', 'n_intervals'),
-     Input('game_id', 'children')]
+     Input('game_id', 'children'),
+     Input('game_league', 'children')]
 )
-def update_lineup_store(n, game_id):
+def update_lineup_store(n, game_id, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     try:
-        report = get_cached_report(game_id)
-        from synergy_inbounder.runtime_cache import warmup_game_report
-        warmup_game_report(game_id)
+        report = get_cached_report(game_id, org)
+        if (
+            _is_game_load(n, _triggered_id())
+            and is_finished_status(get_cached_game_status(game_id, org))
+        ):
+            warmup_game_report(game_id, organization_id=org)
     except Exception as exc:
         print(f"Error loading lineup: {exc}")
         return _error_store()
@@ -705,16 +757,20 @@ def update_lineup_store(n, game_id):
     Output('matchup_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('match_info_store', 'data')],
+     Input('match_info_store', 'data'),
+     Input('game_league', 'children')],
 )
-def update_matchup_store(n, game_id, match_info_store):
+def update_matchup_store(n, game_id, match_info_store, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     info = safe_loads(match_info_store)
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
         return json.dumps(report.get_matchup_payload(
             home_team_id=info.get('home_team_id'),
             away_team_id=info.get('away_team_id'),
@@ -727,13 +783,17 @@ def update_matchup_store(n, game_id, match_info_store):
     Output('rotation_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('match_info_store', 'data')],
+     Input('match_info_store', 'data'),
+     Input('game_league', 'children')],
 )
-def update_rotation_store(n, game_id, match_info_store):
+def update_rotation_store(n, game_id, match_info_store, league='plg'):
     if not game_id:
         return json.dumps({})
+    org = _organization(league)
+    if org is None:
+        return _error_store()
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, org)
         info = safe_loads(match_info_store)
         return json.dumps(report.get_rotation_payload(
             home_team_id=info.get('home_team_id'),
@@ -829,7 +889,7 @@ def _stat_header(name):
     return {'AST': 'AS', 'PTS': 'PT'}.get(name, name)
 
 
-def _dmc_table_from_df(df, is_team_summary=True, title=None):
+def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
 
@@ -1076,7 +1136,9 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None):
     for row_idx in range(len(df)):
         team_stripe_style = {}
         if is_team_summary and 'Team' in df.columns:
-            stripe_color = "#0077b6" if row_idx == 0 else "#94a3b8"
+            raw_name = df.iloc[row_idx]['Team']
+            team_name = '' if pd.isna(raw_name) else str(raw_name)
+            stripe_color = team_stripe(team_name, away_name, home_name, row_idx)
             team_stripe_style = {"borderLeft": f"3.5px solid {stripe_color}"}
 
         cells = []
@@ -1154,6 +1216,22 @@ def _lineup_col_size(lineup_size):
     return LINEUP_COL_SIZES.get(size, LINEUP_COL_SIZES[5])
 
 
+def _stamp_designed_widths(column_defs):
+    for col in column_defs:
+        children = col.get('children')
+        if children:
+            _stamp_designed_widths(children)
+        elif 'width' in col:
+            col['designedWidth'] = col['width']
+    return column_defs
+
+
+_LINEUP_FIT_EVENTS = {
+    'gridSizeChanged': ['splashboardFitLineupWidth(params)'],
+    'firstDataRendered': ['splashboardFitLineupWidth(params)'],
+}
+
+
 def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     col_set = set(columns)
     column_defs = []
@@ -1161,13 +1239,13 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
     is_lineup = any('lineup' in str(name).lower() for name in col_set)
     if is_lineup:
-        count_min, count_w = 26, 28
-        pct_min, pct_w = 44, 46
+        count_min, count_w = 22, 22
+        pct_min, pct_w = 42, 42
         letter_min, letter_w = 28, 30
         minute_min, minute_w = 44, 48
         plusminus_min, plusminus_w = 34, 36
         pt_min, pt_w = 36, 40
-        key_min, key_w = 36, 38
+        key_min, key_w = 26, 26
         ppp_min, ppp_w = 36, 40
     else:
         count_min, count_w = 36, 38
@@ -1241,6 +1319,11 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         else:
             col_def["minWidth"] = 95
             col_def["width"] = 95
+            if first_col == 'Player':
+                # tooltipField is a data key. A tooltipValueGetter string is
+                # compiled as `params => expr`, and a function expression there
+                # becomes the browser title instead of the full name.
+                col_def["tooltipField"] = "_playerFull"
         column_defs.append(col_def)
 
     if 'S' in col_set:
@@ -1420,7 +1503,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             })
 
     _apply_click_sort_columns(column_defs)
-    return column_defs
+    return _stamp_designed_widths(column_defs)
 
 
 def _display_cell(value):
@@ -1526,8 +1609,34 @@ def _lineup_pair_comparator(field):
     }
 
 
+# Family, then the initial run. J.Lee sorts with K.Lee. dash-ag-grid's
+# function walker rejects var/if/for and prewalks with null arguments.
+_PLAYER_NAME_COMPARATOR = {
+    "function": (
+        "(function(a, b) {"
+        "return (function(keyOf) {"
+        "return (function(ka, kb) {"
+        "return !ka || !kb ? 0"
+        " : ka[0] < kb[0] ? -1 : ka[0] > kb[0] ? 1"
+        " : ka[1] < kb[1] ? -1 : ka[1] > kb[1] ? 1 : 0;"
+        "})(keyOf ? keyOf(a) : null, keyOf ? keyOf(b) : null);"
+        "})(function(label) {"
+        "return (function(text) {"
+        "return (function(match) {"
+        "return match ? [match[2].toLowerCase(), match[1].toLowerCase()]"
+        " : [(text && text.toLowerCase) ? text.toLowerCase() : '', ''];"
+        "})(text && text.match ? text.match(/^((?:[A-Z]\\.)+)(.+)$/) : null);"
+        "})(label == null ? '' : '' + label);"
+        "});"
+        "})"
+    ),
+}
+
 def _apply_click_sort(col):
     field = col.get('field')
+    if field == 'Player':
+        col['comparator'] = _PLAYER_NAME_COMPARATOR
+        return
     if field not in _DESC_SORT_FIELDS:
         return
     col['sortingOrder'] = list(DESC_FIRST_SORT)
@@ -1652,6 +1761,7 @@ def _matchup_grid():
             'suppressHorizontalScroll': False,
             'postSortRows': _LINEUP_POST_SORT,
         },
+        eventListeners=_LINEUP_FIT_EVENTS,
         className='ag-theme-alpine braves-clean-ag-grid braves-lineup-grid',
         style={'width': '100%'},
         getRowId="params.data._pair + (params.data._opp ? ':other' : ':view')",
@@ -1780,11 +1890,15 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                 }
             _apply_click_sort(col_def)
             column_defs.append(col_def)
+        _stamp_designed_widths(column_defs)
 
     dash_options = {
         "domLayout": "autoHeight",
         "suppressHorizontalScroll": False,
     }
+    lineup_events = None
+    if any('lineup' in str(col).lower() for col in df.columns):
+        lineup_events = _LINEUP_FIT_EVENTS
     if page_size:
         dash_options["pagination"] = True
         dash_options["paginationPageSize"] = page_size
@@ -1818,6 +1932,9 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     grid_class = "ag-theme-alpine braves-clean-ag-grid"
     if any('lineup' in str(c).lower() for c in df.columns):
         grid_class += " braves-lineup-grid"
+    if lineup_events:
+        pair_props = dict(pair_props)
+        pair_props['eventListeners'] = lineup_events
     return dmc.Paper(
         dag.AgGrid(
             rowData=row_records if row_records is not None else df.to_dict('records'),
@@ -1860,16 +1977,17 @@ def period_bar_state(bs_store):
     return data, style
 
 
-def _bs_frames(bs_dict, period='all'):
+def _bs_frames(bs_dict, period='all', match_info=None):
     selected = str(period or 'all')
     slices = bs_dict.get('slices') if isinstance(bs_dict.get('slices'), dict) else {}
     view = slices.get(selected) if selected != 'all' and isinstance(slices.get(selected), dict) else bs_dict
+    away_name, home_name = side_names(match_info)
 
-    qt_pts_df = pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split')
-    qt_foul_df = pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split')
-    qt_tout_df = pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split')
+    qt_pts_df = order_team_frame(pd.read_json(io.StringIO(bs_dict['qt_pts_df']), orient='split'), away_name, home_name)
+    qt_foul_df = order_team_frame(pd.read_json(io.StringIO(bs_dict['qt_foul_df']), orient='split'), away_name, home_name)
+    qt_tout_df = order_team_frame(pd.read_json(io.StringIO(bs_dict['qt_tout_df']), orient='split'), away_name, home_name)
 
-    t_adv_df = pd.read_json(io.StringIO(view['t_adv_df']), orient='split')
+    t_adv_df = order_team_frame(pd.read_json(io.StringIO(view['t_adv_df']), orient='split'), away_name, home_name)
     if 'Pace' in t_adv_df.columns:
         t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: _format_metric(x, 1))
     if 'PPP' in t_adv_df.columns:
@@ -1878,7 +1996,7 @@ def _bs_frames(bs_dict, period='all'):
     players = []
     p_dict = view.get('p_df_dict') if isinstance(view.get('p_df_dict'), dict) else {}
     p_summary = view.get('p_summary_dict') if isinstance(view.get('p_summary_dict'), dict) else {}
-    for team_name, p_json in sorted(p_dict.items()):
+    for team_name, p_json in order_named_items(p_dict.items(), away_name, home_name):
         players.append((
             team_name,
             read_split_frame(p_json),
@@ -1889,15 +2007,19 @@ def _bs_frames(bs_dict, period='all'):
         'qt_foul': qt_foul_df,
         'qt_tout': qt_tout_df,
         't_adv': t_adv_df,
-        't_df': read_split_frame(view['t_df']),
-        'k_df': pd.read_json(io.StringIO(view['k_df']), orient='split'),
+        't_df': order_team_frame(read_split_frame(view['t_df']), away_name, home_name),
+        'k_df': order_team_frame(pd.read_json(io.StringIO(view['k_df']), orient='split'), away_name, home_name),
         'players': players,
+        'away_name': away_name,
+        'home_name': home_name,
         'chips': bs_dict.get('period_chips') or [{'label': 'All', 'value': 'all'}],
     }
 
 
-def _table_children(df, title=None):
-    card = _dmc_table_from_df(df, is_team_summary=True, title=title)
+def _table_children(df, title=None, away_name=None, home_name=None):
+    card = _dmc_table_from_df(
+        df, is_team_summary=True, title=title, away_name=away_name, home_name=home_name,
+    )
     if isinstance(card, dmc.Paper):
         for child in card.children:
             if getattr(child, 'className', None) == 'braves-table-scroll':
@@ -1928,6 +2050,8 @@ def _player_grid_options(pinned_rows):
         'domLayout': 'autoHeight',
         'suppressHorizontalScroll': False,
         'pinnedBottomRowData': pinned_rows or [],
+        'enableBrowserTooltips': True,
+        'tooltipShowDelay': 200,
     }
 
 
@@ -1952,21 +2076,23 @@ def _player_model(df, pinned):
     }
 
 
-def render_bs_sections(bs_store, period='all'):
+def render_bs_sections(bs_store, period='all', match_info=None):
     bs_dict = safe_loads(bs_store)
     if bs_dict.get('_ui') == 'error':
         return [_error_view(bs_dict)], []
     if not bs_dict or not bs_dict.get('qt_pts_df'):
         return [_empty_view()], []
 
-    frames = _bs_frames(bs_dict, period)
+    frames = _bs_frames(bs_dict, period, match_info)
+    away_name = frames.get('away_name')
+    home_name = frames.get('home_name')
     row1 = dmc.SimpleGrid(
         cols={"base": 1, "lg": 3},
         spacing="12px",
         children=[
-            _dmc_table_from_df(frames['qt_pts'], is_team_summary=True, title="Score"),
-            _dmc_table_from_df(frames['qt_foul'], is_team_summary=True, title="Fouls"),
-            _dmc_table_from_df(frames['qt_tout'], is_team_summary=True, title="Timeouts"),
+            _dmc_table_from_df(frames['qt_pts'], is_team_summary=True, title="Score", away_name=away_name, home_name=home_name),
+            _dmc_table_from_df(frames['qt_foul'], is_team_summary=True, title="Fouls", away_name=away_name, home_name=home_name),
+            _dmc_table_from_df(frames['qt_tout'], is_team_summary=True, title="Timeouts", away_name=away_name, home_name=home_name),
         ],
         style={"marginBottom": "12px"}
     )
@@ -1974,20 +2100,25 @@ def render_bs_sections(bs_store, period='all'):
         cols={"base": 1, "lg": 2},
         spacing="12px",
         children=[
-            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title="Pace & 4 Factors"),
+            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title="Pace & 4 Factors", away_name=away_name, home_name=home_name),
             _dmc_table_from_df(
                 frames['k_df'],
                 is_team_summary=True,
                 title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench",
+                away_name=away_name,
+                home_name=home_name,
             ),
         ],
         style={"marginBottom": "12px"}
     )
-    row3 = dmc.Box(_dmc_table_from_df(frames['t_df'], is_team_summary=True), mb="sm")
+    row3 = dmc.Box(
+        _dmc_table_from_df(frames['t_df'], is_team_summary=True, away_name=away_name, home_name=home_name),
+        mb="sm",
+    )
     matrix = [_last_update_span(), row1]
     detail = [row2, row3]
     for idx, (team_name, p_df, summary_rows) in enumerate(frames['players']):
-        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+        dot_color = section_dot(team_name, away_name, home_name, idx)
         detail.append(dmc.Group(
             [
                 dmc.Box(style={
@@ -2007,8 +2138,8 @@ def render_bs_sections(bs_store, period='all'):
     return matrix, detail
 
 
-def render_bs_children(bs_store, period='all'):
-    matrix, detail = render_bs_sections(bs_store, period)
+def render_bs_children(bs_store, period='all', match_info=None):
+    matrix, detail = render_bs_sections(bs_store, period, match_info)
     return [*matrix, *detail]
 
 
@@ -2049,7 +2180,7 @@ def _bs_blank(fill):
     return {key: fill for key in BS_SYNC_KEYS}
 
 
-def box_score_screen(bs_store, period='all', game_id=None):
+def box_score_screen(bs_store, period='all', game_id=None, match_info=None):
     payload = bs_store if isinstance(bs_store, dict) else safe_loads(bs_store)
     if not isinstance(payload, dict):
         payload = {}
@@ -2059,7 +2190,7 @@ def box_score_screen(bs_store, period='all', game_id=None):
         return {'mode': 'error', 'payload': payload}
     if not payload or not payload.get('qt_pts_df'):
         return {'mode': 'empty'}
-    return {'mode': 'ready', 'frames': _bs_frames(payload, period)}
+    return {'mode': 'ready', 'frames': _bs_frames(payload, period, match_info)}
 
 
 def _bs_shell(mode, status=None):
@@ -2116,10 +2247,10 @@ def _bs_player_outputs(models, names, column_state):
     }
 
 
-def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, triggered_id):
+def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, triggered_id, match_info=None):
     if active_tab != 'tab-bs' and triggered_id != 'game_id':
         return tuple(no_update for _ in BS_SYNC_KEYS)
-    screen = box_score_screen(bs_store, period, game_id)
+    screen = box_score_screen(bs_store, period, game_id, match_info)
     if screen['mode'] == 'skeleton':
         return tuple(_bs_shell('skeleton')[key] for key in BS_SYNC_KEYS)
     if active_tab != 'tab-bs':
@@ -2141,18 +2272,22 @@ def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, t
     while len(models) < 2:
         models.append(_player_model(pd.DataFrame(), None))
     patch.update(_bs_player_outputs(models, names, column_state))
-    patch['pace'] = _table_children(frames['t_adv'], 'Pace & 4 Factors')
+    away_name = frames.get('away_name')
+    home_name = frames.get('home_name')
+    patch['pace'] = _table_children(frames['t_adv'], 'Pace & 4 Factors', away_name, home_name)
     patch['key'] = _table_children(
         frames['k_df'],
         'Paint / 2nd Chance / Fastbreak / Off TOV / Bench',
+        away_name,
+        home_name,
     )
-    patch['team'] = _table_children(frames['t_df'])
+    patch['team'] = _table_children(frames['t_df'], away_name=away_name, home_name=home_name)
     if triggered_id != 'bs-period':
         patch['chip_data'] = frames['chips']
         patch['last_update'] = _last_update_span()
-        patch['score'] = _table_children(frames['qt_pts'], 'Score')
-        patch['fouls'] = _table_children(frames['qt_foul'], 'Fouls')
-        patch['tout'] = _table_children(frames['qt_tout'], 'Timeouts')
+        patch['score'] = _table_children(frames['qt_pts'], 'Score', away_name, home_name)
+        patch['fouls'] = _table_children(frames['qt_foul'], 'Fouls', away_name, home_name)
+        patch['tout'] = _table_children(frames['qt_tout'], 'Timeouts', away_name, home_name)
     return tuple(patch[key] for key in BS_SYNC_KEYS)
 
 
@@ -2501,14 +2636,20 @@ def render_pbp_children(pbp_store):
     col_list.extend(team_name_list)
     col_list = [c for c in col_list if c in pbp_df.columns]
     pbp_df = pbp_df[col_list][::-1]
-    grid = dag.AgGrid(
-        rowData=pbp_df.to_dict('records'),
-        columnDefs=[{
-            "field": c,
+    column_defs = []
+    for column in pbp_df.columns:
+        col_def = {
+            "field": column,
             "headerClass": "ag-header-align-center",
             "cellClass": "ag-cell-align-center",
             "cellStyle": {"textAlign": "center"},
-        } for c in pbp_df.columns],
+        }
+        if column == 'Player':
+            col_def['comparator'] = _PLAYER_NAME_COMPARATOR
+        column_defs.append(col_def)
+    grid = dag.AgGrid(
+        rowData=pbp_df.to_dict('records'),
+        columnDefs=column_defs,
         defaultColDef={"sortable": True, "filter": True, "resizable": True},
         dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
         columnSize="autoSize",
@@ -2518,7 +2659,7 @@ def render_pbp_children(pbp_store):
     return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
-def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
+def render_lineup_children(lineup_store, lineup_size=5, show_opp=False, match_info=None):
     try:
         size_int = int(lineup_size)
     except Exception:
@@ -2532,8 +2673,10 @@ def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
     children = []
     show_opp = bool(show_opp)
     page_size = (40 if show_opp else 20) if size_int < 5 else None
-    for idx, (team_name, l_json) in enumerate(sorted(lineup_dict.items())):
-        dot_color = "#00b4d8" if idx == 0 else "#94a3b8"
+    away_name, home_name = side_names(match_info)
+    ordered = order_named_items(lineup_dict.items(), away_name, home_name)
+    for idx, (team_name, l_json) in enumerate(ordered):
+        dot_color = section_dot(team_name, away_name, home_name, idx)
         title_section = dmc.Group(
             [
                 dmc.Box(style={
@@ -2565,11 +2708,16 @@ def render_lineup_children(lineup_store, lineup_size=5, show_opp=False):
     return children
 
 
+def _report_org(match_info):
+    info = match_info or {}
+    return info.get('organization_id')
+
+
 def _report_rotation_figure_json(game_id, match_info):
     if not game_id:
         return json.dumps({'_ui': 'empty'})
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, _report_org(match_info))
         payload = report.get_rotation_payload(
             home_team_id=(match_info or {}).get('home_team_id'),
             away_team_id=(match_info or {}).get('away_team_id'),
@@ -2589,7 +2737,7 @@ def _report_shot_chart_json(game_id, match_info):
         return json.dumps({'_ui': 'empty'})
     info = match_info or {}
     try:
-        report = get_cached_report(game_id)
+        report = get_cached_report(game_id, _report_org(info))
         payload = report_shot_chart_payload(
             report.get_play_by_play_df(),
             info.get('away_team_id'),
@@ -2667,11 +2815,12 @@ def update_pane_bs(bs_store, active_tab, period='all'):
     Input('bs-period', 'data'),
     Input('game_id', 'children'),
     Input('tabs', 'value'),
+    Input('match_info_store', 'data'),
     State('bs-player-columns', 'data'),
 )
-def sync_box_score(bs_store, period, game_id, active_tab, column_state):
+def sync_box_score(bs_store, period, game_id, active_tab, match_info, column_state):
     return box_score_sync_values(
-        bs_store, period, game_id, active_tab, column_state, ctx.triggered_id,
+        bs_store, period, game_id, active_tab, column_state, ctx.triggered_id, match_info,
     )
 
 
@@ -3032,8 +3181,10 @@ def update_pane_pbp(pbp_store, active_tab):
     Input('lineup_store', 'data'),
     State('game_id', 'children'),
     State('lineup-show-opp', 'checked'),
+    State('game_league', 'children'),
+    Input('match_info_store', 'data'),
 )
-def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False):
+def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False, league='plg', match_info=None):
     if active_tab != 'tab-lineup':
         return no_update
     try:
@@ -3044,17 +3195,18 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
-            report = get_cached_report(game_id)
+            report = get_cached_report(game_id, _organization(league))
             custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
                 return render_lineup_children(
                     json.dumps({str(size_int): custom_dict}),
                     size_int,
                     show_opp=show_opp,
+                    match_info=match_info,
                 )
         except Exception as exc:
             print(f"Error computing lineup size {lineup_size}: {exc}")
-    return render_lineup_children(lineup_store, size_int, show_opp=show_opp)
+    return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=match_info)
 
 
 @callback(

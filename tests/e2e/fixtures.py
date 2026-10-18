@@ -314,8 +314,14 @@ class FakeReport:
         ])
 
     def get_all_lineup_stats_json_dict(self, sizes=(5,)):
-        home_rows = [{'Lineup': f'Lin-{i}', 'PTS': 10 - i, 'Min': '8:21'} for i in range(40)]
-        away_rows = [{'Lineup': f'Chen-{i}', 'PTS': 8 - i, 'Min': '7:10'} for i in range(8)]
+        home_rows = [
+            {'Lineup': f'Lin-{i}', 'PTS': 10 - i, 'Min': '8:21', '2M': 1, '2A': 2, '2FG%': '.500', 'PIP': 4}
+            for i in range(40)
+        ]
+        away_rows = [
+            {'Lineup': f'Chen-{i}', 'PTS': 8 - i, 'Min': '7:10', '2M': 1, '2A': 2, '2FG%': '.500', 'PIP': 2}
+            for i in range(8)
+        ]
         payload = {}
         for size in sizes:
             payload[str(size)] = {

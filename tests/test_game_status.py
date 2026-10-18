@@ -44,6 +44,7 @@ class StatusBucketTests(unittest.TestCase):
         self.assertFalse(score_is_clickable('IF_NEEDED'))
         self.assertFalse(score_is_clickable('CANCELLED'))
         self.assertEqual(format_score_display('FINISHED', 79, 88), '88 : 79')
+        self.assertEqual(format_score_display('FINISHED', 79.0, 88.0), '88 : 79')
         self.assertEqual(format_score_display('IN_PROGRESS', 0, 0), '0 : 0')
         self.assertEqual(format_score_display('PENDING', None, None), SCORE_AT)
         self.assertEqual(format_score_display('ABANDONED', 10, 12), '12 : 10')

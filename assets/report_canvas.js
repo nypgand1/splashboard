@@ -5,7 +5,7 @@
 
     var IMAGE_MAX_BYTES = 1000000;
     var GRID_COLUMNS = 12;
-    var LAYOUT_VERSION = 3;
+    var LAYOUT_VERSION = 4;
     var DESKTOP_MIN_PX = 1280;
     var ROTATION_EMPTY = 'No rotation chart for this game.';
     var ROTATION_ERROR = 'Could not load rotation.';
@@ -35,10 +35,10 @@
         t_adv_df: 'Pace, PPP & Four Factors',
         t_df: 'Team Stats',
         k_df: 'Key Stats',
-        p_df_home: 'Home Player Stats',
         p_df_away: 'Away Player Stats',
-        lineup_home: 'Home Lineup Stats',
-        lineup_away: 'Away Lineup Stats'
+        p_df_home: 'Home Player Stats',
+        lineup_away: 'Away Lineup Stats',
+        lineup_home: 'Home Lineup Stats'
     };
     var LOWER_BETTER = { Foul: 1, PF: 1, TO: 1, TOV: 1, 'TOV%': 1 };
     var COL_GROUPS = [
@@ -250,14 +250,23 @@
         if (!obj || !obj.columns || !obj.data) {
             return null;
         }
+        var columns = [];
+        var indexes = [];
+        obj.columns.forEach(function (col, i) {
+            if (String(col).charAt(0) === '_') {
+                return;
+            }
+            columns.push(col);
+            indexes.push(i);
+        });
         var rows = obj.data.map(function (row) {
             var rec = {};
-            obj.columns.forEach(function (col, i) {
-                rec[col] = row[i];
+            columns.forEach(function (col, i) {
+                rec[col] = row[indexes[i]];
             });
             return rec;
         });
-        return { columns: obj.columns.slice(), rows: rows };
+        return { columns: columns, rows: rows };
     }
 
     function rotationFigure() {
@@ -551,7 +560,7 @@
                 presentKeys.forEach(function (k) { used[k] = 1; });
                 used.__key = 1;
                 top.push({ text: 'Key Stats', span: presentKeys.length });
-                presentKeys.forEach(function (k) { sub.push(k); });
+                presentKeys.forEach(function (k) { sub.push({ label: k, col: k }); });
                 return;
             }
             var group = COL_GROUPS.filter(function (g) { return g.keys.indexOf(col) !== -1; })[0];
@@ -560,7 +569,7 @@
                 present.forEach(function (k) { used[k] = 1; });
                 top.push({ text: group.name, span: present.length });
                 present.forEach(function (k) {
-                    sub.push(group.subs[group.keys.indexOf(k)] || k);
+                    sub.push({ label: group.subs[group.keys.indexOf(k)] || k, col: k });
                 });
                 return;
             }
@@ -568,16 +577,409 @@
                 used['__ff'] = 1;
                 ff.forEach(function (k) { used[k] = 1; });
                 top.push({ text: '4 FACTORS', span: ff.length });
-                ff.forEach(function (k) { sub.push(k); });
+                ff.forEach(function (k) { sub.push({ label: k, col: k }); });
                 return;
             }
             if (used[col]) {
                 return;
             }
             used[col] = 1;
-            top.push({ text: headerLabel(col), span: 1, rowSpan: 2 });
+            top.push({ text: headerLabel(col), span: 1, rowSpan: 2, col: col });
         });
         return { top: top, sub: sub };
+    }
+
+    var PAIR_WIDTHS = [
+        ['p_df_home', 'p_df_away'],
+        ['lineup_home', 'lineup_away']
+    ];
+    var pairWidthJobs = {};
+    var pairWidthTries = {};
+    var pairLayoutLock = false;
+    var pairMeasureCanvas;
+
+    function pairForKey(tableKey) {
+        for (var i = 0; i < PAIR_WIDTHS.length; i++) {
+            if (PAIR_WIDTHS[i][0] === tableKey || PAIR_WIDTHS[i][1] === tableKey) {
+                return PAIR_WIDTHS[i];
+            }
+        }
+        return null;
+    }
+
+    function isNameCol(col) {
+        return col === 'Player' || col === 'Lineup' || col === 'Lineups';
+    }
+
+    function readLeafCols(table) {
+        try {
+            var cols = JSON.parse(table.getAttribute('data-cols') || '[]');
+            return Array.isArray(cols) ? cols : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    function pairTextWidth(el) {
+        var cs = window.getComputedStyle(el);
+        if (!pairMeasureCanvas) {
+            pairMeasureCanvas = document.createElement('canvas');
+        }
+        var ctx = pairMeasureCanvas.getContext('2d');
+        var fontStyle = cs.fontStyle && cs.fontStyle !== 'normal' ? cs.fontStyle + ' ' : '';
+        ctx.font = fontStyle + (cs.fontWeight || '400') + ' ' + (cs.fontSize || '9px') + ' ' + (cs.fontFamily || 'sans-serif');
+        var pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+        var left = parseFloat(cs.borderLeftWidth) || 0;
+        var right = parseFloat(cs.borderRightWidth) || 0;
+        // Collapsed borders are shared. Count the wider edge once.
+        var border = Math.max(left, right);
+        return Math.ceil(ctx.measureText(el.textContent || '').width + pad + border);
+    }
+
+    var pdfMeasurer = null;
+    var pdfHeaderPxCache = {};
+    var pdfHeaderArm = false;
+
+    function paperPxScale() {
+        var paper = document.querySelector('#report-papers .report-paper');
+        var rect = paper ? paper.getBoundingClientRect() : null;
+        if (!rect || rect.width < 1) {
+            return {
+                x: A4_WIDTH_MM / (210 / 25.4 * 96),
+                y: A4_HEIGHT_MM / (297 / 25.4 * 96)
+            };
+        }
+        return paperScale(rect);
+    }
+
+    function pdfMeasurerDoc() {
+        if (pdfMeasurer) {
+            return pdfMeasurer;
+        }
+        if (!window.jspdf || !window.jspdf.jsPDF || !reportFontBinary) {
+            return null;
+        }
+        var pdf = new window.jspdf.jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+        registerReportFont(pdf);
+        if (!pdfFontOk) {
+            return null;
+        }
+        pdfMeasurer = pdf;
+        return pdf;
+    }
+
+    function armPdfHeaderMeasure() {
+        if (pdfHeaderArm || pdfMeasurer) {
+            return;
+        }
+        pdfHeaderArm = true;
+        ensureReportLibs().then(function () {
+            return loadReportFont();
+        }).then(function () {
+            pdfHeaderArm = false;
+            pdfMeasurer = null;
+            pdfHeaderPxCache = {};
+            PAIR_WIDTHS.forEach(syncPairColumnWidths);
+        }).catch(function () {
+            pdfHeaderArm = false;
+        });
+    }
+
+    function pdfHeaderFloorPx(text, fontPx, bold) {
+        var pdf = pdfMeasurerDoc();
+        if (!pdf || !text) {
+            return 0;
+        }
+        var scale = paperPxScale();
+        var pt = pxToPt(fontPx, scale);
+        var key = text + '|' + pt + '|' + (bold ? 'b' : '') + '|' + scale.x.toFixed(4);
+        if (pdfHeaderPxCache[key]) {
+            return pdfHeaderPxCache[key];
+        }
+        pdf.setFontSize(pt);
+        try {
+            pdf.setFont(pdfFontOk ? REPORT_FONT_NAME : 'helvetica', 'normal');
+        } catch (err) {
+            pdf.setFont('helvetica', 'normal');
+        }
+        var textMm = pdf.getTextWidth(text);
+        var boxMm = textMm + (bold ? PDF_FAKE_BOLD_MM : 0) + 0.8;
+        var px = scale.x ? Math.ceil(boxMm / scale.x) : 0;
+        pdfHeaderPxCache[key] = px;
+        return px;
+    }
+
+    function measureLeafFloors(table) {
+        var floors = {};
+        var nodes = table.querySelectorAll('th[data-col], td[data-col]');
+        for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            if (el.colSpan > 1) {
+                continue;
+            }
+            var col = el.getAttribute('data-col');
+            var width = pairTextWidth(el);
+            if (el.tagName === 'TH' && !isNameCol(col)) {
+                var headerStyle = window.getComputedStyle(el);
+                var pdfFloor = pdfHeaderFloorPx(
+                    (el.textContent || '').trim(),
+                    parseFloat(headerStyle.fontSize) || 9,
+                    fontWeightNum(headerStyle) >= 600
+                );
+                if (!pdfFloor) {
+                    armPdfHeaderMeasure();
+                }
+                if (pdfFloor > width) {
+                    width = pdfFloor;
+                }
+            }
+            var lineupBody = (col === 'Lineup' || col === 'Lineups') && el.tagName !== 'TH';
+            if (lineupBody) {
+                if (width > (floors._nameNeed || 0)) {
+                    floors._nameNeed = width;
+                }
+                continue;
+            }
+            if (floors[col] == null || width > floors[col]) {
+                floors[col] = width;
+            }
+            if (isNameCol(col) && width > (floors._nameNeed || 0)) {
+                floors._nameNeed = width;
+            }
+        }
+        return floors;
+    }
+
+    function applyPairColGroup(table, cols, widths, hostW) {
+        var sum = 0;
+        cols.forEach(function (col) {
+            sum += widths[col] || 0;
+        });
+        var nextWidth = sum > hostW + 1 ? sum + 'px' : '100%';
+        var cg = table.querySelector('colgroup');
+        if (!cg) {
+            cg = document.createElement('colgroup');
+            table.insertBefore(cg, table.firstChild);
+        }
+        var same = table.style.tableLayout === 'fixed'
+            && table.style.width === nextWidth
+            && cg.children.length === cols.length;
+        if (same) {
+            for (var i = 0; i < cols.length; i++) {
+                if (cg.children[i].style.width !== (widths[cols[i]] || 0) + 'px') {
+                    same = false;
+                    break;
+                }
+            }
+        }
+        if (same) {
+            return false;
+        }
+        while (cg.firstChild) {
+            cg.removeChild(cg.firstChild);
+        }
+        cols.forEach(function (col) {
+            var c = document.createElement('col');
+            c.style.width = (widths[col] || 0) + 'px';
+            cg.appendChild(c);
+        });
+        table.style.tableLayout = 'fixed';
+        table.style.width = nextWidth;
+        table.setAttribute('data-host-w', String(hostW));
+        return true;
+    }
+
+    function syncPairColumnWidths(pair) {
+        if (pairLayoutLock || !pair) {
+            return false;
+        }
+        var entries = [];
+        var pending = false;
+        pair.forEach(function (key) {
+            document.querySelectorAll('.report-table-host[data-table-host="' + key + '"]').forEach(function (host) {
+                var table = host.querySelector('.report-js-table');
+                if (!table || !table.getAttribute('data-cols')) {
+                    return;
+                }
+                var cols = readLeafCols(table);
+                if (!cols.length) {
+                    return;
+                }
+                if (host.clientWidth < 1) {
+                    pending = true;
+                    return;
+                }
+                entries.push({ host: host, table: table, cols: cols });
+            });
+        });
+        if (!entries.length) {
+            return pending;
+        }
+        pairLayoutLock = true;
+        try {
+            var stat = {};
+            entries.forEach(function (entry) {
+                var floors = measureLeafFloors(entry.table);
+                entry.floors = floors;
+                entry.cols.forEach(function (col) {
+                    if (isNameCol(col)) {
+                        return;
+                    }
+                    var floor = floors[col] || 0;
+                    if (!stat[col] || floor > stat[col]) {
+                        stat[col] = floor;
+                    }
+                });
+            });
+            var statCols = [];
+            var seenStat = {};
+            entries.forEach(function (entry) {
+                entry.cols.forEach(function (col) {
+                    if (isNameCol(col) || seenStat[col]) {
+                        return;
+                    }
+                    seenStat[col] = 1;
+                    statCols.push(col);
+                });
+            });
+            entries.forEach(function (entry) {
+                var nameCol = null;
+                var statSum = 0;
+                entry.cols.forEach(function (col) {
+                    if (isNameCol(col)) {
+                        if (!nameCol) {
+                            nameCol = col;
+                        }
+                        return;
+                    }
+                    statSum += stat[col] || 0;
+                });
+                var headerFloor = nameCol ? (entry.floors[nameCol] || 0) : 0;
+                var nameNeed = entry.floors._nameNeed || 0;
+                if (nameNeed < headerFloor) {
+                    nameNeed = headerFloor;
+                }
+                entry.hostW = Math.floor(entry.host.clientWidth);
+                entry.nameCol = nameCol;
+                entry.nameNeed = nameNeed;
+                entry.statSum = statSum;
+                var spare = entry.hostW - statSum - nameNeed;
+                entry.spare = spare > 0 ? spare : 0;
+            });
+            var sharedSpare = entries.length ? entries[0].spare : 0;
+            entries.forEach(function (entry) {
+                if (entry.spare < sharedSpare) {
+                    sharedSpare = entry.spare;
+                }
+            });
+            var extraEach = statCols.length ? Math.floor(sharedSpare / statCols.length) : 0;
+            var leftoverPx = statCols.length ? sharedSpare - extraEach * statCols.length : 0;
+            var bonus = {};
+            statCols.forEach(function (col, index) {
+                bonus[col] = extraEach + (index < leftoverPx ? 1 : 0);
+            });
+            var changed = false;
+            entries.forEach(function (entry) {
+                var widths = {};
+                var grown = 0;
+                entry.cols.forEach(function (col) {
+                    if (isNameCol(col)) {
+                        return;
+                    }
+                    widths[col] = (stat[col] || 0) + (bonus[col] || 0);
+                    grown += widths[col];
+                });
+                var nameW = entry.hostW - grown;
+                var headerFloor = entry.nameCol ? (entry.floors[entry.nameCol] || 0) : 0;
+                if (nameW < headerFloor) {
+                    nameW = headerFloor;
+                }
+                if (entry.nameCol) {
+                    widths[entry.nameCol] = nameW;
+                }
+                entry.cols.forEach(function (col) {
+                    if (isNameCol(col) && col !== entry.nameCol) {
+                        widths[col] = entry.floors[col] || 0;
+                    }
+                });
+                if (applyPairColGroup(entry.table, entry.cols, widths, entry.hostW)) {
+                    changed = true;
+                }
+            });
+            if (changed) {
+                var grids = [];
+                entries.forEach(function (entry) {
+                    var gridEl = entry.table.closest('.report-grid');
+                    var grid = gridEl && gridEl.gridstack;
+                    if (grid && grids.indexOf(grid) === -1) {
+                        grids.push(grid);
+                    }
+                });
+                grids.forEach(function (grid) {
+                    fitTableBlocksOnGrid(grid);
+                });
+            }
+        } finally {
+            pairLayoutLock = false;
+        }
+        return pending;
+    }
+
+    function schedulePairWidths(tableKey) {
+        var pair = pairForKey(tableKey);
+        if (!pair || pairWidthJobs[pair[0]]) {
+            return;
+        }
+        pairWidthJobs[pair[0]] = 1;
+        window.requestAnimationFrame(function () {
+            window.requestAnimationFrame(function () {
+                pairWidthJobs[pair[0]] = 0;
+                var pending = syncPairColumnWidths(pair);
+                var tries = pairWidthTries[pair[0]] || 0;
+                if (pending && tries < 8) {
+                    pairWidthTries[pair[0]] = tries + 1;
+                    window.setTimeout(function () {
+                        schedulePairWidths(tableKey);
+                    }, 50);
+                } else if (!pending) {
+                    pairWidthTries[pair[0]] = 0;
+                }
+            });
+        });
+    }
+
+    function pairWidthsStale() {
+        var stale = false;
+        PAIR_WIDTHS.forEach(function (pair) {
+            pair.forEach(function (key) {
+                document.querySelectorAll('.report-table-host[data-table-host="' + key + '"]').forEach(function (host) {
+                    var table = host.querySelector('.report-js-table');
+                    if (!table || host.clientWidth < 1) {
+                        return;
+                    }
+                    if (!table.querySelector('colgroup')) {
+                        stale = true;
+                        return;
+                    }
+                    var prev = parseFloat(table.getAttribute('data-host-w') || '0');
+                    if (Math.abs(prev - Math.floor(host.clientWidth)) > 1) {
+                        stale = true;
+                    }
+                });
+            });
+        });
+        return stale;
+    }
+
+    function refreshPairWidthsIfStale() {
+        if (!pairWidthsStale()) {
+            return;
+        }
+        PAIR_WIDTHS.forEach(syncPairColumnWidths);
     }
 
     function paintTable(host, tableKey, item) {
@@ -596,7 +998,9 @@
         var winners = winnerIndex(rows, columns, tableKey);
         var grouped = groupedHeader(columns, tableKey);
         var table = document.createElement('table');
-        table.className = 'text-nowrap report-js-table';
+        table.className = isLineupTable(tableKey)
+            ? 'text-nowrap report-js-table report-lineup-table'
+            : 'text-nowrap report-js-table';
         var thead = document.createElement('thead');
         if (grouped) {
             var tr1 = document.createElement('tr');
@@ -609,14 +1013,20 @@
                 if (cell.rowSpan) {
                     th.rowSpan = cell.rowSpan;
                 }
+                if (cell.col) {
+                    th.setAttribute('data-col', cell.col);
+                }
                 tr1.appendChild(th);
             });
             thead.appendChild(tr1);
             if (grouped.sub.length) {
                 var tr2 = document.createElement('tr');
-                grouped.sub.forEach(function (label) {
+                grouped.sub.forEach(function (item) {
                     var th = document.createElement('th');
-                    th.textContent = label;
+                    th.textContent = item.label;
+                    if (item.col) {
+                        th.setAttribute('data-col', item.col);
+                    }
                     tr2.appendChild(th);
                 });
                 thead.appendChild(tr2);
@@ -626,6 +1036,7 @@
             columns.forEach(function (col) {
                 var th = document.createElement('th');
                 th.textContent = headerLabel(col);
+                th.setAttribute('data-col', col);
                 tr.appendChild(th);
             });
             thead.appendChild(tr);
@@ -658,20 +1069,26 @@
                     td.style.fontWeight = '700';
                 }
                 if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
-                    td.style.borderLeft = rIdx === 0 ? '3.5px solid #0077b6' : '3.5px solid #94a3b8';
+                    td.style.borderLeft = '3.5px solid ' + teamStripeColor(row, rIdx);
                 }
                 if (dnp && col === 'Min') {
                     td.colSpan = Math.max(1, columns.length - cIdx);
                     td.style.fontWeight = '700';
                     td.style.color = '#94a3b8';
+                } else {
+                    td.setAttribute('data-col', col);
                 }
                 tr.appendChild(td);
             });
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
+        table.setAttribute('data-cols', JSON.stringify(columns));
         host.appendChild(table);
         host.className = 'report-table-host';
+        if (pairForKey(tableKey)) {
+            schedulePairWidths(tableKey);
+        }
     }
 
     function tableHeading(tableKey) {
@@ -1123,6 +1540,9 @@
                 if (item && item.getAttribute('data-block-type') === 'image' && gs) {
                     snapImageAspect(gs, item);
                 }
+                if (item && pairForKey(item.getAttribute('data-table-key'))) {
+                    schedulePairWidths(item.getAttribute('data-table-key'));
+                }
                 if (item) {
                     clampItemToPaper(grid, item);
                 } else {
@@ -1257,6 +1677,71 @@
         hydratePage(index);
     }
 
+    function teamStripeColor(row, rIdx) {
+        var match = tablePayload().match || {};
+        var away = match.away_team || '';
+        var home = match.home_team || '';
+        var name = row && row.Team != null ? String(row.Team) : '';
+        if (away && home && away !== home) {
+            if (name === home) {
+                return '#0077b6';
+            }
+            if (name === away) {
+                return '#94a3b8';
+            }
+        }
+        return rIdx === 0 ? '#0077b6' : '#94a3b8';
+    }
+
+    var STACK_PAIRS = [
+        ['p_df_home', 'p_df_away'],
+        ['lineup_home', 'lineup_away']
+    ];
+
+    function swapPairYs(blocks) {
+        STACK_PAIRS.forEach(function (pair) {
+            var homes = blocks.filter(function (block) {
+                return block && block.table_key === pair[0];
+            });
+            var aways = blocks.filter(function (block) {
+                return block && block.table_key === pair[1];
+            });
+            var used = [];
+            homes.sort(function (a, b) {
+                return (a.y || 0) - (b.y || 0);
+            });
+            homes.forEach(function (home) {
+                var below = aways.filter(function (away) {
+                    return used.indexOf(away) === -1 && (away.y || 0) > (home.y || 0);
+                });
+                if (!below.length) {
+                    return;
+                }
+                below.sort(function (a, b) {
+                    return (a.y || 0) - (b.y || 0);
+                });
+                var away = below[0];
+                used.push(away);
+                var homeY = home.y;
+                home.y = away.y;
+                away.y = homeY;
+            });
+        });
+    }
+
+    function migrateV3Layout(layout) {
+        var pages = (layout.pages || []).map(function (page) {
+            var blocks = ((page && page.blocks) || []).map(function (block) {
+                return Object.assign({}, block);
+            });
+            swapPairYs(blocks);
+            var migrated = Object.assign({}, page || {});
+            migrated.blocks = blocks;
+            return migrated;
+        });
+        return { version: LAYOUT_VERSION, pages: pages };
+    }
+
     function bootReport() {
         var workspace = document.getElementById('report-workspace');
         if (!workspace) {
@@ -1265,6 +1750,7 @@
         applyReportTabViewport();
         if (workspace.dataset.booted === '1') {
             restoreVisiblePage();
+            refreshPairWidthsIfStale();
             return;
         }
         workspace.dataset.booted = '1';
@@ -1272,7 +1758,9 @@
             window.dash_clientside.set_props('report-pane-ready', { data: '1' });
         }
         var stored = loadStored();
-        if (stored && stored.version !== LAYOUT_VERSION) {
+        if (stored && stored.version === 3) {
+            stored = migrateV3Layout(stored);
+        } else if (stored && stored.version !== LAYOUT_VERSION) {
             stored = null;
         }
         if (stored && stored.pages && stored.pages.length) {
@@ -1553,7 +2041,8 @@
         var titleH = title ? (title.getBoundingClientRect().height || title.offsetHeight || 0) : 0;
         var clone = table.cloneNode(true);
         var liveW = Math.max(table.getBoundingClientRect().width || 0, table.offsetWidth || 0, 400);
-        clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:' + liveW + 'px;max-width:none;height:auto;max-height:none;table-layout:auto;visibility:hidden;overflow:visible;';
+        var layout = clone.querySelector('colgroup') ? 'fixed' : 'auto';
+        clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:' + liveW + 'px;max-width:none;height:auto;max-height:none;table-layout:' + layout + ';visibility:hidden;overflow:visible;';
         document.body.appendChild(clone);
         var cloneH = Math.max(clone.scrollHeight || 0, clone.offsetHeight || 0);
         document.body.removeChild(clone);
@@ -1629,6 +2118,17 @@
     function fitTableBlocksOnGrid(grid) {
         if (!grid || !grid.el) {
             return;
+        }
+        if (!pairLayoutLock) {
+            var seenPairs = {};
+            grid.el.querySelectorAll('.report-table-host[data-table-host]').forEach(function (host) {
+                var pair = pairForKey(host.getAttribute('data-table-host'));
+                if (!pair || seenPairs[pair[0]]) {
+                    return;
+                }
+                seenPairs[pair[0]] = 1;
+                syncPairColumnWidths(pair);
+            });
         }
         var updates = [];
         grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
@@ -1866,6 +2366,10 @@
             return 0;
         }
         var clone = table.cloneNode(true);
+        var cg = clone.querySelector('colgroup');
+        if (cg) {
+            cg.remove();
+        }
         clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:auto;max-width:none;table-layout:auto;visibility:hidden;';
         document.body.appendChild(clone);
         var width = clone.scrollWidth || clone.offsetWidth || 0;
@@ -3230,6 +3734,9 @@
             var JsPDF = window.jspdf.jsPDF;
             var pdf = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
             registerReportFont(pdf);
+            pdfMeasurer = pdf;
+            pdfHeaderPxCache = {};
+            PAIR_WIDTHS.forEach(syncPairColumnWidths);
             var chain = Promise.resolve();
             Array.prototype.forEach.call(papers, function (paper, index) {
                 chain = chain.then(function () {
@@ -3985,7 +4492,15 @@
         });
         wait.observe(document.documentElement, { childList: true, subtree: true });
     }
-    window.addEventListener('resize', applyReportTabViewport);
+    window.addEventListener('resize', function () {
+        applyReportTabViewport();
+        refreshPairWidthsIfStale();
+    });
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () {
+            PAIR_WIDTHS.forEach(syncPairColumnWidths);
+        });
+    }
     applyReportTabViewport();
     window.setInterval(function () {
         applyReportTabViewport();
@@ -3995,6 +4510,7 @@
         }
         if (workspace.dataset.booted === '1') {
             restoreVisiblePage();
+            refreshPairWidthsIfStale();
             return;
         }
         bootReport();

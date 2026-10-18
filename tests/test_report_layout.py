@@ -10,10 +10,10 @@ ALLOWED_TABLE_KEYS = (
     't_adv_df',
     't_df',
     'k_df',
-    'p_df_home',
     'p_df_away',
-    'lineup_home',
+    'p_df_home',
     'lineup_away',
+    'lineup_home',
 )
 ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
 
@@ -50,7 +50,7 @@ def _leaf_widths(column_defs):
 class DefaultLayoutTests(unittest.TestCase):
     def test_version_and_four_pages(self):
         layout = _layout()
-        self.assertEqual(layout['version'], 3)
+        self.assertEqual(layout['version'], 4)
         self.assertEqual(len(layout['pages']), 4)
 
     def test_header_is_not_a_block(self):
@@ -164,7 +164,7 @@ class DefaultLayoutTests(unittest.TestCase):
         away = [b for b in blocks if b.get('table_key') == 'p_df_away'][0]
         self.assertEqual(home.get('w'), 12)
         self.assertEqual(away.get('w'), 12)
-        self.assertLess(home.get('y'), away.get('y'))
+        self.assertLess(away.get('y'), home.get('y'))
 
     def test_page_four_both_lineup_tables(self):
         blocks = _blocks(_layout(), 3)
@@ -176,7 +176,7 @@ class DefaultLayoutTests(unittest.TestCase):
         away = [b for b in blocks if b.get('table_key') == 'lineup_away'][0]
         self.assertEqual(home.get('w'), 12)
         self.assertEqual(away.get('w'), 12)
-        self.assertLess(home.get('y'), away.get('y'))
+        self.assertLess(away.get('y'), home.get('y'))
 
     def test_page_two_chart_sits_under_key_stats_and_note_stays_short(self):
         page2 = _blocks(_layout(), 1)
@@ -372,6 +372,41 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         skip_fn = js.split('function skipFourFactorsGroup')[1].split('function groupedHeader')[0]
         self.assertNotIn('t_adv_df', skip_fn)
 
+    def test_report_pair_tables_share_stat_widths(self):
+        import os
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(root, 'assets', 'report_canvas.js'), encoding='utf-8') as handle:
+            js = handle.read()
+        self.assertIn('function syncPairColumnWidths', js)
+        self.assertIn("['p_df_home', 'p_df_away']", js)
+        self.assertIn("['lineup_home', 'lineup_away']", js)
+        self.assertIn("col === 'Player'", js)
+        self.assertIn("col === 'Lineup'", js)
+        pair = js.split('function syncPairColumnWidths', 1)[1].split('function schedulePairWidths', 1)[0]
+        self.assertIn('floors._nameNeed', pair)
+        self.assertIn('sharedSpare', pair)
+        self.assertIn('Math.floor(sharedSpare / statCols.length)', pair)
+        self.assertIn('index < leftoverPx', pair)
+        self.assertIn('entry.hostW - statSum - nameNeed', pair)
+        self.assertNotIn('nameW = Math.max(nameFloor, hostW - statSum)', pair)
+        self.assertIn('function pdfHeaderFloorPx', js)
+        header_floor = js.split('function pdfHeaderFloorPx', 1)[1].split('function measureLeafFloors', 1)[0]
+        self.assertIn('PDF_FAKE_BOLD_MM', header_floor)
+        self.assertIn('+ 0.8', header_floor)
+        self.assertIn('pdf.getTextWidth(text)', header_floor)
+        self.assertIn('function armPdfHeaderMeasure', js)
+        export_fn = js.split('function exportPapersToPdf', 1)[1].split('function validateImageFile', 1)[0]
+        self.assertIn('pdfMeasurer = pdf', export_fn)
+        self.assertIn('PAIR_WIDTHS.forEach(syncPairColumnWidths)', export_fn)
+        measure = js.split('function measureTableMaxContentWidth', 1)[1].split('function contentFloor', 1)[0]
+        self.assertIn("querySelector('colgroup')", measure)
+        self.assertIn('cg.remove()', measure)
+        with open(os.path.join(root, 'assets', 'ag_grid_cells.js'), encoding='utf-8') as handle:
+            cells = handle.read()
+        pad = cells.split('function _lineupPad', 1)[1].split('function _lineupLabel', 1)[0]
+        self.assertIn('borderLeftWidth', pad)
+        self.assertIn('borderRightWidth', pad)
+
     def test_pdf_draw_uses_separate_scale_middle_baseline_and_fake_bold(self):
         import os
         js_path = os.path.join(
@@ -506,7 +541,14 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('Plotly.toImage', js)
         self.assertIn('Plotly.react', js)
         self.assertIn('noResize: true', js)
-        self.assertIn('var LAYOUT_VERSION = 3', js)
+        self.assertIn('var LAYOUT_VERSION = 4', js)
+        self.assertIn('function migrateV3Layout', js)
+        self.assertIn('function teamStripeColor', js)
+        self.assertIn('match.away_team', js)
+        boot = js.split('function bootReport', 1)[1].split('function widgetFromBlock', 1)[0]
+        self.assertIn('stored.version === 3', boot)
+        self.assertIn('migrateV3Layout(stored)', boot)
+        self.assertLess(boot.find('migrateV3Layout(stored)'), boot.find('applyStoredLayout(stored)'))
         self.assertIn('No shot chart for this game.', js)
         self.assertIn('Could not load shot chart.', js)
         self.assertIn('function drawShotChartImage', js)
@@ -555,6 +597,15 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('function lineupNameLines', js)
         self.assertIn('td.report-lineup-name', css)
         self.assertIn('white-space: normal', css)
+        second_head = css.split('.report-js-table thead tr:nth-child(2) th', 1)[1].split('}', 1)[0]
+        self.assertIn('padding-left: 0', second_head)
+        self.assertIn('padding-right: 0', second_head)
+        self.assertIn('font-size: 7.5px', second_head)
+        lineup_head = css.split('.braves-lineup-grid .ag-header-cell:is(', 1)[1].split('}', 1)[0]
+        self.assertIn('[col-id="PIP"]', lineup_head)
+        self.assertIn('padding-left: 0 !important', lineup_head)
+        self.assertIn('font-size: 10px !important', lineup_head)
+        self.assertNotIn('[col-id="Min"]', lineup_head)
         self.assertNotIn('measureContentPx(item) + 3', js)
         self.assertIn('function syncPageOneSideNote', js)
         self.assertNotIn('clone.className = card.className', js)
@@ -593,6 +644,9 @@ class ReportTableComponentTests(unittest.TestCase):
         lineup_pos = markup.find('Home Lineup Stats')
         self.assertGreater(player_pos, 0)
         self.assertGreater(lineup_pos, player_pos)
+        self.assertLess(markup.find('Away Player Stats'), markup.find('Home Player Stats'))
+        self.assertLess(markup.find('Away Lineup Stats'), markup.find('Home Lineup Stats'))
+        self.assertLess(markup.find('Key Stats'), markup.find('Away Player Stats'))
 
     def test_page_list_has_add_but_no_minus(self):
         from synergy_reporter.report_components import render_page_list
@@ -639,7 +693,7 @@ class ReportTableComponentTests(unittest.TestCase):
             'pages': [{'id': 'old', 'blocks': [_blocks(_layout(), 0)[0]]}],
         }
         fresh = report_layout.normalize_layout(stale)
-        self.assertEqual(fresh['version'], 3)
+        self.assertEqual(fresh['version'], 4)
         types = [b.get('type') for b in fresh['pages'][0]['blocks']]
         self.assertIn('rotation', types)
         replaced = report_layout.normalize_layout({
@@ -651,10 +705,96 @@ class ReportTableComponentTests(unittest.TestCase):
                 }],
             }],
         })
-        self.assertEqual(replaced['version'], 3)
+        self.assertEqual(replaced['version'], 4)
         self.assertNotIn('keep me', str(replaced))
         page_two = [b.get('type') for b in replaced['pages'][1]['blocks']]
         self.assertIn('shot_chart', page_two)
+
+    def test_v3_layout_swaps_only_a_home_block_still_above_its_away_block(self):
+        if report_layout is None:
+            raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
+        stored = {
+            'version': 3,
+            'pages': [
+                {
+                    'id': 'page-3',
+                    'blocks': [
+                        {
+                            'id': 'note', 'type': 'text', 'content': 'keep',
+                            'x': 0, 'y': 0, 'w': 6, 'h': 2,
+                        },
+                        {
+                            'id': 'img', 'type': 'image', 'src': 'data:image/png,x',
+                            'x': 6, 'y': 0, 'w': 6, 'h': 2,
+                        },
+                        {
+                            'id': 'home', 'type': 'builtin_table', 'table_key': 'p_df_home',
+                            'x': 0, 'y': 2, 'w': 12, 'h': 8,
+                        },
+                        {
+                            'id': 'away', 'type': 'builtin_table', 'table_key': 'p_df_away',
+                            'x': 0, 'y': 10, 'w': 12, 'h': 6,
+                        },
+                    ],
+                },
+                {
+                    'id': 'page-4',
+                    'blocks': [
+                        {
+                            'id': 'near-home', 'type': 'builtin_table', 'table_key': 'lineup_home',
+                            'x': 0, 'y': 0, 'w': 12, 'h': 9,
+                        },
+                        {
+                            'id': 'far-home', 'type': 'builtin_table', 'table_key': 'lineup_home',
+                            'x': 0, 'y': 12, 'w': 12, 'h': 4,
+                        },
+                        {
+                            'id': 'near-away', 'type': 'builtin_table', 'table_key': 'lineup_away',
+                            'x': 0, 'y': 5, 'w': 12, 'h': 7,
+                        },
+                        {
+                            'id': 'far-away', 'type': 'builtin_table', 'table_key': 'lineup_away',
+                            'x': 0, 'y': 20, 'w': 12, 'h': 3,
+                        },
+                    ],
+                },
+                {
+                    'id': 'already',
+                    'blocks': [
+                        {
+                            'id': 'a', 'type': 'builtin_table', 'table_key': 'p_df_away',
+                            'x': 0, 'y': 0, 'w': 12, 'h': 8,
+                        },
+                        {
+                            'id': 'h', 'type': 'builtin_table', 'table_key': 'p_df_home',
+                            'x': 0, 'y': 8, 'w': 12, 'h': 8,
+                        },
+                    ],
+                },
+            ],
+        }
+        fresh = report_layout.normalize_layout(stored)
+        self.assertEqual(fresh['version'], 4)
+        page3 = {block['id']: block for block in fresh['pages'][0]['blocks']}
+        self.assertEqual(page3['note']['content'], 'keep')
+        self.assertEqual(page3['note']['y'], 0)
+        self.assertEqual(page3['img']['y'], 0)
+        self.assertEqual(page3['img']['src'], 'data:image/png,x')
+        self.assertEqual(page3['away']['y'], 2)
+        self.assertEqual(page3['away']['h'], 6)
+        self.assertEqual(page3['home']['y'], 10)
+        self.assertEqual(page3['home']['h'], 8)
+        page4 = {block['id']: block for block in fresh['pages'][1]['blocks']}
+        self.assertEqual(page4['near-away']['y'], 0)
+        self.assertEqual(page4['near-home']['y'], 5)
+        self.assertEqual(page4['near-home']['h'], 9)
+        self.assertEqual(page4['far-away']['y'], 12)
+        self.assertEqual(page4['far-home']['y'], 20)
+        self.assertEqual(page4['far-home']['h'], 4)
+        already = {block['id']: block for block in fresh['pages'][2]['blocks']}
+        self.assertEqual(already['a']['y'], 0)
+        self.assertEqual(already['h']['y'], 8)
+        self.assertEqual(report_layout.normalize_layout(fresh), fresh)
 
     def test_empty_page_has_no_blocks(self):
         if report_layout is None:
@@ -872,6 +1012,9 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(report_layout.TABLE_TITLES['p_df_home'], 'Home Player Stats')
         self.assertEqual(report_layout.TABLE_TITLES['p_df_away'], 'Away Player Stats')
         self.assertLess(titles.index('Home Player Stats'), titles.index('Home Lineup Stats'))
+        self.assertLess(titles.index('Away Player Stats'), titles.index('Home Player Stats'))
+        self.assertLess(titles.index('Away Lineup Stats'), titles.index('Home Lineup Stats'))
+        self.assertLess(titles.index('Key Stats'), titles.index('Away Player Stats'))
 
     def test_python_does_not_rebuild_on_layout_store(self):
         if report_layout is None:
@@ -1146,6 +1289,10 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(cdefs[1]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[1]['cellClass'], 'ag-cell-align-center')
         self.assertEqual(cdefs[1]['width'], 95)
+        self.assertEqual(cdefs[1]['tooltipField'], '_playerFull')
+        self.assertNotIn('tooltipValueGetter', cdefs[1])
+        self.assertIn('match[2].toLowerCase()', cdefs[1]['comparator']['function'])
+        self.assertIn('!ka || !kb', cdefs[1]['comparator']['function'])
 
         self.assertEqual(cdefs[2]['field'], 'S')
         self.assertEqual(cdefs[2]['pinned'], 'left')
@@ -1216,6 +1363,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
         self.assertEqual(cdefs[0]['minWidth'], 240)
         self.assertEqual(cdefs[0]['width'], 250)
+        self.assertEqual(cdefs[0]['designedWidth'], 250)
         self.assertNotIn('flex', cdefs[0])
         self.assertTrue(cdefs[0].get('wrapText'))
         self.assertTrue(cdefs[0].get('autoHeight'))
@@ -1245,17 +1393,17 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         widths = _leaf_widths(cdefs)
         self.assertEqual(widths['Min'], (44, 48))
         self.assertEqual(widths['+/-'], (34, 36))
-        self.assertEqual(widths['2M'], (26, 28))
-        self.assertEqual(widths['2A'], (26, 28))
-        self.assertEqual(widths['3M'], (26, 28))
-        self.assertEqual(widths['FTM'], (26, 28))
-        self.assertEqual(widths['FTA'], (26, 28))
-        self.assertEqual(widths['OR'], (26, 28))
-        self.assertEqual(widths['DR'], (26, 28))
-        self.assertEqual(widths['REB'], (26, 28))
-        self.assertEqual(widths['2FG%'], (44, 46))
-        self.assertEqual(widths['3FG%'], (44, 46))
-        self.assertEqual(widths['FT%'], (44, 46))
+        self.assertEqual(widths['2M'], (22, 22))
+        self.assertEqual(widths['2A'], (22, 22))
+        self.assertEqual(widths['3M'], (22, 22))
+        self.assertEqual(widths['FTM'], (22, 22))
+        self.assertEqual(widths['FTA'], (22, 22))
+        self.assertEqual(widths['OR'], (22, 22))
+        self.assertEqual(widths['DR'], (22, 22))
+        self.assertEqual(widths['REB'], (22, 22))
+        self.assertEqual(widths['2FG%'], (42, 42))
+        self.assertEqual(widths['3FG%'], (42, 42))
+        self.assertEqual(widths['FT%'], (42, 42))
         self.assertEqual(widths['AST'], (28, 30))
         self.assertEqual(widths['TO'], (28, 30))
         self.assertEqual(widths['ST'], (28, 30))
@@ -1263,12 +1411,12 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(widths['PF'], (28, 30))
         self.assertEqual(widths['FD'], (28, 30))
         self.assertEqual(widths['PTS'], (36, 40))
-        self.assertEqual(widths['PIP'], (36, 38))
-        self.assertEqual(widths['SCP'], (36, 38))
-        self.assertEqual(widths['FBP'], (36, 38))
-        self.assertEqual(widths['POT'], (36, 38))
+        self.assertEqual(widths['PIP'], (26, 26))
+        self.assertEqual(widths['SCP'], (26, 26))
+        self.assertEqual(widths['FBP'], (26, 26))
+        self.assertEqual(widths['POT'], (26, 26))
         self.assertEqual(widths['PPP'], (36, 40))
-        self.assertEqual(sum(pair[1] for pair in widths.values()), 1136)
+        self.assertEqual(sum(pair[1] for pair in widths.values()), 1022)
 
     def test_dmc_table_from_df_group_headers_and_alignments(self):
         from pages.game import _dmc_table_from_df
@@ -1362,6 +1510,22 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         team_away = next(td for td in tds if td.children == 'Away')
         self.assertEqual(team_home.style.get('borderLeft'), '3.5px solid #0077b6')
         self.assertEqual(team_away.style.get('borderLeft'), '3.5px solid #94a3b8')
+
+        ordered = pd.DataFrame([
+            {'Team': 'Zebra', 'PTS': 79},
+            {'Team': 'Alpha', 'PTS': 88},
+        ])
+        named = _dmc_table_from_df(
+            ordered, is_team_summary=True, away_name='Zebra', home_name='Alpha',
+        )
+        named_tds = [n for n in walk(named) if isinstance(n, dmc.TableTd)]
+        self.assertEqual(named_tds[0].children, 'Zebra')
+        self.assertEqual(named_tds[0].style.get('borderLeft'), '3.5px solid #94a3b8')
+        alpha = next(td for td in named_tds if td.children == 'Alpha')
+        self.assertEqual(alpha.style.get('borderLeft'), '3.5px solid #0077b6')
+        winner = next(td for td in named_tds if td.children == '88')
+        self.assertEqual(winner.style.get('color'), '#0077b6')
+        self.assertEqual(winner.style.get('fontWeight'), 700)
 
 
 

@@ -5,70 +5,43 @@ from unittest.mock import patch
 import pandas as pd
 
 import app  # noqa: F401
-from easl_inbounder.parser import TEAM_TBD, matches_to_frame
-from easl_inbounder.settings import EASL_SEASON_ID, EASL_SEASONS
 from pages import home as home_page
+from synergy_inbounder.names import TEAM_TBD, display_name
 from synergy_inbounder.parser import Parser
-from synergy_inbounder.settings import SYNERGY_SEASON_ID, SYNERGY_SEASONS
+from synergy_inbounder.settings import (
+    EASL_SEASON_ID,
+    EASL_SEASONS,
+    SYNERGY_EASL_ORGANIZATION_ID,
+    SYNERGY_SEASON_ID,
+    SYNERGY_SEASONS,
+)
 
 
-FINISHED_MATCH = {
-    'fixtureId': '10af8fd4-106e-11f1-960b-5798087c7aa3',
-    'fixtureType': 'FINAL',
-    'status': 'CONFIRMED',
-    'startTimeLocal': '2026-03-22T18:00:00',
-    'venue': {'nameLocal': 'Studio City Event Center'},
-    'competitors': [
+def _schedule_frame():
+    return pd.DataFrame([
         {
-            'isHome': False,
-            'score': '90',
-            'nameFullLocal': 'Utsunomiya Brex',
-            'nameFullLatin': '宇都宮ブレックス',
+            'startTimeLocal': '2026-03-22T18:00:00',
+            'fixtureId': 'easl-final',
+            'fixtureType': 'FINAL',
+            'status': 'CONFIRMED',
+            'teamScoreHome': 81,
+            'teamScoreAway': 90,
+            'Home Team': 'Taoyuan Pauian Pilots',
+            'Away Team': 'Utsunomiya Brex',
+            'Venue': 'Studio City Event Center',
         },
         {
-            'isHome': True,
-            'score': '81',
-            'nameFullLocal': 'Taoyuan Pauian Pilots',
+            'startTimeLocal': '2027-03-09T00:00:00',
+            'fixtureId': 'easl-draft',
+            'fixtureType': None,
+            'status': 'DRAFT',
+            'teamScoreHome': None,
+            'teamScoreAway': None,
+            'Home Team': TEAM_TBD,
+            'Away Team': TEAM_TBD,
+            'Venue': TEAM_TBD,
         },
-    ],
-}
-
-DRAFT_MATCH = {
-    'fixtureId': 'cc824b99-b040-11f1-af4b-e3512c1cd523',
-    'fixtureType': None,
-    'status': 'DRAFT',
-    'startTimeLocal': '2027-03-09T00:00:00',
-    'venue': None,
-    'competitors': [],
-}
-
-
-class EaslMatchFrameTests(unittest.TestCase):
-    def test_finished_match_uses_local_names_and_home_flag(self):
-        frame = matches_to_frame([FINISHED_MATCH])
-        row = frame.iloc[0]
-        self.assertEqual(row['Home Team'], 'Taoyuan Pauian Pilots')
-        self.assertEqual(row['Away Team'], 'Utsunomiya Brex')
-        self.assertEqual(row['teamScoreHome'], '81')
-        self.assertEqual(row['teamScoreAway'], '90')
-        self.assertEqual(row['Venue'], 'Studio City Event Center')
-        self.assertEqual(row['fixtureType'], 'FINAL')
-        self.assertEqual(row['status'], 'CONFIRMED')
-
-    def test_empty_draft_is_tbd_without_a_venue_or_type(self):
-        frame = matches_to_frame([DRAFT_MATCH])
-        row = frame.iloc[0]
-        self.assertEqual(row['Home Team'], TEAM_TBD)
-        self.assertEqual(row['Away Team'], TEAM_TBD)
-        self.assertIsNone(row['teamScoreHome'])
-        self.assertIsNone(row['teamScoreAway'])
-        self.assertEqual(row['Venue'], '')
-        self.assertIsNone(row['fixtureType'])
-        self.assertEqual(row['status'], 'DRAFT')
-
-    def test_non_list_payload_is_an_error(self):
-        with self.assertRaises(ValueError):
-            matches_to_frame({'data': []})
+    ])
 
 
 class SeasonCatalogTests(unittest.TestCase):
@@ -89,7 +62,7 @@ class SeasonCatalogTests(unittest.TestCase):
                 'b6d36761-3d8e-11ed-a1f2-d5490a4ddc81',
             ],
         )
-        self.assertEqual(SYNERGY_SEASON_ID, '00ab711f-938c-11f0-91bb-4b1b779ef3d9')
+        self.assertEqual(SYNERGY_SEASON_ID, '94b08c7c-bb00-11f1-ba8e-bd03fe15a10b')
         self.assertEqual(
             [label for label, _season_id in EASL_SEASONS],
             ['2026-27', '2025-26', '2024-25', '2023-24'],
@@ -143,18 +116,19 @@ class HomeLeagueScheduleTests(unittest.TestCase):
             'season_id': dict(SYNERGY_SEASONS)['2024-25'],
         })
 
-    def test_easl_confirmed_row_shows_the_score_and_is_not_a_link(self):
+    def test_easl_confirmed_row_links_and_draft_stays_tbd(self):
         records = home_page.schedule_records(
-            home_page._decorate_schedule(matches_to_frame([FINISHED_MATCH, DRAFT_MATCH])),
+            home_page._decorate_schedule(_schedule_frame()),
             league='EASL',
         )
         confirmed = next(row for row in records if row['status'] == 'CONFIRMED')
         draft = next(row for row in records if row['status'] == 'DRAFT')
         self.assertEqual(confirmed['score'], '90 : 81')
-        self.assertFalse(confirmed['scoreClickable'])
+        self.assertTrue(confirmed['scoreClickable'])
         self.assertEqual(draft['score'], '@')
+        self.assertFalse(draft['scoreClickable'])
         self.assertEqual(draft['homeTeam'], TEAM_TBD)
-        self.assertEqual(draft['venue'], '')
+        self.assertEqual(draft['venue'], TEAM_TBD)
         tree = home_page.render_home_page(
             records,
             show='all',
@@ -164,7 +138,8 @@ class HomeLeagueScheduleTests(unittest.TestCase):
         )
         from tests.test_dmc_ui import _anchors, _node_id, walk
         hrefs = [node.href for node in _anchors(tree)]
-        self.assertFalse(any('/game/' in href for href in hrefs))
+        self.assertIn('/game/easl/easl-final', hrefs)
+        self.assertFalse(any('easl-draft' in href for href in hrefs))
         self.assertIn('TBD', str(tree))
         self.assertIn('DRAFT', str(tree))
         season = next(node for node in walk(tree) if _node_id(node) == 'home-season')
@@ -176,17 +151,46 @@ class HomeLeagueScheduleTests(unittest.TestCase):
         league = next(node for node in walk(tree) if _node_id(node) == 'home-league')
         self.assertEqual(league.value, 'EASL')
 
-    def test_easl_load_does_not_prefetch_synergy_reports(self):
-        frame = matches_to_frame([FINISHED_MATCH])
-        with patch('easl_inbounder.parser.Parser.parse_season_game_list_df', return_value=frame), \
+    def test_easl_load_prefetches_finished_games_for_its_organization(self):
+        raw = pd.DataFrame([{
+            'startTimeLocal': '2026-03-22T18:00:00',
+            'fixtureId': 'easl-final',
+            'fixtureType': 'FINAL',
+            'status': 'CONFIRMED',
+            'teamScoreHome': 81,
+            'teamScoreAway': 90,
+            'venueId': None,
+            'teamIdHome': 'home',
+            'teamIdAway': 'away',
+        }])
+        names = {'home': 'Taoyuan Pauian Pilots', 'away': 'Utsunomiya Brex'}
+        with patch.object(Parser, 'parse_season_game_list_df', return_value=raw) as listed, \
+                patch.object(Parser, 'parse_id_tables', return_value=names), \
                 patch('synergy_inbounder.runtime_cache.prefetch_latest_games') as prefetch:
             loaded = home_page.df_data(
                 prefetch=True,
                 league='EASL',
                 season_id=dict(EASL_SEASONS)['2025-26'],
             )
-        prefetch.assert_not_called()
+        self.assertEqual(listed.call_args.args[0], SYNERGY_EASL_ORGANIZATION_ID)
+        self.assertEqual(prefetch.call_args.kwargs['organization_id'], SYNERGY_EASL_ORGANIZATION_ID)
+        self.assertNotIn('finished_only', prefetch.call_args.kwargs)
         self.assertEqual(loaded.iloc[0]['Home Team'], 'Taoyuan Pauian Pilots')
+        self.assertEqual(loaded.iloc[0]['Venue'], TEAM_TBD)
+        self.assertEqual(display_name(names, None), TEAM_TBD)
+        self.assertEqual(display_name({'home': '  '}, 'home'), TEAM_TBD)
+        self.assertEqual(display_name({}, 'missing-id'), TEAM_TBD)
+
+    def test_easl_prefetch_skips_when_nothing_is_finished(self):
+        from synergy_inbounder.runtime_cache import prefetch_latest_games
+
+        frame = pd.DataFrame([{'fixtureId': 'draft', 'status': 'DRAFT'}])
+        with patch('synergy_inbounder.runtime_cache.get_cached_report') as cached:
+            prefetch_latest_games(
+                frame,
+                organization_id=SYNERGY_EASL_ORGANIZATION_ID,
+            )
+        cached.assert_not_called()
 
     def test_scope_change_requests_that_league_and_clears_game_type(self):
         seen = {}
@@ -195,7 +199,7 @@ class HomeLeagueScheduleTests(unittest.TestCase):
             seen['prefetch'] = prefetch
             seen['league'] = league
             seen['season_id'] = season_id
-            return matches_to_frame([FINISHED_MATCH, DRAFT_MATCH])
+            return _schedule_frame()
 
         with patch.object(home_page, 'df_data', side_effect=_df), \
                 patch.object(home_page, '_triggered_id', return_value='home-scope-store'):
@@ -206,10 +210,18 @@ class HomeLeagueScheduleTests(unittest.TestCase):
             )
         self.assertEqual(seen['league'], 'EASL')
         self.assertEqual(seen['season_id'], dict(EASL_SEASONS)['2025-26'])
-        self.assertFalse(seen['prefetch'])
-        markup = str(tree)
-        self.assertIn('Utsunomiya Brex', markup)
-        self.assertIn(TEAM_TBD, markup)
+        self.assertTrue(seen['prefetch'])
+        page, stored = tree
+        from tests.test_dmc_ui import _by_class, _segmented
+        self.assertEqual(_segmented(page, 'home-show').value, 'upcoming')
+        self.assertIsNone(_segmented(page, 'home-game-type').value)
+        listed = str(_by_class(page, 'home-schedule-list')[0])
+        self.assertIn(TEAM_TBD, listed)
+        self.assertNotIn('Utsunomiya Brex', listed)
+        self.assertNotIn('/game/easl/easl-final', listed)
+        self.assertEqual(stored['show'], 'upcoming')
+        self.assertIsNone(stored['game_type'])
+        self.assertEqual(stored['league'], 'EASL')
 
 
 class PlgGameLookupTests(unittest.TestCase):
@@ -243,3 +255,19 @@ class PlgGameLookupTests(unittest.TestCase):
         self.assertEqual(status, 'DRAFT')
         self.assertEqual(calls[0], SYNERGY_SEASON_ID)
         self.assertIn(later_id, calls)
+
+
+class UnknownLeagueTests(unittest.TestCase):
+    def test_unknown_league_returns_the_game_error_without_the_api(self):
+        import json
+
+        from pages import game as game_page
+        from ui_kit import ERROR_GAME
+
+        with patch.object(game_page, 'get_cached_report') as report:
+            raw = game_page.update_bs_store(0, 'gid', 'nope')
+        report.assert_not_called()
+        payload = json.loads(raw)
+        self.assertEqual(payload['_ui'], 'error')
+        self.assertEqual(payload['message'], ERROR_GAME)
+        self.assertEqual(payload['game_id'], 'gid')

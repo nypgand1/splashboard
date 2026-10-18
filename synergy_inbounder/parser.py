@@ -51,12 +51,12 @@ class Parser:
 
     @staticmethod
     def parse_game_pbp_df(org_id, game_id):
-        live = should_use_live_endpoints(game_id=game_id)
+        live = should_use_live_endpoints(game_id=game_id, organization_id=org_id)
         return Parser._pbp_df_from_json(Communicator.get_game_play_by_play_synergy(org_id, game_id, live=live))
 
     @staticmethod
     def parse_game_stats_df(org_id, game_id):
-        live = should_use_live_endpoints(game_id=game_id)
+        live = should_use_live_endpoints(game_id=game_id, organization_id=org_id)
         return Parser._stats_from_json(
             Communicator.get_game_team_stats_synergy(org_id, game_id, live=live),
             Communicator.get_game_team_stats_periods_synergy(org_id, game_id, live=live),
@@ -175,7 +175,7 @@ class Parser:
 
     @staticmethod
     def parse_game_bundle(org_id, game_id):
-        live = should_use_live_endpoints(game_id=game_id)
+        live = should_use_live_endpoints(game_id=game_id, organization_id=org_id)
         with ThreadPoolExecutor(max_workers=7) as pool:
             f_team = pool.submit(Communicator.get_game_team_stats_synergy, org_id, game_id, live)
             f_periods = pool.submit(Communicator.get_game_team_stats_periods_synergy, org_id, game_id, live)

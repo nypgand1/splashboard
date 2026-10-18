@@ -14,49 +14,68 @@ def apply_patches():
     from tests.e2e.fixtures import FakeReport, id_table, season_df, status_for
     from synergy_inbounder import communicator, parser, runtime_cache
 
-    frame = season_df()
-    names = id_table()
-
-    def _blocked(*_args, **_kwargs):
-        raise RuntimeError('e2e fixtures only')
-
-    parser.Parser.parse_season_game_list_df = staticmethod(lambda *_a, **_k: frame.copy())
-    parser.Parser.parse_id_tables = staticmethod(lambda *_a, **_k: dict(names))
-
-    from easl_inbounder import parser as easl_parser
     import pandas as pd
 
+    from synergy_inbounder.settings import SYNERGY_EASL_ORGANIZATION_ID
+
+    frame = season_df()
+    names = id_table()
+    names.update({
+        'easl-home': 'Taoyuan Pauian Pilots',
+        'easl-away': 'Utsunomiya Brex',
+        'easl-eastern': 'Hong Kong Eastern',
+        'easl-venue': 'Studio City Event Center',
+    })
     easl_frame = pd.DataFrame([
         {
             'startTimeLocal': '2026-03-22T18:00:00',
             'fixtureId': 'easl-final',
             'fixtureType': 'FINAL',
             'status': 'CONFIRMED',
+            'venueId': 'easl-venue',
+            'teamIdHome': 'easl-home',
             'teamScoreHome': 81,
+            'teamIdAway': 'easl-away',
             'teamScoreAway': 90,
-            'Home Team': 'Taoyuan Pauian Pilots',
-            'Away Team': 'Utsunomiya Brex',
-            'Venue': 'Studio City Event Center',
+        },
+        {
+            'startTimeLocal': '2026-10-03T19:10:00',
+            'fixtureId': 'easl-eastern',
+            'fixtureType': 'FINAL',
+            'status': 'CONFIRMED',
+            'venueId': 'easl-venue',
+            'teamIdHome': 'easl-home',
+            'teamScoreHome': 79,
+            'teamIdAway': 'easl-eastern',
+            'teamScoreAway': 72,
         },
         {
             'startTimeLocal': '2027-03-09T00:00:00',
             'fixtureId': 'easl-draft',
             'fixtureType': None,
             'status': 'DRAFT',
+            'venueId': None,
+            'teamIdHome': None,
             'teamScoreHome': None,
+            'teamIdAway': None,
             'teamScoreAway': None,
-            'Home Team': 'TBD',
-            'Away Team': 'TBD',
-            'Venue': '',
         },
     ])
-    easl_parser.Parser.parse_season_game_list_df = staticmethod(
-        lambda *_a, **_k: easl_frame.copy(),
-    )
+
+    def _blocked(*_args, **_kwargs):
+        raise RuntimeError('e2e fixtures only')
+
+    def _season(org_id, *_args, **_kwargs):
+        if str(org_id) == SYNERGY_EASL_ORGANIZATION_ID:
+            return easl_frame.copy()
+        return frame.copy()
+
+    parser.Parser.parse_season_game_list_df = staticmethod(_season)
+    parser.Parser.parse_id_tables = staticmethod(lambda *_a, **_k: dict(names))
     runtime_cache.get_cached_report.factory = lambda _game_id: FakeReport()
     runtime_cache.prefetch_latest_games = lambda *_a, **_k: None
     runtime_cache.warmup_game_report = lambda *_a, **_k: None
-    runtime_cache.lookup_game_status = lambda game_id: status_for(game_id)
+    runtime_cache.lookup_game_status = lambda game_id, organization_id=None: status_for(game_id)
 
     for name in dir(communicator.Communicator):
         if name.startswith('get_') or name.startswith('_load'):

@@ -493,22 +493,24 @@ class RotationFigureTests(unittest.TestCase):
             {'side': 'away', 'home_pts': 0, 'away_pts': 8, 'start': 60.0, 'end': 120.0, 'delta': 8},
         ]
         fig = build_rotation_figure(payload)
-        # Y-axes: y (home gantt), y2 (margin), y3 (away gantt)
+        # Y-axes: y (away gantt), y2 (margin), y3 (home gantt)
         margin_traces = [trace for trace in fig.data if trace.type == 'scatter' and trace.yaxis == 'y2']
         self.assertTrue(len(margin_traces) >= 3)  # positive fill, negative fill, and main step-line
         self.assertEqual(list(fig.layout.yaxis2.range), [-5, 5])
         bars = [trace for trace in fig.data if trace.type == 'bar']
         self.assertTrue(len(bars) >= 2)
         
-        # Verify Home run annotation at top (y=5) and Away run annotation at bottom (y=-5)
+        # Away run grows up from the top of the margin. Home run grows down.
         annotations = [ann for ann in fig.layout.annotations if ann.text in ('<b>10-2</b>', '<b>8-0</b>')]
         self.assertEqual(len(annotations), 2)
         home_ann = next(ann for ann in annotations if ann.text == '<b>10-2</b>')
         away_ann = next(ann for ann in annotations if ann.text == '<b>8-0</b>')
-        self.assertEqual(home_ann.y, 5)
-        self.assertEqual(home_ann.yanchor, 'bottom')
-        self.assertEqual(away_ann.y, -5)
-        self.assertEqual(away_ann.yanchor, 'top')
+        self.assertEqual(away_ann.y, 5)
+        self.assertEqual(away_ann.yanchor, 'bottom')
+        self.assertEqual(away_ann.yshift, 2)
+        self.assertEqual(home_ann.y, -5)
+        self.assertEqual(home_ann.yanchor, 'top')
+        self.assertEqual(home_ann.yshift, -2)
 
 
 
@@ -636,17 +638,17 @@ class RotationFigureTests(unittest.TestCase):
 
         self.assertEqual(fig.layout.yaxis4.side, 'right')
         self.assertEqual(fig.layout.yaxis4.overlaying, 'y')
-        self.assertEqual(categories(fig.layout.yaxis4), ['3+ STOPS', '● A'])
+        self.assertEqual(categories(fig.layout.yaxis4), ['3+ STOPS', '  B'])
         self.assertEqual(fig.layout.yaxis6.side, 'right')
         self.assertEqual(fig.layout.yaxis6.overlaying, 'y3')
-        self.assertEqual(categories(fig.layout.yaxis6), ['  B', '3+ STOPS'])
+        self.assertEqual(categories(fig.layout.yaxis6), ['● A', '3+ STOPS'])
         self.assertEqual(numbers(fig.layout.yaxis5), numbers(fig.layout.yaxis2))
         self.assertEqual(fig.layout.yaxis5.side, 'right')
         self.assertEqual(fig.layout.yaxis5.overlaying, 'y2')
         self.assertTrue(any(getattr(trace, 'yaxis', None) == 'y5' for trace in fig.data))
         self.assertTrue(any(getattr(trace, 'yaxis', None) == 'y5' for trace in report.data))
-        self.assertEqual(categories(report.layout.yaxis4), ['3+ STOPS', 'A'])
-        self.assertEqual(categories(report.layout.yaxis6), ['B', '3+ STOPS'])
+        self.assertEqual(categories(report.layout.yaxis4), ['3+ STOPS', 'B'])
+        self.assertEqual(categories(report.layout.yaxis6), ['A', '3+ STOPS'])
         self.assertFalse(any('●' in label for label in categories(report.layout.yaxis4)))
         self.assertEqual(numbers(report.layout.yaxis5), numbers(report.layout.yaxis2))
         self.assertEqual(report.layout.yaxis5.tickfont.size, 12)
@@ -769,13 +771,13 @@ class KillFigureTests(unittest.TestCase):
 
     def test_kill_rows_face_the_margin_and_keep_dnp_on_the_player_side(self):
         fig = build_rotation_figure(self._payload(), show_dnp=True, playhead=100.0)
-        home = self._categories(fig, 'yaxis')
-        away = self._categories(fig, 'yaxis3')
-        self.assertEqual(home[0], KILL_ROW)
-        self.assertIn('Sit', home[1])
-        self.assertNotIn('●', home[0])
-        self.assertEqual(away[-1], KILL_ROW)
-        self.assertIn('Sit', away[0])
+        away = self._categories(fig, 'yaxis')
+        home = self._categories(fig, 'yaxis3')
+        self.assertEqual(away[0], KILL_ROW)
+        self.assertIn('Sit', away[1])
+        self.assertNotIn('●', away[0])
+        self.assertEqual(home[-1], KILL_ROW)
+        self.assertIn('Sit', home[0])
         self.assertEqual(self._categories(fig, 'yaxis4')[0], KILL_ROW)
         self.assertEqual(self._categories(fig, 'yaxis6')[-1], KILL_ROW)
 
@@ -789,7 +791,7 @@ class KillFigureTests(unittest.TestCase):
             self.assertEqual(bar.marker.line.width, 0)
         for bar in bars:
             self.assertFalse(bar.text)
-        away_bar = next(bar for bar in bars if bar.yaxis == 'y3')
+        away_bar = next(bar for bar in bars if bar.yaxis == 'y')
         self.assertIn('3 STOPS', away_bar.hovertext)
         counts = {
             round(float(ann.x), 5): ann
@@ -801,16 +803,16 @@ class KillFigureTests(unittest.TestCase):
         self.assertEqual(counts[45.0].text, '3')
         self.assertEqual(counts[30.0].font.color, KILL_COLOR)
         self.assertEqual(counts[30.0].font.size, 11)
-        self.assertEqual(counts[30.0].yanchor, 'top')
-        self.assertAlmostEqual(float(counts[30.0].y), fig.layout.yaxis.domain[0])
-        self.assertEqual(counts[45.0].yanchor, 'bottom')
-        self.assertAlmostEqual(float(counts[45.0].y), fig.layout.yaxis3.domain[1])
+        self.assertEqual(counts[45.0].yanchor, 'top')
+        self.assertAlmostEqual(float(counts[45.0].y), fig.layout.yaxis.domain[0])
+        self.assertEqual(counts[30.0].yanchor, 'bottom')
+        self.assertAlmostEqual(float(counts[30.0].y), fig.layout.yaxis3.domain[1])
         run_labels = [
             ann for ann in fig.layout.annotations or []
             if ann.yref == 'y2' and ann.text and '10' in str(ann.text)
         ]
-        self.assertEqual(run_labels[0].yanchor, 'bottom')
-        self.assertEqual(run_labels[0].yshift, 2)
+        self.assertEqual(run_labels[0].yanchor, 'top')
+        self.assertEqual(run_labels[0].yshift, -2)
         washes = [
             shape for shape in fig.layout.shapes or []
             if getattr(shape, 'fillcolor', None) and shape.fillcolor.startswith('rgba(0, 119, 182')
@@ -871,15 +873,15 @@ class KillFigureTests(unittest.TestCase):
         self.assertGreater(fig.layout.height, 520)
         away_title = next(ann for ann in fig.layout.annotations if ann.text == 'Away')
         home_title = next(ann for ann in fig.layout.annotations if ann.text == 'Home')
-        self.assertEqual(away_title.yshift, 11)
-        self.assertAlmostEqual(float(away_title.y), float(fig.layout.yaxis3.domain[1]))
-        self.assertFalse(home_title.yshift)
-        away_count = next(
+        self.assertFalse(away_title.yshift)
+        self.assertEqual(home_title.yshift, 11)
+        self.assertAlmostEqual(float(home_title.y), float(fig.layout.yaxis3.domain[1]))
+        home_count = next(
             ann for ann in fig.layout.annotations
             if ann.text == '3' and ann.yanchor == 'bottom'
         )
-        self.assertFalse(away_count.yshift)
-        self.assertAlmostEqual(float(away_count.y), float(fig.layout.yaxis3.domain[1]))
+        self.assertFalse(home_count.yshift)
+        self.assertAlmostEqual(float(home_count.y), float(fig.layout.yaxis3.domain[1]))
         self.assertEqual(
             [round(float(value), 6) for value in fig.layout.yaxis6.domain],
             [round(float(value), 6) for value in fig.layout.yaxis3.domain],
@@ -888,17 +890,17 @@ class KillFigureTests(unittest.TestCase):
         bare_payload = self._payload()
         bare_payload['kills'] = []
         bare = build_rotation_figure(bare_payload)
-        bare_title = next(ann for ann in bare.layout.annotations if ann.text == 'Away')
+        bare_title = next(ann for ann in bare.layout.annotations if ann.text == 'Home')
         self.assertEqual(bare_title.yshift, 11)
         self.assertAlmostEqual(bare.layout.height, fig.layout.height)
 
         report = report_rotation_figure(self._payload())
-        report_title = next(ann for ann in report.layout.annotations if ann.text == 'Away')
+        report_title = next(ann for ann in report.layout.annotations if ann.text == 'Home')
         self.assertEqual(report_title.yshift, 11)
         self.assertEqual(report_title.font.size, 12)
         self.assertAlmostEqual(report.layout.height, fig.layout.height)
 
-    def test_tall_figure_keeps_its_height_and_still_raises_the_away_title(self):
+    def test_tall_figure_keeps_its_height_and_still_raises_the_bottom_title(self):
         payload = self._payload()
         players = [
             {'label': f'P{index}', 'stints': [{'start': 0.0, 'end': 60.0, 'pm': 0}]}
@@ -910,8 +912,8 @@ class KillFigureTests(unittest.TestCase):
         base = 15 * 22 + 15 * 22 + 200
         self.assertAlmostEqual(fig.layout.height, base)
         self.assertAlmostEqual(away_lane_height(base), base)
-        away_title = next(ann for ann in fig.layout.annotations if ann.text == 'Away')
-        self.assertEqual(away_title.yshift, 11)
+        home_title = next(ann for ann in fig.layout.annotations if ann.text == 'Home')
+        self.assertEqual(home_title.yshift, 11)
         upper = self._seam_px(fig, fig.layout.yaxis.domain, fig.layout.yaxis2.domain)
         lower = self._seam_px(fig, fig.layout.yaxis2.domain, fig.layout.yaxis3.domain)
         self.assertAlmostEqual(lower, upper)
