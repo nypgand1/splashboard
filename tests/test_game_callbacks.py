@@ -245,6 +245,7 @@ class RotationViewTests(unittest.TestCase):
         self.assertIsNone(reset['x0'])
         self.assertIsNone(reset['x1'])
         self.assertIsNone(reset['slice_width'])
+        self.assertEqual(reset['t'], 0.0)
 
     def test_run_click_returns_to_all_and_sets_playhead(self):
         store = json.dumps(self._payload())
@@ -322,10 +323,106 @@ class RotationViewTests(unittest.TestCase):
         self.assertEqual(view['t'], 120.0)
         self.assertEqual(view['x0'], 120.0)
 
-    def test_finished_playhead_defaults_to_game_end(self):
+    def test_finished_playhead_defaults_to_game_start(self):
         payload = self._payload()
-        t = game_page.resolve_rotation_playhead(payload, {}, {'status': 'FINISHED'})
+        for status in ('FINISHED', 'CONFIRMED'):
+            t = game_page.resolve_rotation_playhead(payload, {}, {'status': status})
+            self.assertEqual(t, 0.0)
+
+    def test_abandoned_playhead_defaults_to_game_end(self):
+        t = game_page.resolve_rotation_playhead(self._payload(), {}, {'status': 'ABANDONED'})
         self.assertEqual(t, 240.0)
+
+    def test_finished_without_periods_has_no_playhead(self):
+        t = game_page.resolve_rotation_playhead({'periods': []}, {}, {'status': 'FINISHED'})
+        self.assertIsNone(t)
+
+    def test_stored_playhead_wins_over_finished_default(self):
+        t = game_page.resolve_rotation_playhead(
+            self._payload(), {'t': 55.0}, {'status': 'FINISHED'},
+        )
+        self.assertEqual(t, 55.0)
+
+    def _live_store(self):
+        payload = self._payload()
+        payload['margin'] = [{'t': 80.0, 'desc': 'Lin 3PT'}]
+        return json.dumps(payload)
+
+    def _store_event(self, trigger, view, status):
+        return game_page.apply_rotation_view_event(
+            trigger, 'all', False, [], None, self._live_store(), 'g1', view,
+            {'status': status},
+        )
+
+    def test_opening_finished_game_keeps_view(self):
+        for trigger in ('match_info_store', 'rotation_store'):
+            for status in ('FINISHED', 'CONFIRMED'):
+                view = self._store_event(trigger, {}, status)
+                self.assertIs(view, no_update)
+
+    def test_live_store_event_marks_saw_live_and_follows_now(self):
+        view = self._store_event('match_info_store', {}, 'IN_PROGRESS')
+        self.assertTrue(view['saw_live'])
+        self.assertEqual(view['t'], 80.0)
+        self.assertFalse(view['finished_reset'])
+
+    def test_live_store_event_keeps_parked_playhead_and_camera(self):
+        view = self._store_event(
+            'rotation_store',
+            {'follow_live': False, 't': 20.0, 'period': '1', 'x0': 0.0, 'x1': 120.0},
+            'IN_PROGRESS',
+        )
+        self.assertTrue(view['saw_live'])
+        self.assertEqual(view['t'], 20.0)
+        self.assertEqual(view['x0'], 0.0)
+        self.assertEqual(view['x1'], 120.0)
+
+    def test_live_to_finished_resets_once(self):
+        parked = {
+            'saw_live': True, 'follow_live': False, 't': 50.0, 'period': '1',
+            'x0': 0.0, 'x1': 120.0, 'slice_width': 120.0, 'axis_rev': 3,
+            'show_dnp': True,
+        }
+        for status in ('FINISHED', 'CONFIRMED'):
+            reset = self._store_event('match_info_store', dict(parked), status)
+            self.assertIsNone(reset['t'])
+            self.assertFalse(reset['follow_live'])
+            self.assertEqual(reset['period'], 'all')
+            self.assertIsNone(reset['x0'])
+            self.assertIsNone(reset['x1'])
+            self.assertIsNone(reset['slice_width'])
+            self.assertTrue(reset['finished_reset'])
+            self.assertEqual(reset['axis_rev'], 4)
+            self.assertTrue(reset['saw_live'])
+            self.assertTrue(reset['show_dnp'])
+            again = self._store_event('rotation_store', dict(reset, t=70.0), status)
+            self.assertIs(again, no_update)
+
+    def test_live_to_abandoned_keeps_playhead_and_camera(self):
+        view = self._store_event(
+            'match_info_store',
+            {'saw_live': True, 'follow_live': False, 't': 50.0, 'x0': 0.0, 'x1': 120.0},
+            'ABANDONED',
+        )
+        self.assertIs(view, no_update)
+
+    def test_game_id_resets_view(self):
+        view = game_page.apply_rotation_view_event(
+            'game_id', 'all', True, [], None, '{}', 'g2',
+            {'period': '1', 't': 9, 'x0': 1, 'x1': 2, 'show_dnp': True},
+            {},
+        )
+        self.assertEqual(view, game_page.DEFAULT_ROTATION_VIEW)
+
+    def test_game_id_clears_live_and_reset_flags(self):
+        view = game_page.apply_rotation_view_event(
+            'game_id', 'all', False, [], None, '{}', 'g2',
+            {'saw_live': True, 'finished_reset': True, 't': 50.0},
+            {},
+        )
+        self.assertFalse(view['saw_live'])
+        self.assertFalse(view['finished_reset'])
+        self.assertIsNone(view['t'])
 
     def test_live_follow_uses_now_until_unfollowed(self):
         payload = {
@@ -642,14 +739,6 @@ def _nodes(node):
             yield from _nodes(child)
     elif children is not None:
         yield from _nodes(children)
-
-    def test_game_id_resets_view(self):
-        view = game_page.apply_rotation_view_event(
-            'game_id', 'all', True, [], None, '{}', 'g2',
-            {'period': '1', 't': 9, 'x0': 1, 'x1': 2, 'show_dnp': True},
-            {},
-        )
-        self.assertEqual(view, game_page.DEFAULT_ROTATION_VIEW)
 
 
 class TabsDmcContractTests(unittest.TestCase):
