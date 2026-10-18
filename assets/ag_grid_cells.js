@@ -46,6 +46,209 @@ window.applyLineupShowOpp = function (show, attempt) {
     }
 };
 
+// clientWidth is the grid host. textWidth is the longest Lineup label plus
+// horizontal cell padding and border. Below the designed total, keep the
+// designed Lineup width and let the grid scroll. Otherwise grow only to the
+// label, and leave any remainder empty on the right.
+function splashboardLineupColumnWidth(clientWidth, statsSum, designedLineup, textWidth) {
+    if (!(clientWidth > 0) || typeof designedLineup !== 'number') {
+        return null;
+    }
+    var total = statsSum + designedLineup;
+    if (clientWidth < total) {
+        return designedLineup;
+    }
+    var cap = clientWidth - statsSum;
+    var need = Math.max(designedLineup, textWidth || 0);
+    return Math.min(need, cap);
+}
+window.splashboardLineupColumnWidth = splashboardLineupColumnWidth;
+
+var _lineupFitting = false;
+var _lineupWidthByApi = new WeakMap();
+var _lineupMeasureCanvas;
+
+function _lineupApi(id) {
+    var el = document.getElementById(id);
+    if (!el || !window.dash_ag_grid || !window.dash_ag_grid.getApi) {
+        return null;
+    }
+    try {
+        var api = window.dash_ag_grid.getApi(id);
+        if (!api || (api.isDestroyed && api.isDestroyed())) {
+            return null;
+        }
+        return api;
+    } catch (err) {
+        return null;
+    }
+}
+
+function _lineupHostWidth(api) {
+    var ids = ['lineup-grid-0', 'lineup-grid-1', 'matchup-grid'];
+    for (var i = 0; i < ids.length; i++) {
+        if (_lineupApi(ids[i]) === api) {
+            return document.getElementById(ids[i]).clientWidth;
+        }
+    }
+    return 0;
+}
+
+function _lineupPeers(api) {
+    if (_lineupApi('matchup-grid') === api) {
+        return [api];
+    }
+    var peers = [];
+    ['lineup-grid-0', 'lineup-grid-1'].forEach(function (id) {
+        var peer = _lineupApi(id);
+        if (peer) {
+            peers.push(peer);
+        }
+    });
+    if (!peers.length) {
+        return [api];
+    }
+    for (var i = 0; i < peers.length; i++) {
+        if (peers[i] === api) {
+            return peers;
+        }
+    }
+    return [api];
+}
+
+function _lineupFont() {
+    var cell = document.querySelector(
+        '.braves-lineup-grid .ag-row:not(.lineup-opp-row) .ag-cell[col-id="Lineup"], .braves-lineup-grid .ag-row:not(.lineup-opp-row) .ag-cell[col-id="Lineups"]'
+    );
+    if (!cell) {
+        return '700 13px -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif';
+    }
+    var cs = window.getComputedStyle(cell);
+    return (cs.fontWeight || '700') + ' ' + (cs.fontSize || '13px') + ' ' + (cs.fontFamily || 'sans-serif');
+}
+
+function _lineupPad() {
+    var cell = document.querySelector(
+        '.braves-lineup-grid .ag-cell[col-id="Lineup"], .braves-lineup-grid .ag-cell[col-id="Lineups"]'
+    );
+    if (!cell) {
+        return 6;
+    }
+    var cs = window.getComputedStyle(cell);
+    return (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+        + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
+}
+
+function _lineupLabel(data, matchup) {
+    if (!data) {
+        return '';
+    }
+    if (data._opp && !matchup) {
+        return 'Opp';
+    }
+    return data.Lineup || data.Lineups || '';
+}
+
+function _lineupTextWidth(api) {
+    var matchup = _lineupApi('matchup-grid') === api;
+    var pad = _lineupPad();
+    var widest = 0;
+    if (!api.forEachNode) {
+        return 0;
+    }
+    if (!_lineupMeasureCanvas) {
+        _lineupMeasureCanvas = document.createElement('canvas');
+    }
+    var ctx = _lineupMeasureCanvas.getContext('2d');
+    ctx.font = _lineupFont();
+    api.forEachNode(function (node) {
+        var text = _lineupLabel(node && node.data, matchup);
+        if (!text) {
+            return;
+        }
+        widest = Math.max(widest, Math.ceil(ctx.measureText(String(text)).width + pad));
+    });
+    return widest;
+}
+
+function _applyLineupWidth(api, clientWidth, textWidth) {
+    if (!api.getColumns || !api.setColumnWidths) {
+        return;
+    }
+    var columns = api.getColumns() || [];
+    var lineupId = null;
+    var lineupDesigned = null;
+    var others = 0;
+    var updates = [];
+    columns.forEach(function (col) {
+        var def = col.getColDef();
+        if (!def.field) {
+            return;
+        }
+        var id = col.getColId();
+        var designed = def.designedWidth;
+        if (typeof designed !== 'number') {
+            designed = col.getActualWidth();
+        }
+        if (id === 'Lineup' || id === 'Lineups') {
+            lineupId = id;
+            lineupDesigned = designed;
+            return;
+        }
+        others += designed;
+        updates.push({key: id, newWidth: designed});
+    });
+    var lineupWidth = splashboardLineupColumnWidth(clientWidth, others, lineupDesigned, textWidth);
+    if (!lineupId || lineupWidth === null) {
+        return;
+    }
+    updates.push({key: lineupId, newWidth: lineupWidth});
+    var unchanged = updates.every(function (item) {
+        var current = api.getColumn(item.key);
+        return current && Math.round(current.getActualWidth()) === Math.round(item.newWidth);
+    });
+    if (unchanged) {
+        return;
+    }
+    api.setColumnWidths(updates);
+}
+
+function splashboardFitLineupWidth(params) {
+    var api = params && params.api;
+    if (_lineupFitting || !api || (api.isDestroyed && api.isDestroyed())) {
+        return;
+    }
+    var width = params.clientWidth;
+    if (!(width > 0)) {
+        width = _lineupHostWidth(api);
+    }
+    if (!(width > 0)) {
+        return;
+    }
+    _lineupFitting = true;
+    try {
+        _lineupWidthByApi.set(api, width);
+        var peers = _lineupPeers(api);
+        var textWidth = 0;
+        peers.forEach(function (peer) {
+            textWidth = Math.max(textWidth, _lineupTextWidth(peer));
+        });
+        peers.forEach(function (peer) {
+            var peerWidth = peer === api ? width : _lineupWidthByApi.get(peer);
+            if (!(peerWidth > 0)) {
+                peerWidth = _lineupHostWidth(peer);
+            }
+            if (peerWidth > 0) {
+                _applyLineupWidth(peer, peerWidth, textWidth);
+            }
+        });
+    } finally {
+        _lineupFitting = false;
+    }
+}
+window.splashboardFitLineupWidth = splashboardFitLineupWidth;
+dagFuncs.splashboardFitLineupWidth = splashboardFitLineupWidth;
+
 var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
 
 dagComponentFuncs.PlusMinusCell = function (props) {

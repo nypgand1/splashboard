@@ -372,6 +372,41 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         skip_fn = js.split('function skipFourFactorsGroup')[1].split('function groupedHeader')[0]
         self.assertNotIn('t_adv_df', skip_fn)
 
+    def test_report_pair_tables_share_stat_widths(self):
+        import os
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(root, 'assets', 'report_canvas.js'), encoding='utf-8') as handle:
+            js = handle.read()
+        self.assertIn('function syncPairColumnWidths', js)
+        self.assertIn("['p_df_home', 'p_df_away']", js)
+        self.assertIn("['lineup_home', 'lineup_away']", js)
+        self.assertIn("col === 'Player'", js)
+        self.assertIn("col === 'Lineup'", js)
+        pair = js.split('function syncPairColumnWidths', 1)[1].split('function schedulePairWidths', 1)[0]
+        self.assertIn('floors._nameNeed', pair)
+        self.assertIn('sharedSpare', pair)
+        self.assertIn('Math.floor(sharedSpare / statCols.length)', pair)
+        self.assertIn('index < leftoverPx', pair)
+        self.assertIn('entry.hostW - statSum - nameNeed', pair)
+        self.assertNotIn('nameW = Math.max(nameFloor, hostW - statSum)', pair)
+        self.assertIn('function pdfHeaderFloorPx', js)
+        header_floor = js.split('function pdfHeaderFloorPx', 1)[1].split('function measureLeafFloors', 1)[0]
+        self.assertIn('PDF_FAKE_BOLD_MM', header_floor)
+        self.assertIn('+ 0.8', header_floor)
+        self.assertIn('pdf.getTextWidth(text)', header_floor)
+        self.assertIn('function armPdfHeaderMeasure', js)
+        export_fn = js.split('function exportPapersToPdf', 1)[1].split('function validateImageFile', 1)[0]
+        self.assertIn('pdfMeasurer = pdf', export_fn)
+        self.assertIn('PAIR_WIDTHS.forEach(syncPairColumnWidths)', export_fn)
+        measure = js.split('function measureTableMaxContentWidth', 1)[1].split('function contentFloor', 1)[0]
+        self.assertIn("querySelector('colgroup')", measure)
+        self.assertIn('cg.remove()', measure)
+        with open(os.path.join(root, 'assets', 'ag_grid_cells.js'), encoding='utf-8') as handle:
+            cells = handle.read()
+        pad = cells.split('function _lineupPad', 1)[1].split('function _lineupLabel', 1)[0]
+        self.assertIn('borderLeftWidth', pad)
+        self.assertIn('borderRightWidth', pad)
+
     def test_pdf_draw_uses_separate_scale_middle_baseline_and_fake_bold(self):
         import os
         js_path = os.path.join(
@@ -565,7 +600,12 @@ class ReportTableComponentTests(unittest.TestCase):
         second_head = css.split('.report-js-table thead tr:nth-child(2) th', 1)[1].split('}', 1)[0]
         self.assertIn('padding-left: 0', second_head)
         self.assertIn('padding-right: 0', second_head)
-        self.assertIn('font-size: 8px', second_head)
+        self.assertIn('font-size: 7.5px', second_head)
+        lineup_head = css.split('.braves-lineup-grid .ag-header-cell:is(', 1)[1].split('}', 1)[0]
+        self.assertIn('[col-id="PIP"]', lineup_head)
+        self.assertIn('padding-left: 0 !important', lineup_head)
+        self.assertIn('font-size: 10px !important', lineup_head)
+        self.assertNotIn('[col-id="Min"]', lineup_head)
         self.assertNotIn('measureContentPx(item) + 3', js)
         self.assertIn('function syncPageOneSideNote', js)
         self.assertNotIn('clone.className = card.className', js)
@@ -1323,6 +1363,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
         self.assertEqual(cdefs[0]['minWidth'], 240)
         self.assertEqual(cdefs[0]['width'], 250)
+        self.assertEqual(cdefs[0]['designedWidth'], 250)
         self.assertNotIn('flex', cdefs[0])
         self.assertTrue(cdefs[0].get('wrapText'))
         self.assertTrue(cdefs[0].get('autoHeight'))
@@ -1352,17 +1393,17 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         widths = _leaf_widths(cdefs)
         self.assertEqual(widths['Min'], (44, 48))
         self.assertEqual(widths['+/-'], (34, 36))
-        self.assertEqual(widths['2M'], (26, 28))
-        self.assertEqual(widths['2A'], (26, 28))
-        self.assertEqual(widths['3M'], (26, 28))
-        self.assertEqual(widths['FTM'], (26, 28))
-        self.assertEqual(widths['FTA'], (26, 28))
-        self.assertEqual(widths['OR'], (26, 28))
-        self.assertEqual(widths['DR'], (26, 28))
-        self.assertEqual(widths['REB'], (26, 28))
-        self.assertEqual(widths['2FG%'], (44, 46))
-        self.assertEqual(widths['3FG%'], (44, 46))
-        self.assertEqual(widths['FT%'], (44, 46))
+        self.assertEqual(widths['2M'], (22, 22))
+        self.assertEqual(widths['2A'], (22, 22))
+        self.assertEqual(widths['3M'], (22, 22))
+        self.assertEqual(widths['FTM'], (22, 22))
+        self.assertEqual(widths['FTA'], (22, 22))
+        self.assertEqual(widths['OR'], (22, 22))
+        self.assertEqual(widths['DR'], (22, 22))
+        self.assertEqual(widths['REB'], (22, 22))
+        self.assertEqual(widths['2FG%'], (42, 42))
+        self.assertEqual(widths['3FG%'], (42, 42))
+        self.assertEqual(widths['FT%'], (42, 42))
         self.assertEqual(widths['AST'], (28, 30))
         self.assertEqual(widths['TO'], (28, 30))
         self.assertEqual(widths['ST'], (28, 30))
@@ -1370,12 +1411,12 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(widths['PF'], (28, 30))
         self.assertEqual(widths['FD'], (28, 30))
         self.assertEqual(widths['PTS'], (36, 40))
-        self.assertEqual(widths['PIP'], (36, 38))
-        self.assertEqual(widths['SCP'], (36, 38))
-        self.assertEqual(widths['FBP'], (36, 38))
-        self.assertEqual(widths['POT'], (36, 38))
+        self.assertEqual(widths['PIP'], (26, 26))
+        self.assertEqual(widths['SCP'], (26, 26))
+        self.assertEqual(widths['FBP'], (26, 26))
+        self.assertEqual(widths['POT'], (26, 26))
         self.assertEqual(widths['PPP'], (36, 40))
-        self.assertEqual(sum(pair[1] for pair in widths.values()), 1136)
+        self.assertEqual(sum(pair[1] for pair in widths.values()), 1022)
 
     def test_dmc_table_from_df_group_headers_and_alignments(self):
         from pages.game import _dmc_table_from_df

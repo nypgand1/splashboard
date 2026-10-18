@@ -846,6 +846,9 @@ def _lineup_frame(page):
     page.locator('#pane-lineup .ag-header-cell[col-id="Lineup"]').first.wait_for(
         state='attached', timeout=20000,
     )
+    page.locator('#pane-lineup .ag-header-cell[col-id="PIP"]').first.wait_for(
+        state='attached', timeout=20000,
+    )
     _reveal_loading(page, 'wrap-lineup')
     return page.evaluate(
         '''() => {
@@ -853,11 +856,21 @@ def _lineup_frame(page):
             const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="Lineup"]');
             const viewport = document.querySelector('#pane-lineup .ag-center-cols-viewport');
             const cs = getComputedStyle(wrap);
+            const pip = document.querySelector('#pane-lineup .ag-header-cell[col-id="PIP"]');
+            const minHead = document.querySelector('#pane-lineup .ag-header-cell[col-id="Min"]');
+            const group = document.querySelector('#pane-lineup .ag-header-group-cell');
+            const pipCs = pip ? getComputedStyle(pip) : null;
+            const minCs = minHead ? getComputedStyle(minHead) : null;
+            const groupCs = group ? getComputedStyle(group) : null;
             return {
                 marginLeft: cs.marginLeft,
                 marginRight: cs.marginRight,
                 headerW: header ? Math.round(header.getBoundingClientRect().width) : 0,
                 overflow: viewport ? viewport.scrollWidth > viewport.clientWidth + 2 : null,
+                pipFont: pipCs ? pipCs.fontSize : '',
+                pipPad: pipCs ? pipCs.paddingLeft : '',
+                minFont: minCs ? minCs.fontSize : '',
+                groupFont: groupCs ? groupCs.fontSize : '',
             };
         }'''
     )
@@ -871,7 +884,53 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     landscape = _lineup_frame(page)
     assert landscape['marginLeft'] == '-18px'
     assert landscape['marginRight'] == '-18px'
-    assert 240 <= landscape['headerW'] <= 260
+    assert landscape['headerW'] == 250
+    assert landscape['overflow'] is False
+    assert landscape['pipFont'] == '10px'
+    assert landscape['pipPad'] == '0px'
+    assert landscape['minFont'] == '12px'
+    assert landscape['groupFont'] == '12px'
+    fitted = page.evaluate(
+        '''() => new Promise((resolve) => {
+            const w = window.splashboardLineupColumnWidth;
+            const formula = w(1156, 756, 250, 341) === 341
+                && w(1156, 756, 250, 100) === 250
+                && w(900, 756, 250, 341) === 250
+                && w(1400, 756, 250, 341) === 341
+                && w(0, 756, 250, 341) === null;
+            const api = window.dash_ag_grid.getApi('lineup-grid-0');
+            const host = document.getElementById('lineup-grid-0');
+            const header = host.querySelector('.ag-header-cell[col-id="Lineup"]');
+            const saved = [];
+            api.forEachNode(node => {
+                if (node.data && Object.prototype.hasOwnProperty.call(node.data, 'Lineup')) {
+                    saved.push([node, node.data.Lineup]);
+                    node.data.Lineup = 'Y.W.Chen-J.Pickett-K.Y.Chou-M.Todorovic-C.W.Lee';
+                }
+            });
+            const afterPaint = (fn) => requestAnimationFrame(() => requestAnimationFrame(fn));
+            window.splashboardFitLineupWidth({api: api, clientWidth: host.clientWidth});
+            afterPaint(() => {
+                const grown = Math.round(header.getBoundingClientRect().width);
+                const cap = host.clientWidth - 772;
+                saved.forEach(pair => { pair[0].data.Lineup = pair[1]; });
+                window.splashboardFitLineupWidth({api: api, clientWidth: host.clientWidth});
+                afterPaint(() => {
+                    api.refreshCells({force: true, columns: ['Lineup']});
+                    resolve({
+                        formula: formula,
+                        grown: grown,
+                        cap: cap,
+                        restored: Math.round(header.getBoundingClientRect().width),
+                    });
+                });
+            });
+        })'''
+    )
+    assert fitted['formula'] is True
+    assert fitted['grown'] > 300
+    assert fitted['grown'] < fitted['cap'] - 20
+    assert fitted['restored'] == 250
     places = page.evaluate(
         '''() => {
             const size = document.getElementById('lineup_size_dropdown').getBoundingClientRect();
@@ -905,8 +964,10 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     sort = page.evaluate(
         '''() => {
             const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
-            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
-            const rows = [...center.querySelectorAll('.ag-row')];
+            const pane = document.getElementById('pane-lineup');
+            const holders = [...pane.querySelectorAll('.ag-pinned-left-cols-container, .ag-center-cols-container')];
+            const holder = holders.find((el) => el.querySelector('.ag-cell[col-id="Lineup"]'));
+            const rows = holder ? [...holder.querySelectorAll('.ag-row')] : [];
             rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
             const labels = rows.slice(0, 4).map(row => {
                 const cell = row.querySelector('.ag-cell[col-id="Lineup"]');
@@ -923,11 +984,7 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     page.locator('#lineup-show-opp').click()
     page.wait_for_function(
         '''() => {
-            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
-            if (!center) {
-                return false;
-            }
-            return [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+            return [...document.querySelectorAll('#pane-lineup .ag-cell[col-id="Lineup"]')]
                 .filter(el => el.innerText.trim() === 'Opp').length === 0;
         }''',
         timeout=20000,
@@ -935,11 +992,13 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     hidden = page.evaluate(
         '''() => {
             const header = document.querySelector('#pane-lineup .ag-header-cell[col-id="PTS"]');
-            const center = document.querySelector('#pane-lineup .ag-center-cols-container');
-            const rows = [...center.querySelectorAll('.ag-row')];
+            const pane = document.getElementById('pane-lineup');
+            const holders = [...pane.querySelectorAll('.ag-pinned-left-cols-container, .ag-center-cols-container')];
+            const holder = holders.find((el) => el.querySelector('.ag-cell[col-id="Lineup"]'));
+            const rows = holder ? [...holder.querySelectorAll('.ag-row')] : [];
             rows.sort((a, b) => Number(a.getAttribute('row-index')) - Number(b.getAttribute('row-index')));
             const cell = rows[0] && rows[0].querySelector('.ag-cell[col-id="Lineup"]');
-            const opp = [...center.querySelectorAll('.ag-cell[col-id="Lineup"]')]
+            const opp = [...pane.querySelectorAll('.ag-cell[col-id="Lineup"]')]
                 .filter(el => el.innerText.trim() === 'Opp').length;
             return {dir: header ? header.getAttribute('aria-sort') : '', first: cell ? cell.innerText.trim() : '', opp};
         }'''
@@ -957,7 +1016,8 @@ def test_lineup_tab_fits_ipad_pro_11(page, e2e_server):
     desktop = _lineup_frame(page)
     assert desktop['marginLeft'] == '0px'
     assert desktop['marginRight'] == '0px'
-    assert 240 <= desktop['headerW'] <= 260
+    assert desktop['headerW'] == 250
+    assert desktop['overflow'] is False
 
     page.set_viewport_size({'width': 834, 'height': 1210})
     page.wait_for_timeout(400)

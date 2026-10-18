@@ -1216,6 +1216,22 @@ def _lineup_col_size(lineup_size):
     return LINEUP_COL_SIZES.get(size, LINEUP_COL_SIZES[5])
 
 
+def _stamp_designed_widths(column_defs):
+    for col in column_defs:
+        children = col.get('children')
+        if children:
+            _stamp_designed_widths(children)
+        elif 'width' in col:
+            col['designedWidth'] = col['width']
+    return column_defs
+
+
+_LINEUP_FIT_EVENTS = {
+    'gridSizeChanged': ['splashboardFitLineupWidth(params)'],
+    'firstDataRendered': ['splashboardFitLineupWidth(params)'],
+}
+
+
 def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     col_set = set(columns)
     column_defs = []
@@ -1223,13 +1239,13 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
     sorted_cell_rules = {"ag-sorted-col-bg": "params.column.isSortActive()"}
     is_lineup = any('lineup' in str(name).lower() for name in col_set)
     if is_lineup:
-        count_min, count_w = 26, 28
-        pct_min, pct_w = 44, 46
+        count_min, count_w = 22, 22
+        pct_min, pct_w = 42, 42
         letter_min, letter_w = 28, 30
         minute_min, minute_w = 44, 48
         plusminus_min, plusminus_w = 34, 36
         pt_min, pt_w = 36, 40
-        key_min, key_w = 36, 38
+        key_min, key_w = 26, 26
         ppp_min, ppp_w = 36, 40
     else:
         count_min, count_w = 36, 38
@@ -1487,7 +1503,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             })
 
     _apply_click_sort_columns(column_defs)
-    return column_defs
+    return _stamp_designed_widths(column_defs)
 
 
 def _display_cell(value):
@@ -1745,6 +1761,7 @@ def _matchup_grid():
             'suppressHorizontalScroll': False,
             'postSortRows': _LINEUP_POST_SORT,
         },
+        eventListeners=_LINEUP_FIT_EVENTS,
         className='ag-theme-alpine braves-clean-ag-grid braves-lineup-grid',
         style={'width': '100%'},
         getRowId="params.data._pair + (params.data._opp ? ':other' : ':view')",
@@ -1873,11 +1890,15 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                 }
             _apply_click_sort(col_def)
             column_defs.append(col_def)
+        _stamp_designed_widths(column_defs)
 
     dash_options = {
         "domLayout": "autoHeight",
         "suppressHorizontalScroll": False,
     }
+    lineup_events = None
+    if any('lineup' in str(col).lower() for col in df.columns):
+        lineup_events = _LINEUP_FIT_EVENTS
     if page_size:
         dash_options["pagination"] = True
         dash_options["paginationPageSize"] = page_size
@@ -1911,6 +1932,9 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     grid_class = "ag-theme-alpine braves-clean-ag-grid"
     if any('lineup' in str(c).lower() for c in df.columns):
         grid_class += " braves-lineup-grid"
+    if lineup_events:
+        pair_props = dict(pair_props)
+        pair_props['eventListeners'] = lineup_events
     return dmc.Paper(
         dag.AgGrid(
             rowData=row_records if row_records is not None else df.to_dict('records'),

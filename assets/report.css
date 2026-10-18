@@ -887,6 +887,12 @@ body {
     white-space: nowrap;
 }
 
+.report-js-table.report-lineup-table th,
+.report-js-table.report-lineup-table td {
+    padding-left: 2px;
+    padding-right: 2px;
+}
+
 .report-js-table td.report-lineup-name {
     white-space: normal;
 }
@@ -901,7 +907,7 @@ body {
 .report-js-table thead tr:nth-child(2) th {
     padding-left: 0;
     padding-right: 0;
-    font-size: 8px;
+    font-size: 7.5px;
 }
 
 .report-js-table tbody tr:nth-of-type(odd) {
@@ -1237,6 +1243,47 @@ body {
     white-space: normal;
     line-height: 1.3;
     overflow: visible;
+}
+
+.braves-lineup-grid .ag-header-cell:is(
+    [col-id="2M"],
+    [col-id="2A"],
+    [col-id="2FG%"],
+    [col-id="3M"],
+    [col-id="3A"],
+    [col-id="3FG%"],
+    [col-id="FTM"],
+    [col-id="FTA"],
+    [col-id="FT%"],
+    [col-id="OR"],
+    [col-id="DR"],
+    [col-id="REB"],
+    [col-id="PIP"],
+    [col-id="SCP"],
+    [col-id="FBP"],
+    [col-id="POT"]
+),
+.braves-lineup-grid .ag-header-cell:is(
+    [col-id="2M"],
+    [col-id="2A"],
+    [col-id="2FG%"],
+    [col-id="3M"],
+    [col-id="3A"],
+    [col-id="3FG%"],
+    [col-id="FTM"],
+    [col-id="FTA"],
+    [col-id="FT%"],
+    [col-id="OR"],
+    [col-id="DR"],
+    [col-id="REB"],
+    [col-id="PIP"],
+    [col-id="SCP"],
+    [col-id="FBP"],
+    [col-id="POT"]
+) .ag-header-cell-label {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    font-size: 10px !important;
 }
 
 @media (max-width: 1024px) {
