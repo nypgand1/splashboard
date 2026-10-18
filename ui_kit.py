@@ -21,6 +21,7 @@ SCORE_SLOT_STYLE = {
 
 ERROR_HOME = 'Failed to load games. Please try again later.'
 ERROR_GAME = 'Failed to load this view. Please try again later.'
+REFRESH_DELAYED = 'Refresh delayed. Showing the last update.'
 EMPTY_HOME = 'No games available.'
 EMPTY_HOME_NEXT = 'Check back when the season schedule is published.'
 EMPTY_HOME_FILTER = 'No games in this view.'

@@ -17,8 +17,13 @@ from dash.development.base_component import Component
 import dash_mantine_components as dmc
 import pandas as pd
 
+from synergy_inbounder.communicator import SynergyAuthError
 from synergy_inbounder.names import display_name
-from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
+from synergy_inbounder.runtime_cache import (
+    LIVE_CADENCE_SECONDS,
+    id_refresh_state,
+    season_refresh_state,
+)
 from synergy_inbounder.settings import (
     EASL_SEASON_ID,
     EASL_SEASONS,
@@ -39,6 +44,7 @@ from ui_kit import (
     EMPTY_HOME_FILTER_NEXT,
     EMPTY_HOME_NEXT,
     ERROR_HOME,
+    REFRESH_DELAYED,
     empty_state,
     error_alert,
     filter_control,
@@ -207,6 +213,20 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     prefetch = bool(first or scope_change)
     try:
         df = df_data(prefetch=prefetch, league=league, season_id=season_id)
+        org = _organization_for_home_league(league)
+        season_key = season_id or default_season_id(league)
+        refresh = season_refresh_state(org, season_key)
+        names = id_refresh_state(org)
+    except SynergyAuthError as exc:
+        print(f"Error loading home game list: {exc}")
+        return render_home_page(
+            None,
+            show=show,
+            game_type=None,
+            league=league,
+            season_id=season_id,
+            failed=True,
+        ), no_update
     except Exception as exc:
         print(f"Error loading home game list: {exc}")
         if first or scope_change:
@@ -220,6 +240,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
             ), no_update
         return no_update, no_update
     records = [] if df is None or df.empty else schedule_records(df, league=league)
+    stamp = refresh.get('label')
+    delayed = bool(refresh.get('delayed') or names.get('delayed'))
     if first or scope_change:
         show, game_type = entry_home_view(records)
         page = render_home_page(
@@ -228,6 +250,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
             game_type=game_type,
             league=league,
             season_id=season_id,
+            stamp=stamp,
+            delayed=delayed,
         )
         return page, home_filters_after_default(
             filters, league, season_id, show, game_type,
@@ -238,6 +262,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
         game_type=game_type,
         league=league,
         season_id=season_id,
+        stamp=stamp,
+        delayed=delayed,
     )
     return page, no_update
 
@@ -604,17 +630,25 @@ def _last_update_stamp():
     return f'Last Update: {when}'
 
 
-def _last_update_line(text):
-    return html.Div(
+def _last_update_line(text, delayed=False):
+    children = [
         dmc.Text(
             text,
             size='sm',
             c='dimmed',
-            mb=8,
+            mb=0 if delayed else 8,
             className='no-print',
         ),
-        id='home-last-update',
-    )
+    ]
+    if delayed:
+        children.append(dmc.Text(
+            REFRESH_DELAYED,
+            size='sm',
+            c='dimmed',
+            mb=8,
+            className='no-print',
+        ))
+    return html.Div(children, id='home-last-update')
 
 
 def _compact_row(record):
@@ -706,6 +740,8 @@ def render_home_page(
     league=LEAGUE_PLG,
     season_id=None,
     failed=False,
+    stamp=None,
+    delayed=False,
 ):
     if league not in (LEAGUE_PLG, LEAGUE_EASL):
         league = LEAGUE_PLG
@@ -749,16 +785,18 @@ def render_home_page(
     )
     if failed:
         stamp = HOME_LAST_UPDATE_PENDING
+        delayed = False
         store_data = {'_ui': 'error'}
         list_body = error_alert(ERROR_HOME)
     else:
-        stamp = _last_update_stamp()
+        if not stamp:
+            stamp = _last_update_stamp()
         store_data = rows
         list_body = render_schedule_list(rows, show, game_type)
     return dmc.Stack(
         [
             dcc.Store(id='home-schedule-store', data=store_data),
-            _last_update_line(stamp),
+            _last_update_line(stamp, delayed=delayed),
             dmc.Stack(
                 [
                     dmc.Group(

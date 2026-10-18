@@ -35,10 +35,10 @@ Finished-game detection is in `docs/spec.md`. `Parser.parse_game_bundle` uses on
 | player stats | `.../statistics/for/person/in/fixtures/{id}` | same + `/live` |
 | player period stats | `.../periods` (`limit=1000`; no `isPlayer`) | same + `/live` |
 | fixture roster | always official `.../roster` | same |
-| org persons / entities / venues | always official, HTTP cache 8 hours | same |
-| season fixtures | always official, process cache 25 seconds | same |
+| org persons / entities / venues | always official, HTTP cache 2 hours | same |
+| season fixtures | always official, process cache 30 seconds, and that process cache is the only season cache | same |
 
-Official live routes are marked **2 requests per minute** per route. The 30 / 25 / 25 cadence sits on that cap, assuming one live game at a time. The live bundle adds one person-period request on that same cadence. This spec does not require 429 `Retry-After` or serializing the live bundle.
+Official live routes are marked **2 requests per minute** per route. PLG and EASL are separate budgets. One live bundle is one generation of the five `/live` routes.
 
 ## Response envelope
 
@@ -62,8 +62,14 @@ Official live routes are marked **2 requests per minute** per route. The 30 / 25
 
 ## Rate limits and cache
 
-- Live PBP `requests_cache` TTL = 25 seconds (key `*/playbyplay/live`).
-- Live `PostGameReport` process cache = 25 seconds. After the game is finished, the same process does not rebuild it.
-- Season fixture process cache = 25 seconds. Home reloads that list every 30 seconds, so the next poll can see a score or status change.
-- Concurrent lookups for the same organization and `game_id` build the report once (singleflight). The memo key is that pair.
-- Caches are process-local. A Fly `auto_stop` wake is a cold cache.
+Two lifetimes. Short is 30 seconds: the five `/live` routes, the live report memo, season fixtures, roster, and pre-finish official stats. Long is 2 hours: persons, entities, venues, and the id table. The season URL is not also served from the HTTP cache. Token lifetime stays Synergy `expiresIn` (refresh 60 seconds early). A finished report memo stays for the life of the process.
+
+- Live PBP `requests_cache` TTL = 30 seconds (key `*/playbyplay/live`). The other four `/live` routes use the same 30-second default.
+- Live `PostGameReport` process cache = 30 seconds. The five routes are written and expire together. A failed round does not update the memo. Partial HTTP hits for that fixture are dropped so the next rebuild does not mix a newer play-by-play with older stats. After the game is finished, the same process does not rebuild it.
+- Season fixture process cache = 30 seconds, with singleflight. The id table uses the same singleflight and the 2-hour lifetime. A failure is not stored. If a previous entry exists, it is served and marked delayed, except 401/403, which still fail.
+- Home and Game poll every 35 seconds. One watched live game fetches about every 35 seconds. Two or more games watched within 70 seconds share one origin bundle per organization every 35 seconds, round-robin, so each game updates about every 70 seconds. A game leaves the rotation after 70 seconds with no poll.
+- The first open of two games may both fetch immediately. That uses the minute's 2 calls. No live origin follows until 60 seconds after that burst. That quiet stretch is the schedule, not a failure.
+- Each organization allows 2 origin calls per live route per rolling 60 seconds. Reserving a bundle takes one call on all five routes before `PostGameReport` runs. A 5xx retry is one extra call on that route and is not sent when the route is already at 2. A cache hit does not count.
+- 429 pauses that organization's live calls until `Retry-After`, or 60 seconds when the header is missing or invalid. The page keeps the last success when one exists.
+- Concurrent lookups for the same organization and `game_id` build the report once (singleflight). Sibling callbacks in the same tick do not start a second bundle. The memo key is that pair. Season and id-table misses share one fetch each.
+- The budget, the singleflight, and the memos are process-local. Startup is one worker (`--workers 1`). A second process is outside this guarantee. A Fly `auto_stop` wake is a cold cache.

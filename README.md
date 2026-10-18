@@ -16,10 +16,10 @@ cp .env.example .env
 ## Local run
 
 ```bash
-uvicorn app:server --host 127.0.0.1 --port 8050
+uvicorn app:server --host 127.0.0.1 --port 8050 --workers 1
 ```
 
-Open `http://127.0.0.1:8050`.
+Open `http://127.0.0.1:8050`. The live budget is process-local, so the process stays at one worker. Fly uses the same pin in `Procfile`.
 
 ## Tests
 

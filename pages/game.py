@@ -8,6 +8,7 @@ import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
+from synergy_inbounder.communicator import SynergyAuthError
 from synergy_inbounder.names import display_name
 from synergy_inbounder.settings import organization_for_league, season_ids_for_organization
 from synergy_inbounder.parser import Parser
@@ -15,6 +16,7 @@ from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
     get_cached_game_status,
     get_cached_report,
+    report_refresh_state,
     warmup_game_report,
 )
 from synergy_inbounder.game_status import (
@@ -59,6 +61,7 @@ from ui_kit import (
     EMPTY_GAME_NEXT,
     EMPTY_MATCHUPS,
     ERROR_GAME,
+    REFRESH_DELAYED,
     empty_state,
     error_alert,
     filter_control,
@@ -623,9 +626,10 @@ def update_bs_store(n, game_id, league='plg'):
     Output('match_info_store', 'data'),
     [Input('interval-component', 'n_intervals'),
      Input('game_id', 'children'),
-     Input('game_league', 'children')]
+     Input('game_league', 'children')],
+    State('match_info_store', 'data'),
 )
-def update_match_info_store(n, game_id, league='plg'):
+def update_match_info_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
@@ -664,9 +668,15 @@ def update_match_info_store(n, game_id, league='plg'):
             'organization_id': org,
         }
         return json.dumps(info, ensure_ascii=False)
+    except SynergyAuthError as e:
+        print(f"Error loading match info: {e}")
+        return _error_store(game_id=game_id)
     except Exception as e:
         print(f"Error loading match info: {e}")
-        return json.dumps({})
+        kept = safe_loads(previous)
+        if kept.get('status') and kept.get('_ui') != 'error':
+            return previous if isinstance(previous, str) else json.dumps(kept)
+        return _error_store(game_id=game_id)
 
 @callback(
     Output('game-info-banner-wrap', 'children'),
@@ -674,7 +684,7 @@ def update_match_info_store(n, game_id, league='plg'):
 )
 def render_game_info_banner(match_info_store):
     info = safe_loads(match_info_store)
-    if not info:
+    if not info or info.get('_ui') == 'error':
         return html.Div()
     return game_banner(
         home_team=info.get('home_team') or 'Home',
@@ -693,6 +703,8 @@ def render_game_info_banner(match_info_store):
 )
 def set_interval_disabled(match_info_store):
     info = safe_loads(match_info_store)
+    if info.get('_ui') == 'error':
+        return False
     return not is_live_play_status(info.get('status'))
 
 
@@ -827,14 +839,35 @@ def _error_store(message=None, game_id=None):
     return json.dumps(payload)
 
 
-def _last_update_span():
-    return dmc.Text(
-        f'Last Update: {datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))}',
+def _last_update_span(game_id=None, organization_id=None):
+    label = None
+    delayed = False
+    if game_id:
+        state = report_refresh_state(game_id, organization_id)
+        label = state.get('label')
+        delayed = bool(state.get('delayed'))
+    if not label:
+        when = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))
+        label = f'Last Update: {when}'
+    line = dmc.Text(
+        label,
         size="sm",
         c="dimmed",
-        mb=8,
+        mb=0 if delayed else 8,
         className="no-print",
     )
+    if not delayed:
+        return line
+    return [
+        line,
+        dmc.Text(
+            REFRESH_DELAYED,
+            size="sm",
+            c="dimmed",
+            mb=8,
+            className="no-print",
+        ),
+    ]
 
 
 def _empty_view():
@@ -2115,7 +2148,11 @@ def render_bs_sections(bs_store, period='all', match_info=None):
         _dmc_table_from_df(frames['t_df'], is_team_summary=True, away_name=away_name, home_name=home_name),
         mb="sm",
     )
-    matrix = [_last_update_span(), row1]
+    info = match_info if isinstance(match_info, dict) else safe_loads(match_info)
+    matrix = [_last_update_span(
+        bs_dict.get('game_id'),
+        info.get('organization_id'),
+    ), row1]
     detail = [row2, row3]
     for idx, (team_name, p_df, summary_rows) in enumerate(frames['players']):
         dot_color = section_dot(team_name, away_name, home_name, idx)
@@ -2284,7 +2321,8 @@ def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, t
     patch['team'] = _table_children(frames['t_df'], away_name=away_name, home_name=home_name)
     if triggered_id != 'bs-period':
         patch['chip_data'] = frames['chips']
-        patch['last_update'] = _last_update_span()
+        info = match_info if isinstance(match_info, dict) else safe_loads(match_info)
+        patch['last_update'] = _last_update_span(game_id, (info or {}).get('organization_id'))
         patch['score'] = _table_children(frames['qt_pts'], 'Score', away_name, home_name)
         patch['fouls'] = _table_children(frames['qt_foul'], 'Fouls', away_name, home_name)
         patch['tout'] = _table_children(frames['qt_tout'], 'Timeouts', away_name, home_name)
@@ -2622,7 +2660,7 @@ def apply_rotation_view_event(
     return no_update
 
 
-def render_pbp_children(pbp_store):
+def render_pbp_children(pbp_store, game_id=None, organization_id=None):
     payload = safe_loads(pbp_store)
     if payload.get('_ui') == 'error':
         return [_error_view(payload)]
@@ -2656,7 +2694,7 @@ def render_pbp_children(pbp_store):
         className="ag-theme-alpine braves-clean-ag-grid",
         style={'width': '100%'}
     )
-    return [_last_update_span(), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
+    return [_last_update_span(game_id, organization_id), dmc.Paper(grid, withBorder=True, radius="md", shadow="xs", style={"overflow": "hidden"})]
 
 
 def render_lineup_children(lineup_store, lineup_size=5, show_opp=False, match_info=None):
@@ -2760,7 +2798,7 @@ def render_report_children(bs_store, lineup_store, match_info_store, game_id=Non
     if not bs_dict or not bs_dict.get('qt_pts_df'):
         return [_empty_view()]
     return [
-        _last_update_span(),
+        _last_update_span(game_id, match_info.get('organization_id')),
         render_report_workspace(
             layout,
             bs_dict,
@@ -3071,22 +3109,26 @@ def update_rotation_live_chip(match_info_store, view_store):
     Output('rotation-last-update', 'children'),
     Input('rotation_store', 'data'),
     Input('tabs', 'value'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_rotation_last_update(rotation_store, active_tab):
+def update_rotation_last_update(rotation_store, active_tab, game_id=None, league='plg'):
     if active_tab != 'tab-rotation':
         return no_update
-    return _last_update_span()
+    return _last_update_span(game_id, _organization(league))
 
 
 @callback(
     Output('lineup-last-update', 'children'),
     Input('lineup_store', 'data'),
     Input('tabs', 'value'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_lineup_last_update(lineup_store, active_tab):
+def update_lineup_last_update(lineup_store, active_tab, game_id=None, league='plg'):
     if active_tab != 'tab-lineup':
         return no_update
-    return _last_update_span()
+    return _last_update_span(game_id, _organization(league))
 
 
 @callback(
@@ -3120,11 +3162,13 @@ def sync_matchup_team(match_info_store, _game_id, current):
     Output('matchup-last-update', 'children'),
     Input('matchup_store', 'data'),
     Input('tabs', 'value'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_matchup_last_update(matchup_store, active_tab):
+def update_matchup_last_update(matchup_store, active_tab, game_id=None, league='plg'):
     if active_tab != 'tab-matchups':
         return no_update
-    return _last_update_span()
+    return _last_update_span(game_id, _organization(league))
 
 
 @callback(
@@ -3156,22 +3200,26 @@ def update_matchup_rows(matchup_store, viewpoint, active_tab):
     Output('shot-chart-last-update', 'children'),
     Input('pbp_store', 'data'),
     Input('tabs', 'value'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_shot_chart_last_update(pbp_store, active_tab):
+def update_shot_chart_last_update(pbp_store, active_tab, game_id=None, league='plg'):
     if active_tab != 'tab-shot-chart':
         return no_update
-    return _last_update_span()
+    return _last_update_span(game_id, _organization(league))
 
 
 @callback(
     Output('pane-pbp', 'children'),
     Input('pbp_store', 'data'),
     Input('tabs', 'value'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_pane_pbp(pbp_store, active_tab):
+def update_pane_pbp(pbp_store, active_tab, game_id=None, league='plg'):
     if active_tab != 'tab-pbp':
         return no_update
-    return render_pbp_children(pbp_store)
+    return render_pbp_children(pbp_store, game_id, _organization(league))
 
 
 @callback(
