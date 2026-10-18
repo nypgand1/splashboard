@@ -965,6 +965,32 @@ body {
     box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25) !important;
 }
 
+@media (max-width: 767px) {
+    .braves-clean-tabs .mantine-Tabs-list {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        overflow-x: visible !important;
+        gap: 4px;
+    }
+
+    .braves-clean-tabs .mantine-Tabs-tab {
+        flex-shrink: 1 !important;
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        justify-content: center;
+        white-space: nowrap !important;
+        border-radius: 10px !important;
+        border-bottom: 1px solid var(--border) !important;
+        padding: 8px 6px !important;
+        font-size: 13px !important;
+    }
+
+    .braves-clean-tabs .mantine-Tabs-tab [data-position="left"] {
+        margin-inline-end: 4px !important;
+    }
+}
+
 /* ==========================================================================
    Summary Tables & Cards
    ========================================================================== */

@@ -904,12 +904,12 @@ class KillFigureTests(unittest.TestCase):
         payload = self._payload()
         players = [
             {'label': f'P{index}', 'stints': [{'start': 0.0, 'end': 60.0, 'pm': 0}]}
-            for index in range(14)
+            for index in range(18)
         ]
         payload['teams'][0]['players'] = players
         payload['teams'][1]['players'] = list(players)
         fig = build_rotation_figure(payload)
-        base = 15 * 22 + 15 * 22 + 200
+        base = 19 * 22 + 19 * 22 + 200
         self.assertAlmostEqual(fig.layout.height, base)
         self.assertAlmostEqual(away_lane_height(base), base)
         home_title = next(ann for ann in fig.layout.annotations if ann.text == 'Home')

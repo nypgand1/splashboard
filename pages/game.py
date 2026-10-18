@@ -562,6 +562,8 @@ def layout(game_id=None, league='plg'):
             'slice_width': None,
             'axis_rev': 0,
             'follow_live': True,
+            'saw_live': False,
+            'finished_reset': False,
         }),
         dcc.Store(id='match_info_store'),
         dcc.Store(id='report-pane-ready', data=''),
@@ -2338,6 +2340,8 @@ DEFAULT_ROTATION_VIEW = {
     'slice_width': None,
     'axis_rev': 0,
     'follow_live': True,
+    'saw_live': False,
+    'finished_reset': False,
 }
 
 
@@ -2520,6 +2524,8 @@ def resolve_rotation_playhead(payload, view, match_info_store=None):
         return playhead
     if live:
         return live_playhead_t(payload)
+    if is_finished_status(info.get('status')) and periods:
+        return periods[0]['start']
     if periods:
         return periods[-1]['end']
     return None
@@ -2649,11 +2655,31 @@ def apply_rotation_view_event(
 
     if triggered_id in ('rotation_store', 'match_info_store'):
         info = match_info_store if isinstance(match_info_store, dict) else safe_loads(match_info_store)
-        if is_live_play_status(info.get('status')) and view.get('follow_live', True):
-            now = live_playhead_t(payload)
-            if now == view.get('t'):
-                return no_update
-            view['t'] = now
+        status = info.get('status')
+        if is_live_play_status(status):
+            changed = False
+            if not view.get('saw_live'):
+                view['saw_live'] = True
+                changed = True
+            if view.get('follow_live', True):
+                now = live_playhead_t(payload)
+                if now != view.get('t'):
+                    view['t'] = now
+                    changed = True
+            return view if changed else no_update
+        if (
+            is_finished_status(status)
+            and view.get('saw_live')
+            and not view.get('finished_reset')
+        ):
+            view['t'] = None
+            view['follow_live'] = False
+            view['period'] = 'all'
+            view['x0'] = None
+            view['x1'] = None
+            view['slice_width'] = None
+            view['finished_reset'] = True
+            view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
             return view
         return no_update
 
@@ -3028,7 +3054,7 @@ def update_rotation_graph(rotation_store, view_store, active_tab, match_info_sto
     Input('rotation_store', 'data'),
     Input('game_id', 'children'),
     State('rotation_view_store', 'data'),
-    State('match_info_store', 'data'),
+    Input('match_info_store', 'data'),
     prevent_initial_call=True,
 )
 def update_rotation_view(
@@ -3043,6 +3069,7 @@ def update_rotation_view(
     view_store,
     match_info_store,
 ):
+    previous = _rotation_view(view_store)
     triggered_id = ctx.triggered_id
     prop_id = ''
     if ctx.triggered:
@@ -3072,6 +3099,12 @@ def update_rotation_view(
         return result, 'all', no_update
     if triggered_id == 'rotation-graph.relayoutData':
         return result, result.get('period') or 'all', no_update
+    if (
+        isinstance(result, dict)
+        and result.get('finished_reset')
+        and not previous.get('finished_reset')
+    ):
+        return result, 'all', no_update
     return result, no_update, no_update
 
 
