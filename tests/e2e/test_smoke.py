@@ -301,26 +301,85 @@ _ROTATION_LANE_JS = '''() => {
     const gd = document.querySelector('#rotation-graph .js-plotly-plot');
     if (!gd || !gd.layout || !gd.layout.margin || !gd.layout.yaxis4) return null;
     const anns = gd.layout.annotations || [];
-    const rightKill = anns.filter((a) => a && a.text === '3+ STOPS' && +a.x === 1
-        && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+    const edgeKill = (ann) => !!(ann && ann.y === '3+ STOPS'
+        && (ann.text === '3+ STOPS' || ann.text === 'STOPS')
+        && typeof ann.xref === 'string' && ann.xref.indexOf('domain') !== -1);
+    const rightKill = anns.filter((a) => edgeKill(a) && +a.x === 1);
+    const leftKill = anns.filter((a) => edgeKill(a) && +a.x === 0);
+    const ticks = []
+        .concat((gd.layout.yaxis && gd.layout.yaxis.ticktext) || [])
+        .concat((gd.layout.yaxis3 && gd.layout.yaxis3.ticktext) || []);
+    const vals = []
+        .concat((gd.layout.yaxis && gd.layout.yaxis.tickvals) || [])
+        .concat((gd.layout.yaxis3 && gd.layout.yaxis3.tickvals) || []);
+    const hoverLin = (gd.data || []).some((trace) => {
+        const hover = trace && trace.hovertext;
+        if (Array.isArray(hover)) return hover.some((item) => String(item).includes('#7 Lin'));
+        return String(hover || '').includes('#7 Lin');
+    });
+    const joined = ticks.map((item) => String(item == null ? '' : item)).join('\\n');
     return {
+        l: gd.layout.margin.l,
         r: gd.layout.margin.r,
         y4: gd.layout.yaxis4.visible !== false,
         rightKillCount: rightKill.length,
-        rightKillShown: rightKill.length > 0 && rightKill.every((a) => a.visible !== false),
+        rightKillShown: rightKill.length > 0 && rightKill.every((a) => a.visible !== false && a.text === '3+ STOPS'),
+        leftKillCount: leftKill.length,
+        leftKillText: leftKill.map((a) => a.text).join(','),
+        jerseyTicks: ticks.filter((item) => item).every((item) => /^(● |  )?#\\d+$/.test(String(item))),
+        keepsNames: joined.includes('Lin') && joined.includes('Chen'),
+        valsHaveShirts: vals.some((item) => String(item).includes('#7 Lin'))
+            && vals.some((item) => String(item).includes('#9 Chen')),
+        hoverLin: hoverLin,
     };
 }'''
 
 _ROTATION_LANE_NARROW = '''() => {
     const lane = (__LANE__)();
-    return !!(lane && lane.r === 24 && lane.y4 === false
-        && lane.rightKillCount > 0 && lane.rightKillShown === false);
+    return !!(lane && lane.r === 24 && lane.l === 56 && lane.y4 === false
+        && lane.rightKillCount > 0 && lane.rightKillShown === false
+        && lane.leftKillCount > 0 && lane.leftKillText.split(',').every((text) => text === 'STOPS')
+        && lane.jerseyTicks === true && lane.keepsNames === false
+        && lane.valsHaveShirts === true && lane.hoverLin === true);
 }'''.replace('__LANE__', _ROTATION_LANE_JS)
 
 _ROTATION_LANE_WIDE = '''() => {
     const lane = (__LANE__)();
-    return !!(lane && lane.r === 112 && lane.y4 === true && lane.rightKillShown === true);
+    return !!(lane && lane.r === 112 && lane.l === 112 && lane.y4 === true
+        && lane.rightKillShown === true
+        && lane.leftKillCount > 0 && lane.leftKillText.split(',').every((text) => text === '3+ STOPS')
+        && lane.keepsNames === true && lane.hoverLin === true);
 }'''.replace('__LANE__', _ROTATION_LANE_JS)
+
+
+def _game_tab_strip(page):
+    return page.evaluate(
+        '''() => {
+            const list = document.querySelector('.braves-clean-tabs [role="tablist"]')
+                || document.querySelector('.braves-clean-tabs .mantine-Tabs-list');
+            const tabs = [...document.querySelectorAll('.braves-clean-tabs [role="tab"]')]
+                .filter((tab) => getComputedStyle(tab).display !== 'none');
+            const listCs = getComputedStyle(list);
+            const sample = tabs.find((tab) => (tab.innerText || '').includes('Play-By-Play')) || tabs[0];
+            const cs = getComputedStyle(sample);
+            const icon = sample.querySelector('[data-position="left"]');
+            const iconCs = icon ? getComputedStyle(icon) : null;
+            const tops = [...new Set(tabs.map((tab) => Math.round(tab.getBoundingClientRect().top)))];
+            return {
+                display: listCs.display,
+                wrap: listCs.flexWrap,
+                fontSize: cs.fontSize,
+                padding: cs.padding,
+                radius: cs.borderTopLeftRadius + '/' + cs.borderBottomLeftRadius,
+                whiteSpace: cs.whiteSpace,
+                iconGap: iconCs ? iconCs.marginInlineEnd : '',
+                rows: tops.length,
+                count: tabs.length,
+                fits: sample.scrollWidth <= sample.clientWidth + 1,
+                label: (sample.innerText || '').replace(/\\s+/g, ' ').trim(),
+            };
+        }'''
+    )
 
 
 def _rotation_right_lane(page):
@@ -390,11 +449,25 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert rot['graphH'] > 200
     wide_lane = _rotation_right_lane(page)
     assert wide_lane['r'] == 112
+    assert wide_lane['l'] == 112
     assert wide_lane['y4'] is True
     assert wide_lane['rightKillShown'] is True
+    assert wide_lane['keepsNames'] is True
+    assert wide_lane['leftKillText'] == '3+ STOPS,3+ STOPS'
 
     page.set_viewport_size({'width': 375, 'height': 812})
     page.wait_for_timeout(800)
+    narrow_tabs = _game_tab_strip(page)
+    assert narrow_tabs['count'] == 6
+    assert narrow_tabs['rows'] == 2
+    assert narrow_tabs['display'] == 'grid'
+    assert narrow_tabs['fontSize'] == '13px'
+    assert narrow_tabs['padding'] == '8px 6px'
+    assert narrow_tabs['radius'] == '10px/10px'
+    assert narrow_tabs['whiteSpace'] == 'nowrap'
+    assert narrow_tabs['iconGap'] == '4px'
+    assert narrow_tabs['fits'] is True
+    assert narrow_tabs['label'] == 'Play-By-Play'
     narrow = page.evaluate(
         '''() => {
             const graph = document.querySelector('#rotation-graph')
@@ -421,15 +494,32 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
             const anns = gd.layout.annotations || [];
             const rightKill = anns.filter((a) => a && a.text === '3+ STOPS' && +a.x === 1
                 && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+            const leftKill = anns.filter((a) => a && +a.x === 0 && a.y === '3+ STOPS'
+                && typeof a.xref === 'string' && a.xref.indexOf('domain') !== -1);
+            const ticks = []
+                .concat((gd.layout.yaxis && gd.layout.yaxis.ticktext) || [])
+                .concat((gd.layout.yaxis3 && gd.layout.yaxis3.ticktext) || []);
+            const names = ticks.map((item) => String(item == null ? '' : item)).join('\\n');
             const updated = gd.layout.uirevision !== before;
-            return updated && gd.layout.margin.r === 24 && gd.layout.yaxis4.visible === false
-                && rightKill.length > 0 && rightKill.every((a) => a.visible === false);
+            return updated && gd.layout.margin.r === 24 && gd.layout.margin.l === 56
+                && gd.layout.yaxis4.visible === false
+                && rightKill.length > 0 && rightKill.every((a) => a.visible === false)
+                && leftKill.length > 0 && leftKill.every((a) => a.text === 'STOPS')
+                && ticks.filter((item) => item).every((item) => /^(● |  )?#\\d+$/.test(String(item)))
+                && !names.includes('Lin') && !names.includes('Chen');
         }''',
         arg=before_rev,
     )
 
     page.set_viewport_size({'width': 768, 'height': 900})
     page.wait_for_function(_ROTATION_LANE_WIDE)
+    wide_tabs = _game_tab_strip(page)
+    assert wide_tabs['display'] == 'flex'
+    assert wide_tabs['wrap'] == 'nowrap'
+    assert wide_tabs['rows'] == 1
+    assert wide_tabs['fontSize'] == '13px'
+    assert wide_tabs['padding'] == '8px 18px'
+    assert wide_tabs['radius'] == '10px/0px'
 
 
 def _playhead_t(page):

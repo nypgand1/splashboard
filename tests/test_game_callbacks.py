@@ -686,6 +686,20 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertNotIn('bi bi-', code)
         self.assertIn('loading_skeleton', code)
 
+    def test_narrow_game_tabs_use_a_three_column_grid(self):
+        import os
+        css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css')
+        with open(css_path, 'r') as handle:
+            css = handle.read()
+        narrow = css.split('@media (max-width: 767px)', 1)[1].split('@media', 1)[0]
+        self.assertIn('grid-template-columns: repeat(3, minmax(0, 1fr))', narrow)
+        self.assertIn('padding: 8px 6px', narrow)
+        self.assertIn('font-size: 13px', narrow)
+        self.assertIn('margin-inline-end: 4px', narrow)
+        self.assertIn('border-radius: 10px', narrow)
+        phone = css.split('@media (max-width: 768px)', 1)[1].split('@media', 1)[0]
+        self.assertIn('flex-wrap: nowrap', phone)
+
 
 def _shot_frame():
     return pd.DataFrame([

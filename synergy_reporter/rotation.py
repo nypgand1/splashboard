@@ -17,10 +17,16 @@ COUNT_INK = 11
 SEAM_LINE = 11
 SUBPLOT_TITLE_FONT = 14
 RUN_SCORE_SHIFT = 2
-# The tab paints run scores with the subplot-title pass, so their ink is the
-# 2px shift plus 14px, not the 11px they are created with. The away title is
-# that same 14px, one count line above the number.
-LOWER_SEAM_INK = RUN_SCORE_SHIFT + SUBPLOT_TITLE_FONT + SUBPLOT_TITLE_FONT + COUNT_INK
+# Home run ink is the 2px shift plus the 14px subplot-title pass. The home
+# title is that same 14px, one 11px count above the panel. One extra 14px
+# line keeps the run number off the team name.
+LOWER_SEAM_INK = (
+    RUN_SCORE_SHIFT
+    + SUBPLOT_TITLE_FONT
+    + SUBPLOT_TITLE_FONT
+    + SUBPLOT_TITLE_FONT
+    + COUNT_INK
+)
 BASE_VERTICAL_SPACING = 0.06
 FIGURE_MARGIN_T = 40
 FIGURE_MARGIN_B = 48
@@ -423,7 +429,7 @@ def stop_seam_spacing(figure_height, base=BASE_VERTICAL_SPACING):
 
 
 def away_lane_height(base_height):
-    """Figure height once the lower seam can hold the away title and the count."""
+    """Figure height once the lower seam clears the home run number."""
     plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
     seam = stop_seam_spacing(base_height) * plot_h
     return float(base_height) + max(0.0, LOWER_SEAM_INK - seam)
@@ -1400,8 +1406,9 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
 def _open_lower_seam(fig, base_height):
     """Keep the upper seam and the panel pixel sizes. Grow only the lower seam.
 
-    The added pixels go into the figure height. The bottom panel's count stays
-    on that panel's top edge; its team name moves up into the new room.
+    The added pixels go into the figure height. Run numbers stay on the margin
+    edge. The home team name, the home stop counts, and the home Gantt move
+    down with the bottom panel.
     """
     plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
     seam = stop_seam_spacing(base_height) * plot_h
