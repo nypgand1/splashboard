@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Process-local caches and singleflight. Cleared when the process exits."""
+import datetime
 import threading
 import time
 from concurrent.futures import Future
@@ -12,13 +13,18 @@ from synergy_inbounder.game_status import (
     is_live_play_status,
     normalize_status,
 )
+from synergy_inbounder.live_budget import (
+    BUDGET,
+    LIVE_CADENCE_SECONDS,
+    LONG_CACHE_SECONDS,
+    SHORT_CACHE_SECONDS,
+)
 
 # One live cadence for PBP-derived views (Play-By-Play + Rotation).
-LIVE_CADENCE_SECONDS = 30
-LIVE_PBP_HTTP_TTL_SECONDS = 25
-LIVE_REPORT_TTL_SECONDS = 25
-SEASON_LIST_TTL_SECONDS = 25
-ID_TABLE_TTL_SECONDS = 8 * 60 * 60
+LIVE_PBP_HTTP_TTL_SECONDS = SHORT_CACHE_SECONDS
+LIVE_REPORT_TTL_SECONDS = SHORT_CACHE_SECONDS
+SEASON_LIST_TTL_SECONDS = SHORT_CACHE_SECONDS
+ID_TABLE_TTL_SECONDS = LONG_CACHE_SECONDS
 
 
 def should_use_live_endpoints(status=None, game_id=None, organization_id=None):
@@ -33,13 +39,14 @@ _report_inflight = {}
 
 _meta_lock = threading.Lock()
 _season_cache = {}
+_season_inflight = {}
 _id_table_cache = {}
+_id_inflight = {}
 
 
-def _report_is_stale(entry):
-    if not is_live_play_status(entry.get('status')):
-        return False
-    return (time.monotonic() - entry['fetched_at']) >= LIVE_REPORT_TTL_SECONDS
+def taipei_now_label():
+    when = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))
+    return 'Last Update: {when}'.format(when=when)
 
 
 def _report_key(game_id, organization_id):
@@ -48,49 +55,131 @@ def _report_key(game_id, organization_id):
     return (org, str(game_id))
 
 
+def report_refresh_state(game_id, organization_id=None):
+    key = _report_key(game_id, organization_id)
+    with _report_lock:
+        entry = _report_cache.get(key)
+        if not entry:
+            return {'label': None, 'delayed': False}
+        return {
+            'label': entry.get('label'),
+            'delayed': bool(entry.get('delayed')),
+        }
+
+
+def _store_report(key, report, status, now):
+    _report_cache[key] = {
+        'report': report,
+        'fetched_at': now,
+        'status': status,
+        'label': taipei_now_label(),
+        'delayed': False,
+    }
+
+
+def _mark_report_delayed(key):
+    entry = _report_cache.get(key)
+    if entry:
+        entry['delayed'] = True
+        return entry['report']
+    return None
+
+
 def get_cached_report(game_id, organization_id=None):
     factory = getattr(get_cached_report, 'factory', None)
     if callable(factory):
         return factory(game_id)
     if not game_id:
         raise ValueError('game_id is required')
+    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
+    org = organization_id or SYNERGY_ORGANIZATION_ID
     key = _report_key(game_id, organization_id)
+    now = time.monotonic()
 
     with _report_lock:
         entry = _report_cache.get(key)
-        if entry and not _report_is_stale(entry):
-            return entry['report']
-        fut = _report_inflight.get(key)
-        if fut is None:
+    if entry and not is_live_play_status(entry.get('status')):
+        BUDGET.forget(org, str(game_id))
+        return entry['report']
+
+    status = entry.get('status') if entry else lookup_game_status(game_id, org)
+    if not is_live_play_status(status):
+        BUDGET.forget(org, str(game_id))
+        return _build_report(key, game_id, org, now, live=False)
+
+    with _report_lock:
+        inflight = _report_inflight.get(key)
+        if inflight is not None:
+            is_builder = False
+            fut = inflight
+        else:
+            entry = _report_cache.get(key)
+            has_snapshot = entry is not None
+            age = (now - entry['fetched_at']) if entry else SHORT_CACHE_SECONDS
+            action = BUDGET.acquire(org, str(game_id), has_snapshot, age, now)
+            if action != 'fetch':
+                if action == 'delay':
+                    _mark_report_delayed(key)
+                if entry:
+                    return entry['report']
+                from synergy_inbounder.communicator import SynergyApiError
+                raise SynergyApiError('No live snapshot for {game}'.format(game=game_id))
             fut = Future()
             _report_inflight[key] = fut
             is_builder = True
-        else:
-            is_builder = False
 
     if not is_builder:
         return fut.result()
-
     try:
-        from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
-        from synergy_reporter.post_game_report import PostGameReport
-        org = organization_id or SYNERGY_ORGANIZATION_ID
+        return _build_report(key, game_id, org, now, live=True, future=fut)
+    finally:
+        BUDGET.release(org)
+        with _report_lock:
+            _report_inflight.pop(key, None)
+
+
+def _build_report(key, game_id, org, now, live, future=None):
+    from synergy_inbounder.communicator import SynergyAuthError
+    from synergy_reporter.post_game_report import PostGameReport
+    created_here = future is None
+    if created_here:
+        with _report_lock:
+            existing = _report_inflight.get(key)
+            if existing is not None:
+                future = existing
+                created_here = False
+            else:
+                future = Future()
+                _report_inflight[key] = future
+        if not created_here:
+            return future.result()
+    try:
         report = PostGameReport(game_id, org)
         status = lookup_game_status(game_id, org)
         with _report_lock:
-            _report_cache[key] = {
-                'report': report,
-                'fetched_at': time.monotonic(),
-                'status': status,
-            }
-        fut.set_result(report)
-        return report
+            _store_report(key, report, status, time.monotonic())
+            stored = _report_cache[key]['report']
+        future.set_result(stored)
+        return stored
+    except SynergyAuthError as exc:
+        _drop_partial_live_http(game_id, live)
+        with _report_lock:
+            _report_cache.pop(key, None)
+        future.set_exception(exc)
+        raise
     except Exception as exc:
-        fut.set_exception(exc)
+        _drop_partial_live_http(game_id, live)
+        with _report_lock:
+            stale = _mark_report_delayed(key)
+        if live and stale is not None:
+            future.set_result(stale)
+            return stale
+        future.set_exception(exc)
         raise
     finally:
-        with _report_lock:
-            _report_inflight.pop(key, None)
+        if created_here:
+            with _report_lock:
+                _report_inflight.pop(key, None)
 
 
 def get_cached_game_status(game_id, organization_id=None):
@@ -116,29 +205,98 @@ def lookup_game_status(game_id, organization_id=None):
     return normalize_status(row.get('status'))
 
 
-def get_cached_season_df(org_id, season_id, builder):
-    key = (org_id, season_id)
-    now = time.monotonic()
+def _drop_partial_live_http(game_id, live):
+    if not live:
+        return
+    try:
+        from synergy_inbounder.communicator import drop_cached_live_urls
+        drop_cached_live_urls(game_id)
+    except Exception:
+        return
+
+
+def _load_meta(cache, inflight, key, ttl, builder, now):
+    from synergy_inbounder.communicator import SynergyAuthError
     with _meta_lock:
-        entry = _season_cache.get(key)
-        if entry and (now - entry['fetched_at']) < SEASON_LIST_TTL_SECONDS:
+        entry = cache.get(key)
+        if entry and (now - entry['fetched_at']) < ttl:
             return entry['value']
-    value = builder()
+        fut = inflight.get(key)
+        if fut is None:
+            fut = Future()
+            inflight[key] = fut
+            is_builder = True
+        else:
+            is_builder = False
+    if not is_builder:
+        return fut.result()
+    try:
+        value = builder()
+        with _meta_lock:
+            cache[key] = {
+                'value': value,
+                'fetched_at': time.monotonic(),
+                'delayed': False,
+                'label': taipei_now_label(),
+            }
+        fut.set_result(value)
+        return value
+    except SynergyAuthError as exc:
+        fut.set_exception(exc)
+        raise
+    except Exception as exc:
+        with _meta_lock:
+            entry = cache.get(key)
+            if entry:
+                entry['delayed'] = True
+                fut.set_result(entry['value'])
+                return entry['value']
+        fut.set_exception(exc)
+        raise
+    finally:
+        with _meta_lock:
+            inflight.pop(key, None)
+
+
+def get_cached_season_df(org_id, season_id, builder):
+    return _load_meta(
+        _season_cache,
+        _season_inflight,
+        (org_id, season_id),
+        SEASON_LIST_TTL_SECONDS,
+        builder,
+        time.monotonic(),
+    )
+
+
+def season_refresh_state(org_id, season_id):
     with _meta_lock:
-        _season_cache[key] = {'value': value, 'fetched_at': time.monotonic()}
-    return value
+        entry = _season_cache.get((org_id, season_id))
+        if not entry:
+            return {'label': None, 'delayed': False}
+        return {
+            'label': entry.get('label'),
+            'delayed': bool(entry.get('delayed')),
+        }
+
+
+def id_refresh_state(org_id):
+    with _meta_lock:
+        entry = _id_table_cache.get(org_id)
+        if not entry:
+            return {'delayed': False}
+        return {'delayed': bool(entry.get('delayed'))}
 
 
 def get_cached_id_table(org_id, builder):
-    now = time.monotonic()
-    with _meta_lock:
-        entry = _id_table_cache.get(org_id)
-        if entry and (now - entry['fetched_at']) < ID_TABLE_TTL_SECONDS:
-            return entry['value']
-    value = builder()
-    with _meta_lock:
-        _id_table_cache[org_id] = {'value': value, 'fetched_at': time.monotonic()}
-    return value
+    return _load_meta(
+        _id_table_cache,
+        _id_inflight,
+        org_id,
+        ID_TABLE_TTL_SECONDS,
+        builder,
+        time.monotonic(),
+    )
 
 
 def warmup_game_report(game_id, match_info=None, organization_id=None):
@@ -252,5 +410,8 @@ def clear_runtime_caches():
         _report_inflight.clear()
     with _meta_lock:
         _season_cache.clear()
+        _season_inflight.clear()
         _id_table_cache.clear()
+        _id_inflight.clear()
+    BUDGET.clear()
 

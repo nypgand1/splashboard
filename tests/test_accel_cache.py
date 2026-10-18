@@ -377,17 +377,22 @@ class LiveCadenceTests(unittest.TestCase):
             SEASON_LIST_TTL_SECONDS,
         )
         from synergy_inbounder import communicator
-        self.assertEqual(LIVE_CADENCE_SECONDS, 30)
-        self.assertEqual(LIVE_PBP_HTTP_TTL_SECONDS, 25)
-        self.assertEqual(LIVE_REPORT_TTL_SECONDS, 25)
-        self.assertEqual(SEASON_LIST_TTL_SECONDS, 25)
+        from synergy_inbounder.live_budget import LONG_CACHE_SECONDS
+        self.assertEqual(LIVE_CADENCE_SECONDS, 35)
+        self.assertEqual(LIVE_PBP_HTTP_TTL_SECONDS, 30)
+        self.assertEqual(LIVE_REPORT_TTL_SECONDS, 30)
+        self.assertEqual(SEASON_LIST_TTL_SECONDS, 30)
+        self.assertEqual(LONG_CACHE_SECONDS, 2 * 60 * 60)
         self.assertLess(LIVE_PBP_HTTP_TTL_SECONDS, LIVE_CADENCE_SECONDS)
         self.assertLess(LIVE_REPORT_TTL_SECONDS, LIVE_CADENCE_SECONDS)
         self.assertLess(SEASON_LIST_TTL_SECONDS, LIVE_CADENCE_SECONDS)
+        from synergy_inbounder.settings import SYNERGY_ORG_PERSONS_URL, SYNERGY_ORGANIZATION_ID
         self.assertEqual(
             communicator.urls_expire_after['*/playbyplay/live'],
             LIVE_PBP_HTTP_TTL_SECONDS,
         )
+        person_url = SYNERGY_ORG_PERSONS_URL.format(organizationId=SYNERGY_ORGANIZATION_ID)
+        self.assertEqual(communicator.urls_expire_after[person_url], LONG_CACHE_SECONDS)
 
 
 class HomeCallbackTests(unittest.TestCase):
