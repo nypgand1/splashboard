@@ -512,7 +512,54 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(home_ann.yanchor, 'top')
         self.assertEqual(home_ann.yshift, -2)
 
+    def test_margin_grows_toward_the_leading_team(self):
+        payload = self._payload()
+        payload['margin'] = [
+            {
+                't': 0.0,
+                'margin': 0,
+                'home_score': 0,
+                'away_score': 0,
+                'clock_label': '1Q 02:00',
+            },
+            {
+                't': 60.0,
+                'margin': 4,
+                'home_score': 10,
+                'away_score': 6,
+                'clock_label': '1Q 01:00',
+                'desc': 'A 2PT',
+            },
+            {
+                't': 120.0,
+                'margin': -3,
+                'home_score': 10,
+                'away_score': 13,
+                'clock_label': '1Q 00:00',
+                'desc': 'B 3PT',
+            },
+        ]
+        tab = build_rotation_figure(payload)
+        report = report_rotation_figure(payload)
 
+        def step(fig):
+            return next(trace for trace in fig.data if trace.yaxis == 'y2' and trace.hovertext)
+
+        def fill(fig, color):
+            return next(
+                trace for trace in fig.data
+                if trace.yaxis == 'y2' and trace.fillcolor == color
+            )
+
+        for fig in (tab, report):
+            self.assertEqual(list(step(fig).y), [0, -4, 3])
+            self.assertEqual(list(fill(fig, 'rgba(0, 119, 182, 0.20)').y), [0, -4, 0])
+            self.assertEqual(list(fill(fig, 'rgba(148, 163, 184, 0.25)').y), [0, 0, 3])
+            self.assertEqual(list(fig.layout.yaxis2.range), [-5, 5])
+        hovers = list(step(tab).hovertext)
+        self.assertIn('Away 6 - 10 Home (-4)', hovers[1])
+        self.assertIn('A 2PT', hovers[1])
+        self.assertIn('Away 13 - 10 Home (+3)', hovers[2])
 
     def test_momentum_run_breaks_when_opponent_answers_with_4_pts(self):
         home, away = 'home-id', 'away-id'

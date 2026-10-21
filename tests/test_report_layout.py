@@ -1231,6 +1231,22 @@ class NavbarDmcContractTests(unittest.TestCase):
         self.assertIn('Splashboard', markup)
         self.assertIn('TFB', markup)
         self.assertIn('Home', markup)
+        self.assertIn('Design by Wei-Hao Lin', markup)
+        self.assertIn('app-navbar-credit', markup)
+        self.assertFalse(_credit_is_inside_anchor(nav))
+
+
+def _credit_is_inside_anchor(node, inside_anchor=False):
+    is_anchor = node.__class__.__name__ == 'Anchor'
+    here = inside_anchor or is_anchor
+    children = getattr(node, 'children', None)
+    nodes = children if isinstance(children, (list, tuple)) else [children]
+    for child in nodes:
+        if child == 'Design by Wei-Hao Lin' and here:
+            return True
+        if hasattr(child, 'children') and _credit_is_inside_anchor(child, here):
+            return True
+    return False
 
 
 class TableDmcAndAgGridContractTests(unittest.TestCase):

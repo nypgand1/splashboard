@@ -19,10 +19,16 @@ def create_navbar():
             ],
             gap=8,
             align="center",
+            wrap="nowrap",
         ),
         href="/",
         underline="never",
-        style={"display": "flex", "alignItems": "center"}
+        className="app-navbar-brand-link",
+    )
+    credit = dmc.Text(
+        "Design by Wei-Hao Lin",
+        className="app-navbar-credit",
+        span=True,
     )
 
     menu = dmc.Menu(
@@ -64,10 +70,10 @@ def create_navbar():
         transitionProps={"transition": "pop-top-right", "duration": 150},
     )
 
-    return dmc.Group(
-        [brand, menu],
-        justify="space-between",
-        align="center",
-        h="100%",
-        px="md",
+    return dmc.Box(
+        [
+            dmc.Box([brand, credit], className="app-navbar-brand"),
+            dmc.Box(menu, className="app-navbar-menu"),
+        ],
+        className="app-navbar-bar",
     )

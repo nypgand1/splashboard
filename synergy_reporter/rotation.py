@@ -1125,32 +1125,33 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
 
     away_labels = add_gantt(away, 1, away_color, away_players, away_kills, 'bottom')
 
-    # 2. Score Margin Step-line with Dual-Color Fill & Rich Hover Tooltips
+    # 2. Score margin. Payload margin is home minus away. The chart plots
+    # away minus home so a lead grows toward that team's panel.
     margin_x = [point['t'] for point in margin] or [0]
-    margin_y = [point['margin'] for point in margin] or [0]
-    home_lead_y = [max(0, y) for y in margin_y]
-    away_lead_y = [min(0, y) for y in margin_y]
+    stored_y = [point['margin'] for point in margin] or [0]
+    margin_y = [-value for value in stored_y]
+    away_lead_y = [max(0, y) for y in margin_y]
+    home_lead_y = [min(0, y) for y in margin_y]
 
     home_name = (home or {}).get('team_name') or 'Home'
     away_name = (away or {}).get('team_name') or 'Away'
 
     hover_texts = []
-    for point in margin:
-        m = point.get('margin', 0)
+    for point, chart_m in zip(margin, margin_y):
         h_score = point.get('home_score', 0)
         a_score = point.get('away_score', 0)
         clock_lbl = point.get('clock_label') or format_clock_str(point['t'])
         desc = point.get('desc', '')
-        if m > 0:
-            diff_str = f"(+{m})"
-        elif m < 0:
-            diff_str = f"({m})"
+        if chart_m > 0:
+            diff_str = f"(+{chart_m})"
+        elif chart_m < 0:
+            diff_str = f"({chart_m})"
         else:
             diff_str = "(0)"
-        
+
         lines = [
             f"<b>{clock_lbl}</b>",
-            f"{home_name} {h_score} - {a_score} {away_name} {diff_str}",
+            f"{away_name} {a_score} - {h_score} {home_name} {diff_str}",
         ]
         if desc:
             lines.append(f"{desc}")
@@ -1158,7 +1159,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
 
     span = margin_tick_span(margin_y, step=5)
 
-    # Home Lead Positive Fill (Blue)
+    # Home lead grows down, toward the home Gantt.
     fig.add_trace(
         go.Scatter(
             x=margin_x,
@@ -1174,7 +1175,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         col=1,
     )
 
-    # Away Lead Negative Fill (Gray)
+    # Away lead grows up, toward the away Gantt.
     fig.add_trace(
         go.Scatter(
             x=margin_x,
