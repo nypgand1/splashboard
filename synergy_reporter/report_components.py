@@ -165,6 +165,7 @@ def report_table_payload(bs_dict, lineup_store_data, match_info):
     return {
         'score_group': order_team_split_json(bs_dict.get('qt_pts_df'), away_name, home_name),
         't_adv_df': order_team_split_json(bs_dict.get('t_adv_df'), away_name, home_name),
+        'adv_df': order_team_split_json(bs_dict.get('adv_df'), away_name, home_name),
         't_df': order_team_split_json(bs_dict.get('t_df'), away_name, home_name),
         'k_df': order_team_split_json(bs_dict.get('k_df'), away_name, home_name),
         'p_df_home': _sorted_player_split(bs_dict, match_info, 'home'),

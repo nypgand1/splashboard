@@ -258,6 +258,9 @@ class BoxScoreSliceTests(unittest.TestCase):
         braves = team[team['Team'] == 'Braves'].iloc[0]
         self.assertEqual(braves['2FG%'], '.100')
         self.assertEqual(braves['PTS'], 20)
+        self.assertIn('BS', team.columns)
+        self.assertNotIn('BL', team.columns)
+        self.assertEqual(braves['BS'], 0)
         advance = _split_records(slices['1']['t_adv_df'])
         self.assertEqual(advance[advance['Team'] == 'Braves'].iloc[0]['eFG%'], '99.0%')
 
@@ -321,14 +324,197 @@ class BoxScoreSliceTests(unittest.TestCase):
                 _team_row('away', None, minutes='PT240M', points=22, fieldGoalsAttempted=20),
             ]).drop(columns=['periodId']),
         )
-        quarter = _split_records(report.box_score_slice_json()['1']['t_adv_df'])
+        slices = report.box_score_slice_json()
+        quarter = _split_records(slices['1']['t_adv_df'])
+        advanced = _split_records(slices['1']['adv_df'])
         self.assertEqual(set(quarter['Pace']), {'2.0'})
-        home = quarter[quarter['Team'] == 'Braves'].iloc[0]
-        away = quarter[quarter['Team'] == 'Visitors'].iloc[0]
+        self.assertNotIn('PPP', quarter.columns)
+        home = advanced[advanced['Team'] == 'Braves'].iloc[0]
+        away = advanced[advanced['Team'] == 'Visitors'].iloc[0]
         self.assertEqual(home['PPP'], '10.00')
         self.assertEqual(away['PPP'], '')
         full = report.get_team_advance_stats_df()
         self.assertEqual(set(full['Pace']), {'1.0'})
+        self.assertNotIn('PPP', full.columns)
+
+    def test_assist_ratio_and_three_rate_follow_the_period_chip(self):
+        team_periods = pd.DataFrame([
+            _team_row(
+                'home', 1, assists=4, turnovers=2, points=10, freeThrowsAttempted=4,
+                pointsTwoMade=2, pointsThreeMade=2, fieldGoalsMade=4,
+                pointsTwoAttempted=4, pointsThreeAttempted=6, fieldGoalsAttempted=10,
+            ),
+            _team_row(
+                'home', 2, assists=6, turnovers=2, points=14, freeThrowsAttempted=6,
+                pointsTwoMade=3, pointsThreeMade=3, fieldGoalsMade=6,
+                pointsTwoAttempted=6, pointsThreeAttempted=4, fieldGoalsAttempted=10,
+            ),
+            _team_row(
+                'away', 1, assists=0, turnovers=0, points=0, freeThrowsAttempted=0,
+                pointsTwoMade=0, pointsThreeMade=0, fieldGoalsMade=0,
+                pointsTwoAttempted=0, pointsThreeAttempted=0, fieldGoalsAttempted=0,
+            ),
+            _team_row(
+                'away', 2, assists=1, turnovers=4, points=8, freeThrowsAttempted=5,
+                pointsTwoMade=2, pointsThreeMade=2, fieldGoalsMade=4,
+                pointsTwoAttempted=8, pointsThreeAttempted=2, fieldGoalsAttempted=10,
+            ),
+        ])
+        report = _report(
+            team_periods=team_periods,
+            player_periods=pd.DataFrame([
+                {'personId': 'p1', 'entityId': 'home', 'periodId': 1, 'points': 2},
+                {'personId': 'p1', 'entityId': 'home', 'periodId': 2, 'points': 2},
+            ]),
+        )
+        slices = report.box_score_slice_json()
+        pace = _split_records(slices['h1']['t_adv_df'])
+        half = _split_records(slices['h1']['adv_df'])
+        home = half[half['Team'] == 'Braves'].iloc[0]
+        away = half[half['Team'] == 'Visitors'].iloc[0]
+        self.assertEqual(home['PPP'], '0.86')
+        self.assertEqual(home['AS/TO'], '2.50')
+        self.assertEqual(home['AST%'], '100.0%')
+        self.assertEqual(home['3P-R'], '50.0%')
+        self.assertEqual(home['TS%'], '49.2%')
+        self.assertEqual(away['PPP'], '0.50')
+        self.assertEqual(away['AS/TO'], '0.25')
+        self.assertEqual(away['AST%'], '25.0%')
+        self.assertEqual(away['3P-R'], '20.0%')
+        self.assertEqual(away['TS%'], '32.8%')
+        self.assertNotIn('3Pr', half.columns)
+        quarter = _split_records(slices['1']['adv_df'])
+        q_home = quarter[quarter['Team'] == 'Braves'].iloc[0]
+        q_away = quarter[quarter['Team'] == 'Visitors'].iloc[0]
+        self.assertEqual(q_home['PPP'], '0.74')
+        self.assertEqual(q_home['AST%'], '100.0%')
+        self.assertEqual(q_home['3P-R'], '60.0%')
+        self.assertEqual(q_away['PPP'], '')
+        self.assertEqual(q_away['AST%'], '')
+        self.assertEqual(q_away['3P-R'], '')
+        self.assertNotIn('PPP', pace.columns)
+        self.assertNotIn('AS/TO', pace.columns)
+        self.assertNotIn('AST%', pace.columns)
+        self.assertNotIn('3Pr', pace.columns)
+        self.assertNotIn('3P-R', pace.columns)
+        zero_to = report.get_team_advanced_df(pd.DataFrame([
+            _team_row(
+                'home', None, minutes='PT200M', assists=5, turnovers=0, points=0,
+                pointsTwoAttempted=10, pointsThreeAttempted=0, fieldGoalsAttempted=10,
+                freeThrowsAttempted=0,
+            ),
+        ]).drop(columns=['periodId']))
+        self.assertEqual(zero_to['PPP'].iloc[0], '0.00')
+        self.assertEqual(zero_to['AS/TO'].iloc[0], '')
+        self.assertEqual(zero_to['AST%'].iloc[0], '')
+        self.assertEqual(zero_to['3P-R'].iloc[0], '0.0%')
+        self.assertEqual(zero_to['TS%'].iloc[0], '0.0%')
+        zero_ast = report.get_team_advanced_df(pd.DataFrame([
+            _team_row(
+                'home', None, minutes='PT200M', assists=0, turnovers=2, points=4,
+                fieldGoalsMade=4,
+                pointsTwoAttempted=4, pointsThreeAttempted=0, fieldGoalsAttempted=4,
+                freeThrowsAttempted=0,
+            ),
+        ]).drop(columns=['periodId']))
+        self.assertEqual(zero_ast['AS/TO'].iloc[0], '0.00')
+        self.assertEqual(zero_ast['AST%'].iloc[0], '0.0%')
+        self.assertEqual(list(pace.columns), ['Team', 'Pace', 'eFG%', 'TO%', 'ORB%', 'FT-R'])
+        self.assertEqual(list(half.columns), ['Team', 'PPP', 'AS/TO', 'AST%', '3P-R', 'TS%'])
+
+    def test_key_stat_splits_follow_flags_and_the_period_chip(self):
+        def shot(entity, period, event, success, sequence, **flags):
+            return {
+                'eventType': event,
+                'entityId': entity,
+                'periodId': period,
+                'success': success,
+                'sequence': sequence,
+                'options': flags,
+                'clock': 'PT10M0S',
+            }
+
+        pbp = pd.DataFrame([
+            shot('home', 1, '2pt', True, 1, secondChance=True),
+            shot('home', 1, '2pt', False, 2, secondChance=True),
+            shot('home', 1, '3pt', True, 3, secondChance=True, fromTurnover=True),
+            shot('home', 1, '2pt', True, 4, fastBreak=True),
+            shot('home', 1, '3pt', False, 5, fastBreak=True),
+            shot('home', 1, 'freeThrow', True, 6, secondChance=True),
+            shot('home', 1, '2pt', False, 7),
+            shot('home', 2, '2pt', True, 8, secondChance=True),
+            shot('away', 1, '2pt', False, 9),
+        ])
+        team_periods = pd.DataFrame([
+            _team_row(
+                'home', 1,
+                pointsSecondChance=5, pointsFastBreak=4, pointsFromTurnover=3,
+                pointsInThePaintMade=2, pointsInThePaintAttempted=4, pointsInThePaint=4,
+                pointsFromBench=6,
+            ),
+            _team_row(
+                'home', 2,
+                pointsSecondChance=2, pointsFastBreak=0, pointsFromTurnover=0,
+                pointsInThePaintMade=1, pointsInThePaintAttempted=1, pointsInThePaint=2,
+                pointsFromBench=1,
+            ),
+            _team_row('away', 1, pointsSecondChance=1, pointsFromBench=0),
+            _team_row('away', 2, pointsSecondChance=0, pointsFromBench=0),
+        ])
+        players = pd.DataFrame([
+            {'personId': 'p1', 'entityId': 'home', 'periodId': 1, 'points': 2},
+            {'personId': 'p1', 'entityId': 'home', 'periodId': 2, 'points': 2},
+        ])
+        report = _report(
+            pbp=pbp,
+            team_periods=team_periods,
+            player_periods=players,
+            team_stats_df=pd.DataFrame([
+                _team_row('home', None, pointsSecondChance=99, pointsFromBench=11),
+                _team_row('away', None, pointsSecondChance=1, pointsFromBench=0),
+            ]).drop(columns=['periodId']),
+        )
+        quarter = _split_records(report.box_score_slice_json()['1']['k_df'])
+        home = quarter[quarter['Team'] == 'Braves'].iloc[0]
+        away = quarter[quarter['Team'] == 'Visitors'].iloc[0]
+        self.assertEqual(home['SCP2M'], 1)
+        self.assertEqual(home['SCP2A'], 2)
+        self.assertEqual(home['SCP3M'], 1)
+        self.assertEqual(home['SCP3A'], 1)
+        self.assertEqual(home['SCP'], 5)
+        self.assertEqual(home['FBP2M'], 1)
+        self.assertEqual(home['FBP2A'], 1)
+        self.assertEqual(home['FBP3M'], 0)
+        self.assertEqual(home['FBP3A'], 1)
+        self.assertEqual(home['FBP'], 4)
+        self.assertEqual(home['POT2M'], 0)
+        self.assertEqual(home['POT2A'], 0)
+        self.assertEqual(home['POT3M'], 1)
+        self.assertEqual(home['POT3A'], 1)
+        self.assertEqual(home['POT'], 3)
+        self.assertEqual(home['PIPM'], 2)
+        self.assertEqual(home['BP'], 6)
+        self.assertEqual(away['SCP2M'], 0)
+        self.assertEqual(away['SCP2A'], 0)
+        self.assertEqual(away['SCP'], 1)
+        half = _split_records(report.box_score_slice_json()['h1']['k_df'])
+        home_half = half[half['Team'] == 'Braves'].iloc[0]
+        self.assertEqual(home_half['SCP2M'], 2)
+        self.assertEqual(home_half['SCP'], 7)
+        self.assertEqual(home_half['PIPM'], 3)
+        self.assertEqual(home_half['BP'], 7)
+        full = report.get_team_key_stats_df()
+        full_home = full[full['Team'] == 'Braves'].iloc[0]
+        self.assertEqual(full_home['SCP'], 99)
+        self.assertEqual(full_home['SCP2M'], 2)
+        self.assertEqual(full_home['BP'], 11)
+        blank = _report(pbp=pd.DataFrame(), team_periods=team_periods, player_periods=players)
+        blank_q = _split_records(blank.box_score_slice_json()['1']['k_df'])
+        blank_home = blank_q[blank_q['Team'] == 'Braves'].iloc[0]
+        self.assertEqual(blank_home['SCP2M'], '')
+        self.assertEqual(blank_home['FBP3A'], '')
+        self.assertEqual(blank_home['POT3M'], '')
+        self.assertEqual(blank_home['SCP'], 5)
 
     def test_missing_play_by_play_uses_the_box_estimate(self):
         team_periods = pd.DataFrame([
@@ -365,7 +551,10 @@ class BoxScoreSliceTests(unittest.TestCase):
                 {'personId': 'p1', 'entityId': 'home', 'periodId': 1, 'points': 2},
             ]),
         )
-        advance = _split_records(report.box_score_slice_json()['1']['t_adv_df'])
+        slices = report.box_score_slice_json()
+        advance = _split_records(slices['1']['t_adv_df'])
+        advanced = _split_records(slices['1']['adv_df'])
         self.assertEqual(set(advance['Pace']), {'0.0'})
-        self.assertEqual(set(advance['PPP']), {''})
-        self.assertEqual(set(advance['TOV%']), {''})
+        self.assertNotIn('PPP', advance.columns)
+        self.assertEqual(set(advanced['PPP']), {''})
+        self.assertEqual(set(advance['TO%']), {''})

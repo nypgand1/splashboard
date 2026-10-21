@@ -6,7 +6,7 @@ from synergy_inbounder.names import display_name, person_full_name, person_name
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import possession_counts
-from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
+from synergy_inbounder.pre_processing_func import _option_on, process_lineup_pbp, process_lineup_stats
 from synergy_reporter.rotation import build_rotation_payload, clock_to_seconds, period_label
 
 
@@ -276,6 +276,72 @@ def _recompute_rates(row):
     return row
 
 
+def _rate_text(numer, denom, digits, scale=1, suffix=''):
+    if pd.isnull(numer) or pd.isnull(denom) or denom == 0:
+        return ''
+    return f"{(scale * float(numer) / float(denom)):.{digits}f}{suffix}"
+
+
+def _true_shooting(points, fga, fta):
+    """TS% = 100 * PTS / (2 * (FGA + 0.44 * FTA)). Blank when the denominator is 0."""
+    if pd.isnull(points) or pd.isnull(fga) or pd.isnull(fta):
+        return ''
+    denom = float(fga) + 0.44 * float(fta)
+    if denom == 0:
+        return ''
+    return f"{100.0 * float(points) / (2.0 * denom):0.1f}%"
+
+
+def _shot_made(value):
+    if value is True or value == 1:
+        return True
+    try:
+        if pd.isna(value):
+            return False
+    except TypeError:
+        return False
+    try:
+        return float(value) == 1.0
+    except (TypeError, ValueError):
+        return False
+
+
+_FLAG_SPLITS = (
+    ('SCP', 'secondChance', 'pointsSecondChance'),
+    ('FBP', 'fastBreak', 'pointsFastBreak'),
+    ('POT', 'fromTurnover', 'pointsFromTurnover'),
+)
+_SPLIT_LEAVES = ('2M', '2A', '3M', '3A')
+
+
+def _flag_split_counts(pbp, entity_ids, period_ids):
+    """2M/2A/3M/3A for SCP, FBP, and POT. Blank strings when play-by-play is missing."""
+    keys = [prefix + leaf for prefix, _flag, _points in _FLAG_SPLITS for leaf in _SPLIT_LEAVES]
+    entities = list(entity_ids)
+    missing = pbp is None or len(pbp) == 0 or 'entityId' not in getattr(pbp, 'columns', [])
+    if missing:
+        return {entity: {key: '' for key in keys} for entity in entities}
+    frame = pbp if period_ids is None else _filter_periods(pbp, period_ids)
+    counts = {entity: {key: 0 for key in keys} for entity in entities}
+    if frame is None or len(frame) == 0:
+        return counts
+    options = frame['options'] if 'options' in frame.columns else pd.Series([None] * len(frame), index=frame.index)
+    event = frame['eventType'] if 'eventType' in frame.columns else pd.Series([''] * len(frame), index=frame.index)
+    success = frame['success'] if 'success' in frame.columns else pd.Series([0] * len(frame), index=frame.index)
+    made = success.map(_shot_made)
+    entity = frame['entityId']
+    for prefix, flag_name, _points in _FLAG_SPLITS:
+        flag = options.map(lambda raw, name=flag_name: _option_on(raw, name))
+        for shot, made_leaf, attempt_leaf in (('2pt', '2M', '2A'), ('3pt', '3M', '3A')):
+            attempts = flag & (event == shot)
+            makes = attempts & made
+            for ent in entities:
+                mine = entity == ent
+                counts[ent][prefix + attempt_leaf] = int((attempts & mine).sum())
+                counts[ent][prefix + made_leaf] = int((makes & mine).sum())
+    return counts
+
+
 def _game_long_dnp(row):
     return (not row.get('participated', True)) or (
         pd.isna(row.get('minutes')) and not bool(row.get('starter', False))
@@ -364,10 +430,9 @@ class PostGameReport():
                 return ''
             return f"{(scale * numer / denom):.{digits}f}"
 
-        t_adv_df['PPP'] = stats.apply(lambda x: _rate(x['points'], x['poss'], 2), axis=1)
         t_adv_df['eFG%'] = stats.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x.get('fieldGoalsEffectivePercentage')) else '', axis=1)
-        t_adv_df['TOV%'] = stats.apply(lambda x: _rate(x['turnovers'], x['poss'], 1, scale=100), axis=1)
-        t_adv_df['TOV%'] = t_adv_df['TOV%'].apply(lambda text: f"{text}%" if text else '')
+        t_adv_df['TO%'] = stats.apply(lambda x: _rate(x['turnovers'], x['poss'], 1, scale=100), axis=1)
+        t_adv_df['TO%'] = t_adv_df['TO%'].apply(lambda text: f"{text}%" if text else '')
         t_adv_df['ORB%'] = stats.apply(
             lambda x: _rate(x['reboundsOffensive'], x['reboundsOffensive'] + x['reboundsDefensiveAgainst'], 1, scale=100),
             axis=1,
@@ -380,6 +445,30 @@ class PostGameReport():
         t_adv_df['FT-R'] = t_adv_df['FT-R'].apply(lambda text: f"{text}%" if text else '')
         t_adv_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return t_adv_df
+
+    def get_team_advanced_df(self, source=None, period_ids=None):
+        stats = (self.team_stats_df if source is None else source).copy()
+        frame = pd.DataFrame()
+        frame['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
+        stats['poss'] = self._possession_totals(stats, period_ids)
+        frame['PPP'] = stats.apply(lambda x: _rate_text(x.get('points'), x.get('poss'), 2), axis=1)
+        frame['AS/TO'] = stats.apply(lambda x: _rate_text(x.get('assists'), x.get('turnovers'), 2), axis=1)
+        frame['AST%'] = stats.apply(
+            lambda x: _rate_text(x.get('assists'), x.get('fieldGoalsMade'), 1, scale=100, suffix='%'),
+            axis=1,
+        )
+        frame['3P-R'] = stats.apply(
+            lambda x: _rate_text(
+                x.get('pointsThreeAttempted'), x.get('fieldGoalsAttempted'), 1, scale=100, suffix='%',
+            ),
+            axis=1,
+        )
+        frame['TS%'] = stats.apply(
+            lambda x: _true_shooting(x.get('points'), x.get('fieldGoalsAttempted'), x.get('freeThrowsAttempted')),
+            axis=1,
+        )
+        frame.sort_values(by=['Team'], ascending=True, inplace=True)
+        return frame
 
     def _possession_totals(self, stats, period_ids):
         pbp = getattr(self, 'playbyplay_df', None)
@@ -501,8 +590,9 @@ class PostGameReport():
             player_frames = self._get_player_stats_df_dict(players, blank_usage=recompute)
             payload[value] = {
                 't_adv_df': self.get_team_advance_stats_df(team, period_ids).to_json(date_format='iso', orient='split'),
+                'adv_df': self.get_team_advanced_df(team, period_ids).to_json(date_format='iso', orient='split'),
                 't_df': self.get_team_stats_df(team).to_json(date_format='iso', orient='split'),
-                'k_df': self.get_team_key_stats_df(team).to_json(date_format='iso', orient='split'),
+                'k_df': self.get_team_key_stats_df(team, period_ids).to_json(date_format='iso', orient='split'),
                 'p_df_dict': {
                     name: frame.to_json(date_format='iso', orient='split')
                     for name, frame in player_frames.items()
@@ -540,26 +630,49 @@ class PostGameReport():
         t_df['AST'] = stats['assists'].fillna(0).astype(int)
         t_df['TO'] = stats['turnovers'].fillna(0).astype(int)
         t_df['ST'] = stats['steals'].fillna(0).astype(int)
-        t_df['BL'] = stats['blocks'].fillna(0).astype(int)
+        t_df['BS'] = stats['blocks'].fillna(0).astype(int)
         t_df['PF'] = stats['foulsTotal'].fillna(0).astype(int)
         t_df['FD'] = stats['foulsDrawn'].fillna(0).astype(int) if 'foulsDrawn' in stats.columns else 0
         t_df['PTS'] = stats['points'].fillna(0).astype(int)
         t_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return t_df
             
-    def get_team_key_stats_df(self, source=None):
+    def get_team_key_stats_df(self, source=None, period_ids=None):
         stats = self.team_stats_df if source is None else source
         k_df = pd.DataFrame()
         k_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
-        k_df['PIPM'] = stats['pointsInThePaintMade'].fillna(0).astype(int)
-        k_df['PIPA'] = stats['pointsInThePaintAttempted'].fillna(0).astype(int)
-        k_df['PIP'] = stats['pointsInThePaint'].fillna(0).astype(int)
-        k_df['SCPM'] = stats['pointsSecondChanceMade'].fillna(0).astype(int)
-        k_df['SCPA'] = stats['pointsSecondChanceAttempted'].fillna(0).astype(int)
-        k_df['SCP'] = stats['pointsSecondChance'].fillna(0).astype(int)
-        k_df['FBP'] = stats['pointsFastBreak'].fillna(0).astype(int)
-        k_df['POT'] = stats['pointsFromTurnover'].fillna(0).astype(int)
-        k_df['BP'] = stats['pointsFromBench'].fillna(0).astype(int)
+        entity_ids = list(stats['entityId'])
+        splits = _flag_split_counts(getattr(self, 'playbyplay_df', None), entity_ids, period_ids)
+
+        def _ints(column):
+            if column not in stats.columns:
+                return [0] * len(stats)
+            values = []
+            for value in stats[column].tolist():
+                if value is None:
+                    values.append(0)
+                    continue
+                try:
+                    if pd.isna(value):
+                        values.append(0)
+                        continue
+                except TypeError:
+                    pass
+                try:
+                    values.append(int(value))
+                except (TypeError, ValueError):
+                    values.append(0)
+            return values
+
+        k_df['PIPM'] = _ints('pointsInThePaintMade')
+        k_df['PIPA'] = _ints('pointsInThePaintAttempted')
+        k_df['PIP'] = _ints('pointsInThePaint')
+        for prefix, _flag, points_col in _FLAG_SPLITS:
+            for leaf in _SPLIT_LEAVES:
+                column = prefix + leaf
+                k_df[column] = [splits[entity][column] for entity in entity_ids]
+            k_df[prefix] = _ints(points_col)
+        k_df['BP'] = _ints('pointsFromBench')
         k_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return k_df
     
@@ -577,7 +690,7 @@ class PostGameReport():
                     '#', 'Player', 'S', 'Min', '+/-',
                     '2M', '2A', '2FG%', '3M', '3A', '3FG%',
                     'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB',
-                    'AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS',
+                    'AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS',
                     'eFG%', 'USG%', 'PM',
                 ])
                 continue
@@ -627,7 +740,7 @@ class PostGameReport():
             p_df_t['AST'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('assists')), axis=1)
             p_df_t['TO'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('turnovers')), axis=1)
             p_df_t['ST'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('steals')), axis=1)
-            p_df_t['BL'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('blocks')), axis=1)
+            p_df_t['BS'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('blocks')), axis=1)
             p_df_t['PF'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('foulsTotal')), axis=1)
             p_df_t['FD'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('foulsDrawn')), axis=1)
             p_df_t['PTS'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('points')), axis=1)
@@ -745,7 +858,7 @@ class PostGameReport():
             team_lineup_df['AST'] = team_lineup_df['AST'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['TO'] = team_lineup_df['TOV'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['ST'] = team_lineup_df['STL'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
-            team_lineup_df['BL'] = team_lineup_df['BLK'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
+            team_lineup_df['BS'] = team_lineup_df['BLK'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['PF'] = team_lineup_df['PF'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v))
             team_lineup_df['FD'] = team_lineup_df['FD'].apply(lambda v: '' if pd.isna(v) or int(v) == 0 else int(v)) if 'FD' in team_lineup_df.columns else ''
             for column in ('PIP', 'SCP', 'FBP', 'POT'):
@@ -787,7 +900,7 @@ class PostGameReport():
                 ('Opp_AST', 'Opp_AST'),
                 ('Opp_TOV', 'Opp_TO'),
                 ('Opp_STL', 'Opp_ST'),
-                ('Opp_BLK', 'Opp_BL'),
+                ('Opp_BLK', 'Opp_BS'),
                 ('Opp_PF', 'Opp_PF'),
                 ('Opp_FD', 'Opp_FD'),
                 ('Opp_PTS', 'Opp_PTS'),
@@ -801,11 +914,11 @@ class PostGameReport():
             team_lineup_df = sort_lineup_table(team_lineup_df)
             u_df_dict[team_name] = team_lineup_df[[
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
-                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
                 'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
                 'Opp_2M', 'Opp_2A', 'Opp_2FG%', 'Opp_3M', 'Opp_3A', 'Opp_3FG%',
                 'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
-                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
+                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BS', 'Opp_PF', 'Opp_FD',
                 'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
             ]].copy()
 
@@ -862,7 +975,7 @@ class PostGameReport():
                 'AST': None,
                 'TO': to_team,
                 'ST': None,
-                'BL': None,
+                'BS': None,
                 'PF': pf_team,
                 'FD': None,
                 'PTS': None,
@@ -914,7 +1027,7 @@ class PostGameReport():
                 'AST': _clean_int('assists') if _clean_int('assists') is not None else 0,
                 'TO': _clean_int('turnovers') if _clean_int('turnovers') is not None else 0,
                 'ST': _clean_int('steals') if _clean_int('steals') is not None else 0,
-                'BL': _clean_int('blocks') if _clean_int('blocks') is not None else 0,
+                'BS': _clean_int('blocks') if _clean_int('blocks') is not None else 0,
                 'PF': _clean_int('foulsTotal') if _clean_int('foulsTotal') is not None else 0,
                 'FD': _clean_int('foulsDrawn'),
                 'PTS': _clean_int('points') if _clean_int('points') is not None else 0,

@@ -37,8 +37,11 @@ Finished-game detection is in `docs/spec.md`. `Parser.parse_game_bundle` uses on
 | fixture roster | always official `.../roster` | same |
 | org persons / entities / venues | always official, HTTP cache 2 hours | same |
 | season fixtures | always official, process cache 30 seconds, and that process cache is the only season cache | same |
+| fixture live summary | — | `.../fixtures/{fixtureId}/summary/live` |
 
-Official live routes are marked **2 requests per minute** per route. PLG and EASL are separate budgets. One live bundle is one generation of the five `/live` routes.
+Official live routes are marked **2 requests per minute** per route. PLG and EASL are separate budgets. One live bundle is one generation of the five `/live` routes. `summary/live` is not in that bundle. `live_route` names it `live`, so it has its own 2-per-minute counter and `acquire()` does not reserve it. A 429 on it still pauses every live route for that organization.
+
+Home calls `summary/live` only for `IN_PROGRESS` fixtures visible under the league, Show, and Game Type on screen, earliest `startTimeLocal` first. It reads `status.periodId` and `clock.main`. It ignores `clock.running`. It does not call `acquire()`. When the local window is full, the rest of that list is not sent. The game banner does not call this route. It uses the play-by-play already loaded for that game.
 
 ## Response envelope
 
@@ -69,7 +72,7 @@ Two lifetimes. Short is 30 seconds: the five `/live` routes, the live report mem
 - Season fixture process cache = 30 seconds, with singleflight. The id table uses the same singleflight and the 2-hour lifetime. A failure is not stored. If a previous entry exists, it is served and marked delayed, except 401/403, which still fail.
 - Home and Game poll every 35 seconds. One watched live game fetches about every 35 seconds. Two or more games watched within 70 seconds share one origin bundle per organization every 35 seconds, round-robin, so each game updates about every 70 seconds. A game leaves the rotation after 70 seconds with no poll.
 - The first open of two games may both fetch immediately. That uses the minute's 2 calls. No live origin follows until 60 seconds after that burst. That quiet stretch is the schedule, not a failure.
-- Each organization allows 2 origin calls per live route per rolling 60 seconds. Reserving a bundle takes one call on all five routes before `PostGameReport` runs. A 5xx retry is one extra call on that route and is not sent when the route is already at 2. A cache hit does not count.
+- Each organization allows 2 origin calls per live route per rolling 60 seconds. Reserving a bundle takes one call on all five routes before `PostGameReport` runs. `summary/live` is outside that reserve. A 5xx retry is one extra call on that route and is not sent when the route is already at 2. A cache hit does not count.
 - 429 pauses that organization's live calls until `Retry-After`, or 60 seconds when the header is missing or invalid. The page keeps the last success when one exists.
 - Concurrent lookups for the same organization and `game_id` build the report once (singleflight). Sibling callbacks in the same tick do not start a second bundle. The memo key is that pair. Season and id-table misses share one fetch each.
 - The budget, the singleflight, and the memos are process-local. Startup is one worker (`--workers 1`). A second process is outside this guarantee. A Fly `auto_stop` wake is a cold cache.

@@ -138,11 +138,11 @@ class LineupTableTests(unittest.TestCase):
             columns,
             [
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
-                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
                 'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
                 'Opp_2M', 'Opp_2A', 'Opp_2FG%', 'Opp_3M', 'Opp_3A', 'Opp_3FG%',
                 'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
-                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
+                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BS', 'Opp_PF', 'Opp_FD',
                 'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
             ],
         )
@@ -231,7 +231,7 @@ class LineupTableTests(unittest.TestCase):
         self.assertEqual(first['Opp_AST'], 1)
         self.assertEqual(first['Opp_TO'], 1)
         self.assertEqual(first['Opp_ST'], '')
-        self.assertEqual(first['Opp_BL'], '')
+        self.assertEqual(first['Opp_BS'], '')
         self.assertEqual(first['Opp_PF'], 1)
         self.assertEqual(first['Opp_FD'], 1)
         self.assertEqual(first['Opp_PIP'], 2)

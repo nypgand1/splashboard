@@ -17,7 +17,7 @@ _COUNT_FIELDS = (
     ('2M', '2M'), ('2A', '2A'), ('3M', '3M'), ('3A', '3A'),
     ('1M', 'FTM'), ('1A', 'FTA'),
     ('OR', 'OR'), ('DR', 'DR'), ('REB', 'REB'),
-    ('AST', 'AST'), ('TOV', 'TO'), ('STL', 'ST'), ('BLK', 'BL'),
+    ('AST', 'AST'), ('TOV', 'TO'), ('STL', 'ST'), ('BLK', 'BS'),
     ('PF', 'PF'), ('FD', 'FD'), ('PTS', 'PTS'),
     ('PIP', 'PIP'), ('SCP', 'SCP'), ('FBP', 'FBP'), ('POT', 'POT'),
 )

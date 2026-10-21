@@ -18,7 +18,7 @@ PLAYER_COLS = [
     '#', 'Player', 'S', 'Min', '+/-',
     '2M', '2A', '2FG%', '3M', '3A', '3FG%',
     'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB',
-    'AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS',
+    'AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS',
     'eFG%', 'USG%', 'PM',
 ]
 
@@ -152,7 +152,7 @@ def _player_frame(name, starter, plus_minus):
         'AST': 2,
         'TO': 1,
         'ST': 1,
-        'BL': 0,
+        'BS': 0,
         'PF': 2,
         'FD': 1,
         'eFG%': '50%',
@@ -182,7 +182,17 @@ class FakeReport:
         return pd.DataFrame({'Team': [HOME, AWAY], '1Q': [1, 0]})
 
     def get_team_advance_stats_df(self):
-        return pd.DataFrame({'Team': [HOME, AWAY], 'Pace': [70.0, 68.0], 'PPP': [1.1, 1.0]})
+        return pd.DataFrame({'Team': [HOME, AWAY], 'Pace': [70.0, 68.0]})
+
+    def get_team_advanced_df(self):
+        return pd.DataFrame({
+            'Team': [HOME, AWAY],
+            'PPP': ['1.10', '1.00'],
+            'AS/TO': ['1.50', '1.00'],
+            'AST%': ['62.5%', '40.0%'],
+            '3P-R': ['40.0%', '30.0%'],
+            'TS%': ['55.0%', '48.0%'],
+        })
 
     def get_team_stats_df(self):
         data = {'Team': [HOME, AWAY], 'PTS': [88, 79], 'Min': ['40:00', '40:00']}
@@ -224,7 +234,10 @@ class FakeReport:
     def box_score_slice_json(self):
         teams = [HOME, AWAY]
         one = {
-            't_adv_df': _split(pd.DataFrame({'Team': teams, 'Pace': [90.0, 90.0], 'PPP': [1.2, 1.0]})),
+            't_adv_df': _split(pd.DataFrame({'Team': teams, 'Pace': [90.0, 90.0]})),
+            'adv_df': _split(pd.DataFrame({
+                'Team': teams, 'PPP': ['1.20', '1.00'], 'AS/TO': ['1.20', '0.80'], 'AST%': ['50.0%', '25.0%'], '3P-R': ['33.0%', '25.0%'], 'TS%': ['52.0%', '47.0%'],
+            })),
             't_df': _split(pd.DataFrame({'Team': teams, 'PTS': [41, 33], 'Min': ['12:00', '12:00']})),
             'k_df': _split(pd.DataFrame({'Team': teams, 'PIP': [9, 8]})),
             'p_df_dict': self.get_player_stats_json_dict(),

@@ -47,6 +47,7 @@ def report_tab_is_visible(status):
 ALLOWED_TABLE_KEYS = (
     'score_group',
     't_adv_df',
+    'adv_df',
     't_df',
     'k_df',
     'p_df_away',
@@ -56,7 +57,8 @@ ALLOWED_TABLE_KEYS = (
 )
 TABLE_TITLES = {
     'score_group': 'Score',
-    't_adv_df': 'Pace, PPP & Four Factors',
+    't_adv_df': 'Pace & Four Factors',
+    'adv_df': 'Advanced Stats',
     't_df': 'Team Stats',
     'k_df': 'Key Stats',
     'p_df_away': 'Away Player Stats',
@@ -149,8 +151,8 @@ def pdf_export_spec():
 def report_header_groups_spec():
     return {
         'shot_groups': ('2PT', '3PT', 'FT', 'REB'),
-        'four_factors_label': '4 FACTORS',
-        'four_factors_keys': ('eFG%', 'TOV%', 'ORB%', 'FT-R'),
+        'four_factors_label': 'FOUR FACTORS',
+        'four_factors_keys': ('eFG%', 'TO%', 'ORB%', 'FT-R'),
         'four_factors_tables': ('t_adv_df',),
         'no_four_factors_tables': ('p_df_home', 'p_df_away', 'lineup_home', 'lineup_away'),
     }
@@ -403,8 +405,9 @@ def default_layout(match_info=None):
                 'blocks': [
                     _table('p1-score', 'score_group', 0, 0, half, 3),
                     _table('p1-four', 't_adv_df', 0, 3, half, 3),
-                    _text('p1-notes', half, 0, half, 6),
-                    _rotation('p1-rotation', 0, 6, GRID_COLUMNS, ROTATION_DEFAULT_H),
+                    _table('p1-advanced', 'adv_df', 0, 6, half, 3),
+                    _text('p1-notes', half, 0, half, 9),
+                    _rotation('p1-rotation', 0, 9, GRID_COLUMNS, ROTATION_DEFAULT_H),
                 ],
             },
             {

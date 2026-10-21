@@ -46,7 +46,8 @@
     var REPORT_FONT_URL = '/assets/NotoSansTC-Regular.ttf';
     var TABLE_TITLES = {
         score_group: 'Score',
-        t_adv_df: 'Pace, PPP & Four Factors',
+        t_adv_df: 'Pace & Four Factors',
+        adv_df: 'Advanced Stats',
         t_df: 'Team Stats',
         k_df: 'Key Stats',
         p_df_away: 'Away Player Stats',
@@ -54,16 +55,18 @@
         lineup_away: 'Away Lineup Stats',
         lineup_home: 'Home Lineup Stats'
     };
-    var LOWER_BETTER = { Foul: 1, PF: 1, TO: 1, TOV: 1, 'TOV%': 1 };
+    var LOWER_BETTER = { Foul: 1, PF: 1, TO: 1, TOV: 1, 'TO%': 1 };
     var COL_GROUPS = [
         { name: '2PT', keys: ['2M', '2A', '2FG%'], subs: ['M', 'A', '%'] },
         { name: '3PT', keys: ['3M', '3A', '3FG%'], subs: ['M', 'A', '%'] },
         { name: 'FT', keys: ['FTM', 'FTA', 'FT%'], subs: ['M', 'A', '%'] },
         { name: 'REB', keys: ['OR', 'DR', 'REB'], subs: ['O', 'D', 'T'] },
-        { name: 'PIP', keys: ['PIPM', 'PIPA', 'PIP'], subs: ['M', 'A', 'PT'] },
-        { name: 'SCP', keys: ['SCPM', 'SCPA', 'SCP'], subs: ['M', 'A', 'PT'] }
+        { name: 'Points in the Paint', keys: ['PIPM', 'PIPA', 'PIP'], subs: ['M', 'A', 'PT'] },
+        { name: 'Second Chance Points', keys: ['SCP2M', 'SCP2A', 'SCP3M', 'SCP3A', 'SCP'], subs: ['2M', '2A', '3M', '3A', 'PT'] },
+        { name: 'Fast Break Points', keys: ['FBP2M', 'FBP2A', 'FBP3M', 'FBP3A', 'FBP'], subs: ['2M', '2A', '3M', '3A', 'PT'] },
+        { name: 'Points off Turnovers', keys: ['POT2M', 'POT2A', 'POT3M', 'POT3A', 'POT'], subs: ['2M', '2A', '3M', '3A', 'PT'] }
     ];
-    var FF_KEYS = ['eFG%', 'TOV%', 'ORB%', 'FT-R'];
+    var FF_KEYS = ['eFG%', 'TO%', 'ORB%', 'FT-R'];
     var KEY_STATS = ['PIP', 'SCP', 'FBP', 'POT'];
     var libsPromise = null;
     var hydrateLocks = {};
@@ -530,12 +533,12 @@
         if (!rows || rows.length !== 2) {
             return {};
         }
-        if (tableKey !== 't_df' && tableKey !== 't_adv_df' && tableKey !== 'k_df' && tableKey !== 'score_group') {
+        if (tableKey !== 't_df' && tableKey !== 't_adv_df' && tableKey !== 'adv_df' && tableKey !== 'k_df' && tableKey !== 'score_group') {
             return {};
         }
         var map = {};
         columns.forEach(function (col) {
-            if (col === 'Team' || col === 'Min') {
+            if (col === 'Team' || col === 'Min' || col === '3P-R' || col === '3Pr') {
                 return;
             }
             var a = numVal(rows[0][col]);
@@ -606,7 +609,7 @@
             if (ff.indexOf(col) !== -1 && !used['__ff']) {
                 used['__ff'] = 1;
                 ff.forEach(function (k) { used[k] = 1; });
-                top.push({ text: '4 FACTORS', span: ff.length });
+                top.push({ text: 'FOUR FACTORS', span: ff.length });
                 ff.forEach(function (k) { sub.push({ label: k, col: k }); });
                 return;
             }
@@ -1500,7 +1503,7 @@
                     td.style.color = '#0077b6';
                     td.style.fontWeight = '700';
                 }
-                if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
+                if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
                     td.style.borderLeft = '3.5px solid ' + teamStripeColor(row, rIdx);
                 }
                 if (dnp && col === 'Min') {

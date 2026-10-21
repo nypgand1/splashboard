@@ -512,7 +512,10 @@ class BoxScorePeriodUiTests(unittest.TestCase):
             'qt_pts_df': _split(pd.DataFrame({'Team': teams, '1Q': [20, 18], '2Q': [22, 16]})),
             'qt_foul_df': _split(pd.DataFrame({'Team': teams, '1Q': [2, 3]})),
             'qt_tout_df': _split(pd.DataFrame({'Team': teams, '1Q': [1, 0]})),
-            't_adv_df': _split(pd.DataFrame({'Team': teams, 'Pace': [70.0, 68.0], 'PPP': [1.1, 1.0]})),
+            't_adv_df': _split(pd.DataFrame({'Team': teams, 'Pace': [70.0, 68.0]})),
+            'adv_df': _split(pd.DataFrame({
+                'Team': teams, 'PPP': ['1.10', '1.00'], 'AS/TO': ['1.50', '1.00'], 'AST%': ['62.5%', '40.0%'], '3P-R': ['40.0%', '30.0%'], 'TS%': ['55.0%', '48.0%'],
+            })),
             't_df': _split(pd.DataFrame({'Team': teams, 'PTS': [88, 79]})),
             'k_df': _split(pd.DataFrame({'Team': teams, 'PIP': [20, 18]})),
             'p_df_dict': {
@@ -527,7 +530,10 @@ class BoxScorePeriodUiTests(unittest.TestCase):
             'slices': {
                 '1': {
                     't_adv_df': _split(pd.DataFrame({
-                        'Team': teams, 'Pace': ['4.0', '4.0'], 'PPP': ['1.20', ''],
+                        'Team': teams, 'Pace': ['4.0', '4.0'],
+                    })),
+                    'adv_df': _split(pd.DataFrame({
+                        'Team': teams, 'PPP': ['1.20', ''], 'AS/TO': ['1.20', '0.50'], 'AST%': ['50.0%', '25.0%'], '3P-R': ['30.0%', '20.0%'], 'TS%': ['50.0%', '40.0%'],
                     })),
                     't_df': _split(pd.DataFrame({'Team': teams, 'PTS': [41, 33]})),
                     'k_df': _split(pd.DataFrame({'Team': teams, 'PIP': [9, 8]})),
@@ -548,7 +554,9 @@ class BoxScorePeriodUiTests(unittest.TestCase):
         ))
         texts = []
         _walk_text(tree, texts)
-        self.assertLess(texts.index('SCORE'), texts.index('PACE & 4 FACTORS'))
+        self.assertLess(texts.index('SCORE'), texts.index('PACE & FOUR FACTORS'))
+        self.assertLess(texts.index('PACE & FOUR FACTORS'), texts.index('ADVANCED'))
+        self.assertLess(texts.index('ADVANCED'), texts.index('PAINT / 2ND CHANCE / FASTBREAK / OFF TO / BENCH'))
         self.assertIn('22', texts)
         self.assertIn('41', texts)
         self.assertNotIn('88', texts)
@@ -619,6 +627,9 @@ class BoxScorePeriodUiTests(unittest.TestCase):
             def get_team_advance_stats_df(self):
                 return pd.DataFrame({'Team': ['Home'], 'Pace': [70.0]})
 
+            def get_team_advanced_df(self):
+                return pd.DataFrame({'Team': ['Home'], 'PPP': ['1.10'], 'AS/TO': ['1.50'], 'AST%': ['62.5%'], '3P-R': ['40.0%'], 'TS%': ['55.0%']})
+
             def get_team_stats_df(self):
                 return pd.DataFrame({'Team': ['Home'], 'PTS': [88]})
 
@@ -640,6 +651,7 @@ class BoxScorePeriodUiTests(unittest.TestCase):
         with patch.object(game_page, 'get_cached_report', return_value=_Report()):
             payload = json.loads(game_page.update_bs_store(1, 'g1'))
         self.assertIn('88', payload['t_df'])
+        self.assertIn('1.50', payload['adv_df'])
         self.assertNotIn('slice-frame', payload['t_df'])
         self.assertEqual(payload['slices']['1']['t_df'], 'slice-frame')
         self.assertEqual(payload['period_chips'][0]['value'], 'all')
@@ -662,8 +674,25 @@ class BoxScorePeriodUiTests(unittest.TestCase):
         self.assertFalse(any(isinstance(node, dcc.Loading) for node in _nodes(wrap)))
         ids = {getattr(node, 'id', None) for node in _nodes(wrap)}
         self.assertTrue({
-            'bs-skeleton', 'bs-score-scroll', 'bs-team-scroll', 'bs-player-grid-0', 'bs-player-grid-1',
+            'bs-skeleton', 'bs-score-scroll', 'bs-team-scroll', 'bs-advanced-scroll',
+            'bs-player-grid-0', 'bs-player-grid-1',
         } <= ids)
+        detail_body = next(node for node in _nodes(tree) if getattr(node, 'id', None) == 'bs-detail-body')
+        pair = detail_body.children[0]
+        self.assertEqual(getattr(pair, 'cols', None), {'base': 1, 'lg': 2})
+        pair_ids = {getattr(node, 'id', None) for node in _nodes(pair)}
+        self.assertIn('bs-pace-scroll', pair_ids)
+        self.assertIn('bs-advanced-scroll', pair_ids)
+        self.assertNotIn('bs-key-scroll', pair_ids)
+        key_ids = {getattr(node, 'id', None) for node in _nodes(detail_body.children[1])}
+        self.assertIn('bs-key-scroll', key_ids)
+        shell_texts = []
+        _walk_text(detail_body, shell_texts)
+        self.assertLess(shell_texts.index('PACE & FOUR FACTORS'), shell_texts.index('ADVANCED'))
+        self.assertLess(
+            shell_texts.index('ADVANCED'),
+            shell_texts.index('PAINT / 2ND CHANCE / FASTBREAK / OFF TO / BENCH'),
+        )
         self.assertEqual(
             game_page.update_pane_bs(json.dumps(self._payload()), 'tab-bs', '1'),
             (no_update, no_update),

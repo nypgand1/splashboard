@@ -18,6 +18,7 @@ import dash_mantine_components as dmc
 import pandas as pd
 
 from synergy_inbounder.communicator import SynergyAuthError
+from synergy_inbounder.live_clock import forget_finished, recall, refresh_summaries
 from synergy_inbounder.names import display_name
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
@@ -244,6 +245,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     delayed = bool(refresh.get('delayed') or names.get('delayed'))
     if first or scope_change:
         show, game_type = entry_home_view(records)
+    records = _apply_live_clocks(records, show, game_type, league)
+    if first or scope_change:
         page = render_home_page(
             records,
             show=show,
@@ -305,6 +308,9 @@ def update_home_view(records, show, game_type):
     rows = records or []
     if _triggered_id() == 'home-show':
         game_type = game_type_after_show_change(rows, show, game_type)
+    head = rows[0] if rows else None
+    league = head.get('league') if isinstance(head, dict) and head.get('league') else LEAGUE_PLG
+    rows = _apply_live_clocks(rows, show, game_type, league)
     return render_schedule_list(rows, show, game_type)
 
 
@@ -395,6 +401,39 @@ def format_row_time(value):
     if 'T' in text:
         return text.split('T', 1)[1][:5]
     return text[:5] if text else ''
+
+
+def _row_meta_time(record):
+    if (
+        isinstance(record, dict)
+        and str(record.get('status') or '').strip() == 'IN_PROGRESS'
+        and record.get('liveClock')
+    ):
+        return record['liveClock']
+    start = record.get('startTimeLocal') if isinstance(record, dict) else None
+    return format_row_time(start)
+
+
+def _apply_live_clocks(records, show, game_type, league):
+    rows = list(records or [])
+    dict_rows = [row for row in rows if isinstance(row, dict)]
+    org = _organization_for_home_league(league)
+    forget_finished(org, dict_rows)
+    visible = _by_start([
+        row for row in filter_schedule_records(dict_rows, show, game_type)
+        if str(row.get('status') or '').strip() == 'IN_PROGRESS' and row.get('fixtureId')
+    ])
+    refresh_summaries(org, visible)
+    for row in dict_rows:
+        if str(row.get('status') or '').strip() != 'IN_PROGRESS':
+            row.pop('liveClock', None)
+            continue
+        label = recall(org, row.get('fixtureId'))
+        if label:
+            row['liveClock'] = label
+        else:
+            row.pop('liveClock', None)
+    return rows
 
 
 def _score_text(value):
@@ -665,7 +704,7 @@ def _compact_row(record):
             matchup_line(away_team, home_team, away_display, home_display),
             meta_cluster(
                 join_meta(
-                    format_row_time(record.get('startTimeLocal')),
+                    _row_meta_time(record),
                     record.get('venue') or '',
                 ),
                 status_badge(status, 'xs'),

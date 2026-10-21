@@ -662,7 +662,11 @@ def _by_class(tree, name):
 class HomeScheduleTests(unittest.TestCase):
     def _load(self, rows):
         df = _schedule_df(rows)
-        with patch.object(home_page, 'df_data', return_value=df):
+        with patch.object(home_page, 'df_data', return_value=df), \
+                patch(
+                    'synergy_inbounder.communicator.Communicator.get_fixture_live_summary',
+                    return_value={},
+                ):
             return home_page.load_home_game_list('home-game-list')
 
     def test_success_is_not_ag_grid(self):
@@ -795,7 +799,11 @@ class HomeScheduleTests(unittest.TestCase):
         )
 
     def _load_filtered(self, rows, n_intervals='home-game-list', filters=None, scope=None):
-        with patch.object(home_page, 'df_data', return_value=_schedule_df(rows)):
+        with patch.object(home_page, 'df_data', return_value=_schedule_df(rows)), \
+                patch(
+                    'synergy_inbounder.communicator.Communicator.get_fixture_live_summary',
+                    return_value={},
+                ):
             return home_page.load_home_game_list(n_intervals, scope, filters)
 
     def test_empty_upcoming_uses_the_latest_finished_stage(self):
@@ -1283,7 +1291,7 @@ class PlayerDotColorTests(unittest.TestCase):
             'qt_pts_df': split_json(pd.DataFrame({'Team': teams, '1Q': [20, 18]})),
             'qt_foul_df': split_json(pd.DataFrame({'Team': teams, '1Q': [2, 3]})),
             'qt_tout_df': split_json(pd.DataFrame({'Team': teams, '1Q': [1, 0]})),
-            't_adv_df': split_json(pd.DataFrame({'Team': teams, 'Pace': [70.0, 68.0], 'PPP': [1.1, 1.0]})),
+            't_adv_df': split_json(pd.DataFrame({'Team': teams, 'Pace': [70.0, 68.0]})),
             't_df': split_json(pd.DataFrame({'Team': teams, 'PTS': [88, 79]})),
             'k_df': split_json(pd.DataFrame({'Team': teams, 'PIP': [20, 18]})),
             'p_df_dict': {
