@@ -4,6 +4,18 @@
     }
 
     var IMAGE_MAX_BYTES = 1000000;
+    var CSV_MAX_BYTES = 65536;
+    var CSV_MAX_COLUMNS = 24;
+    var CSV_MAX_BODY_ROWS = 40;
+    var CSV_TITLE_FALLBACK = 'Imported table';
+    var CSV_ERR_EMPTY = 'This CSV is empty.';
+    var CSV_ERR_UTF8 = 'This CSV is not UTF-8.';
+    var CSV_ERR_HEADER = 'This CSV needs a header row.';
+    var CSV_ERR_READ = 'This CSV could not be read.';
+    var CSV_ERR_BYTES = 'This CSV is larger than 64KB.';
+    var CSV_ERR_COLUMNS = 'This CSV has more than 24 columns.';
+    var CSV_ERR_ROWS = 'This CSV has more than 40 rows.';
+    var CSV_PPP_NUMBER = /^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/;
     var GRID_COLUMNS = 12;
     var LAYOUT_VERSION = 4;
     var DESKTOP_MIN_PX = 1280;
@@ -128,6 +140,14 @@
                 }
                 if (block.type === 'image') {
                     block.src = img ? img.getAttribute('src') : (prev.src || '');
+                }
+                if (block.type === 'csv_table') {
+                    var csv = readCsvStore(item) || {};
+                    block.title = csv.title || prev.title || CSV_TITLE_FALLBACK;
+                    block.coloring = (csv.coloring || prev.coloring) === 'ppp' ? 'ppp' : 'plain';
+                    block.columns = csv.columns || prev.columns || [];
+                    block.rows = csv.rows || prev.rows || [];
+                    delete block.table_key;
                 }
                 blocks.push(block);
             });
@@ -340,6 +360,10 @@
 
     function blockLocksSize(type) {
         return type === 'rotation' || type === 'shot_chart';
+    }
+
+    function isReportTable(type) {
+        return type === 'builtin_table' || type === 'csv_table';
     }
 
     function shotChartPayload() {
@@ -980,6 +1004,248 @@
             return;
         }
         PAIR_WIDTHS.forEach(syncPairColumnWidths);
+    }
+
+    function csvBlockTitle(filename) {
+        var name = String(filename || '').replace(/\\/g, '/').split('/').pop();
+        if (/\.csv$/i.test(name)) {
+            name = name.slice(0, -4);
+        }
+        if (!String(name || '').trim()) {
+            return CSV_TITLE_FALLBACK;
+        }
+        return name;
+    }
+
+    function pppCellStyle(text) {
+        var token = String(text == null ? '' : text).trim();
+        if (!CSV_PPP_NUMBER.test(token)) {
+            return null;
+        }
+        var negative = token.charAt(0) === '-';
+        var body = token.charAt(0) === '+' || negative ? token.slice(1) : token;
+        var parts = body.split('.');
+        var whole = parts[0] || '0';
+        var frac = parts[1] || '';
+        var scale = frac.length;
+        var magnitude = parseInt(whole + frac, 10);
+        if (negative) {
+            magnitude = -magnitude;
+        }
+        var unit = Math.pow(10, scale);
+        if (magnitude >= unit) {
+            return { color: '#0077b6', fontWeight: '700' };
+        }
+        if (magnitude * 10 < 8 * unit) {
+            return { color: '#e63946', fontWeight: '700' };
+        }
+        return null;
+    }
+
+    function parseCsvRecords(text) {
+        var rows = [];
+        var row = [];
+        var field = '';
+        var i = 0;
+        var inQuotes = false;
+        var afterQuote = false;
+        var fieldStarted = false;
+        function pushField() {
+            row.push(field);
+            field = '';
+            afterQuote = false;
+            fieldStarted = false;
+        }
+        function pushRow() {
+            pushField();
+            rows.push(row);
+            row = [];
+        }
+        while (i < text.length) {
+            var c = text.charAt(i);
+            if (inQuotes) {
+                if (c === '"') {
+                    if (text.charAt(i + 1) === '"') {
+                        field += '"';
+                        i += 2;
+                        continue;
+                    }
+                    inQuotes = false;
+                    afterQuote = true;
+                    i += 1;
+                    continue;
+                }
+                field += c;
+                i += 1;
+                continue;
+            }
+            if (c === '"') {
+                if (fieldStarted) {
+                    throw new Error(CSV_ERR_READ);
+                }
+                inQuotes = true;
+                fieldStarted = true;
+                i += 1;
+                continue;
+            }
+            if (c === ',') {
+                if (afterQuote || !afterQuote) {
+                    pushField();
+                    i += 1;
+                    continue;
+                }
+            }
+            if (c === '\n' || c === '\r') {
+                pushRow();
+                i += 1;
+                if (c === '\r' && text.charAt(i) === '\n') {
+                    i += 1;
+                }
+                continue;
+            }
+            if (afterQuote) {
+                throw new Error(CSV_ERR_READ);
+            }
+            field += c;
+            fieldStarted = true;
+            i += 1;
+        }
+        if (inQuotes) {
+            throw new Error(CSV_ERR_READ);
+        }
+        if (fieldStarted || afterQuote || field.length || row.length) {
+            pushRow();
+        }
+        return rows;
+    }
+
+    function parseCsvTable(text) {
+        var source = String(text == null ? '' : text);
+        if (source.charCodeAt(0) === 0xFEFF) {
+            source = source.slice(1);
+        }
+        if (!source.trim()) {
+            throw new Error(CSV_ERR_EMPTY);
+        }
+        var records = parseCsvRecords(source);
+        if (!records.length) {
+            throw new Error(CSV_ERR_EMPTY);
+        }
+        var columns = records[0].map(function (cell) {
+            return cell == null ? '' : String(cell);
+        });
+        var headerText = columns.some(function (cell) {
+            return String(cell).trim();
+        });
+        if (!headerText) {
+            throw new Error(CSV_ERR_HEADER);
+        }
+        if (columns.length > CSV_MAX_COLUMNS) {
+            throw new Error(CSV_ERR_COLUMNS);
+        }
+        var body = records.slice(1);
+        if (body.length > CSV_MAX_BODY_ROWS) {
+            throw new Error(CSV_ERR_ROWS);
+        }
+        var width = columns.length;
+        var rows = body.map(function (record) {
+            var cells = record.map(function (cell) {
+                return cell == null ? '' : String(cell);
+            });
+            if (cells.length < width) {
+                while (cells.length < width) {
+                    cells.push('');
+                }
+            } else if (cells.length > width) {
+                cells = cells.slice(0, width);
+            }
+            return cells;
+        });
+        return { columns: columns, rows: rows };
+    }
+
+    function readCsvStore(node) {
+        var store = node && node.querySelector('script.report-csv-store');
+        if (!store || !store.textContent) {
+            return null;
+        }
+        try {
+            return JSON.parse(store.textContent);
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function writeCsvStore(node, block) {
+        var store = node.querySelector('script.report-csv-store');
+        if (!store) {
+            store = document.createElement('script');
+            store.type = 'application/json';
+            store.className = 'report-csv-store no-print';
+            node.appendChild(store);
+        }
+        store.textContent = JSON.stringify({
+            title: block.title || CSV_TITLE_FALLBACK,
+            coloring: block.coloring === 'ppp' ? 'ppp' : 'plain',
+            columns: block.columns || [],
+            rows: block.rows || []
+        });
+    }
+
+    function paintCsvTable(host, block) {
+        if (!host) {
+            return;
+        }
+        host.innerHTML = '';
+        var columns = block.columns || [];
+        var rows = block.rows || [];
+        if (!columns.length) {
+            host.textContent = '—';
+            host.className = 'report-table-host';
+            return;
+        }
+        var coloring = block.coloring === 'ppp';
+        var pppIndex = {};
+        if (coloring) {
+            columns.forEach(function (col, index) {
+                if (String(col == null ? '' : col).trim() === 'PPP') {
+                    pppIndex[index] = 1;
+                }
+            });
+        }
+        var table = document.createElement('table');
+        table.className = 'text-nowrap report-js-table';
+        table.setAttribute('data-csv-coloring', coloring ? 'ppp' : 'plain');
+        var thead = document.createElement('thead');
+        var headRow = document.createElement('tr');
+        columns.forEach(function (col) {
+            var th = document.createElement('th');
+            th.textContent = col == null ? '' : String(col);
+            headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        var tbody = document.createElement('tbody');
+        rows.forEach(function (record) {
+            var tr = document.createElement('tr');
+            columns.forEach(function (_col, index) {
+                var td = document.createElement('td');
+                var text = record && record[index] != null ? String(record[index]) : '';
+                td.textContent = text;
+                if (pppIndex[index]) {
+                    var tone = pppCellStyle(text);
+                    if (tone) {
+                        td.style.color = tone.color;
+                        td.style.fontWeight = tone.fontWeight;
+                    }
+                }
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        host.appendChild(table);
+        host.className = 'report-table-host';
     }
 
     function paintTable(host, tableKey, item) {
@@ -1793,7 +2059,9 @@
         node.setAttribute('data-w', String(block.w || 6));
         node.setAttribute('data-h', String(block.h || 3));
         var card = document.createElement('div');
-        var isTable = block.type === 'builtin_table';
+        var isBuiltin = block.type === 'builtin_table';
+        var isCsv = block.type === 'csv_table';
+        var isTable = isBuiltin || isCsv;
         var isRotation = block.type === 'rotation';
         var isShotChart = block.type === 'shot_chart';
         card.className = 'grid-stack-item-content report-block-card' + (isTable ? ' report-block-card-table' : '');
@@ -1812,7 +2080,11 @@
             row.className = 'report-block-title-row';
             var title = document.createElement('div');
             title.className = 'report-block-title';
-            fillBlockTitle(title, block.table_key);
+            if (isCsv) {
+                title.textContent = block.title || CSV_TITLE_FALLBACK;
+            } else {
+                fillBlockTitle(title, block.table_key);
+            }
             row.appendChild(handle);
             row.appendChild(title);
             card.appendChild(row);
@@ -1849,12 +2121,18 @@
             var shotHost = document.createElement('div');
             shotHost.className = 'report-shot-chart-host';
             body.appendChild(shotHost);
-        } else if (isTable) {
+        } else if (isBuiltin) {
             var host = document.createElement('div');
             host.className = 'report-table-host';
             host.setAttribute('data-table-host', block.table_key || '');
             body.appendChild(host);
             paintTable(host, block.table_key, node);
+        } else if (isCsv) {
+            var csvHost = document.createElement('div');
+            csvHost.className = 'report-table-host';
+            body.appendChild(csvHost);
+            paintCsvTable(csvHost, block);
+            writeCsvStore(node, block);
         }
         card.appendChild(body);
         node.appendChild(card);
@@ -1992,7 +2270,7 @@
             return;
         }
         grid.el.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            if (item.getAttribute('data-block-type') === 'builtin_table' && item.gridstackNode) {
+            if (isReportTable(item.getAttribute('data-block-type')) && item.gridstackNode) {
                 item.setAttribute('data-min-h', String(item.gridstackNode.h || 1));
             }
             clampItemToPaper(grid, item);
@@ -2066,7 +2344,7 @@
         if (grid && block.type === 'shot_chart') {
             return Math.max(1, Math.ceil((shotChartEstimatePx(grid) + 8) / cellPx(grid)));
         }
-        if (!grid || block.type !== 'builtin_table') {
+        if (!grid || !isReportTable(block.type)) {
             return fallback;
         }
         var host = grid.el;
@@ -2131,7 +2409,7 @@
             });
         }
         var updates = [];
-        grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]').forEach(function (item) {
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"], .grid-stack-item[data-block-type="csv_table"]').forEach(function (item) {
             var node = item.gridstackNode || {};
             var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
             var h = tableHugH(grid, item);
@@ -2383,7 +2661,7 @@
         var col = columnPx(grid);
         var minH = 1;
         var minW = 1;
-        if (type === 'builtin_table') {
+        if (isReportTable(type)) {
             minH = tableHugH(grid, item);
             var nodeX = (item.gridstackNode && item.gridstackNode.x) || 0;
             minW = Math.max(1, Math.min(
@@ -2422,7 +2700,7 @@
             } else if (type === 'image') {
                 minH = 1;
                 minW = 1;
-            } else if (type === 'builtin_table') {
+            } else if (isReportTable(type)) {
                 minH = Math.max(1, node.h || 1);
                 minW = Math.max(1, node.w || 1);
             } else if (type === 'rotation' || type === 'shot_chart') {
@@ -3872,6 +4150,14 @@
     }
 
     function closeDialog(result) {
+        var cancel = document.getElementById('report-dialog-cancel');
+        var dialog = document.getElementById('report-dialog');
+        if (cancel) {
+            cancel.style.display = '';
+        }
+        if (dialog) {
+            dialog.classList.remove('report-dialog-alert');
+        }
         if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
             window.dash_clientside.set_props('report-dialog-opened', { data: false });
         }
@@ -3882,7 +4168,7 @@
         }
     }
 
-    function askConfirm(message, okLabel) {
+    function askConfirm(message, okLabel, hideCancel) {
         return new Promise(function (resolve) {
             if (!window.dash_clientside || typeof window.dash_clientside.set_props !== 'function') {
                 resolve(false);
@@ -3893,14 +4179,26 @@
             window.setTimeout(function () {
                 var msg = document.getElementById('report-dialog-message');
                 var ok = document.getElementById('report-dialog-ok');
+                var cancel = document.getElementById('report-dialog-cancel');
+                var dialog = document.getElementById('report-dialog');
                 if (msg) {
                     msg.textContent = message;
                 }
                 if (ok) {
                     ok.textContent = okLabel || 'OK';
                 }
+                if (cancel) {
+                    cancel.style.display = hideCancel ? 'none' : '';
+                }
+                if (dialog) {
+                    dialog.classList.toggle('report-dialog-alert', !!hideCancel);
+                }
             }, 0);
         });
+    }
+
+    function askAlert(message) {
+        return askConfirm(message, 'OK', true);
     }
 
     function addEmptyPaper() {
@@ -4017,7 +4315,7 @@
                             y: slot.y,
                             w: w,
                             h: h,
-                            minW: block.type === 'builtin_table' || blockLocksSize(block.type) ? w : 1,
+                            minW: isReportTable(block.type) || blockLocksSize(block.type) ? w : 1,
                             minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
                         };
                         if (blockLocksSize(block.type)) {
@@ -4026,7 +4324,7 @@
                         grid.addWidget(node, newOpts);
                         bindTextBlocks(node);
                         node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-                        node.setAttribute('data-min-w', block.type === 'builtin_table' || blockLocksSize(block.type) ? String(w) : '1');
+                        node.setAttribute('data-min-w', isReportTable(block.type) || blockLocksSize(block.type) ? String(w) : '1');
                         var afterNew = paintPlacedBlock(node, block);
                         return afterNew.then(function () {
                             clampItemToPaper(grid, node);
@@ -4045,7 +4343,7 @@
                 y: slot.y,
                 w: w,
                 h: h,
-                minW: block.type === 'builtin_table' || blockLocksSize(block.type) ? w : 1,
+                minW: isReportTable(block.type) || blockLocksSize(block.type) ? w : 1,
                 minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
             };
             if (blockLocksSize(block.type)) {
@@ -4054,7 +4352,7 @@
             grid.addWidget(node, placeOpts);
             bindTextBlocks(node);
             node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-            node.setAttribute('data-min-w', block.type === 'builtin_table' || blockLocksSize(block.type) ? String(w) : '1');
+            node.setAttribute('data-min-w', isReportTable(block.type) || blockLocksSize(block.type) ? String(w) : '1');
             var afterPlace = paintPlacedBlock(node, block);
             afterPlace.then(function () {
                 clampItemToPaper(grid, node);
@@ -4145,6 +4443,9 @@
             });
             return readLayoutFromDom();
         },
+        parseCsvTable: parseCsvTable,
+        pppCellStyle: pppCellStyle,
+        csvBlockTitle: csvBlockTitle,
         addTable: function (tableKey) {
             if (!tableKey) {
                 return readLayoutFromDom();
@@ -4155,6 +4456,22 @@
                 table_key: tableKey,
                 w: 12,
                 h: 4
+            });
+            return readLayoutFromDom();
+        },
+        addCsvTable: function (block) {
+            if (!block || !block.columns || !block.columns.length) {
+                return readLayoutFromDom();
+            }
+            addWidgetToActive({
+                id: block.id || uniqueId('csv'),
+                type: 'csv_table',
+                title: block.title || CSV_TITLE_FALLBACK,
+                coloring: block.coloring === 'ppp' ? 'ppp' : 'plain',
+                columns: block.columns,
+                rows: block.rows || [],
+                w: block.w || 12,
+                h: block.h || 4
             });
             return readLayoutFromDom();
         },
@@ -4297,7 +4614,85 @@
         return true;
     }
 
+    var csvImportMode = 'plain';
+
+    function ensureCsvInput() {
+        var input = document.getElementById('report-csv-upload');
+        if (input) {
+            return input;
+        }
+        input = document.createElement('input');
+        input.type = 'file';
+        input.id = 'report-csv-upload';
+        input.accept = '.csv,text/csv';
+        input.className = 'report-csv-upload';
+        input.setAttribute('aria-hidden', 'true');
+        input.tabIndex = -1;
+        (document.body || document.documentElement).appendChild(input);
+        return input;
+    }
+
+    function importCsvFile(file, coloring) {
+        if (!file) {
+            askAlert(CSV_ERR_EMPTY);
+            return;
+        }
+        if (!file.size) {
+            askAlert(CSV_ERR_EMPTY);
+            return;
+        }
+        if (file.size > CSV_MAX_BYTES) {
+            askAlert(CSV_ERR_BYTES);
+            return;
+        }
+        var reader = new FileReader();
+        reader.onerror = function () {
+            askAlert(CSV_ERR_READ);
+        };
+        reader.onload = function () {
+            var text;
+            try {
+                text = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(reader.result));
+            } catch (err) {
+                askAlert(CSV_ERR_UTF8);
+                return;
+            }
+            var parsed;
+            try {
+                parsed = parseCsvTable(text);
+            } catch (err) {
+                askAlert(err && err.message ? err.message : CSV_ERR_READ);
+                return;
+            }
+            window.splashboardReport.addCsvTable({
+                title: csvBlockTitle(file.name),
+                coloring: coloring,
+                columns: parsed.columns,
+                rows: parsed.rows
+            });
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
     document.addEventListener('click', function (event) {
+        var csvItem = event.target.closest('[data-csv-import]');
+        if (csvItem) {
+            event.preventDefault();
+            csvImportMode = csvItem.getAttribute('data-csv-import') === 'ppp' ? 'ppp' : 'plain';
+            closeTableMenu();
+            var csvInput = ensureCsvInput();
+            if (csvInput) {
+                csvInput.value = '';
+                csvInput.click();
+            }
+            window.setTimeout(function () {
+                var opener = document.getElementById('report-add-table');
+                if (opener && opener.getAttribute('aria-expanded') === 'true') {
+                    opener.click();
+                }
+            }, 0);
+            return;
+        }
         var tableItem = event.target.closest('[data-add-table]');
         if (tableItem) {
             window.splashboardReport.addTable(tableItem.getAttribute('data-add-table'));
@@ -4429,6 +4824,14 @@
             var mode = customInput.id === 'report-custom-highlight' ? 'highlight' : 'color';
             var val = customInput.value;
             execNoteCommand(mode, val);
+            return;
+        }
+        var csvUpload = event.target.closest('#report-csv-upload');
+        if (csvUpload && csvUpload.files && csvUpload.files[0]) {
+            var csvFile = csvUpload.files[0];
+            var csvMode = csvImportMode;
+            csvUpload.value = '';
+            importCsvFile(csvFile, csvMode);
             return;
         }
         var input = event.target.closest('#report-image-upload');

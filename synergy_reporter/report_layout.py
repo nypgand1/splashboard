@@ -3,6 +3,28 @@
 
 import re
 
+from synergy_reporter.csv_table import (
+    CSV_BLOCK_TYPE,
+    CSV_ERR_BYTES,
+    CSV_ERR_COLUMNS,
+    CSV_ERR_EMPTY,
+    CSV_ERR_HEADER,
+    CSV_ERR_READ,
+    CSV_ERR_ROWS,
+    CSV_ERR_UTF8,
+    CSV_IMPORT_LABEL,
+    CSV_MAX_BODY_ROWS,
+    CSV_MAX_BYTES,
+    CSV_MAX_COLUMNS,
+    CSV_PLAY_TYPE_LABEL,
+    CSV_PPP_BLUE,
+    CSV_PPP_BLUE_MIN,
+    CSV_PPP_HEADER,
+    CSV_PPP_RED,
+    CSV_PPP_RED_BELOW,
+    CSV_TITLE_FALLBACK,
+)
+
 A4_WIDTH_MM = 210
 A4_HEIGHT_MM = 297
 GRID_COLUMNS = 12
@@ -40,7 +62,7 @@ TABLE_TITLES = {
     'lineup_away': 'Away Lineup Stats',
     'lineup_home': 'Home Lineup Stats',
 }
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart', 'csv_table')
 ROTATION_TITLE = 'Rotation'
 ROTATION_DEFAULT_H = 11
 ROTATION_EMPTY = 'No rotation chart for this game.'
@@ -182,6 +204,26 @@ def chrome_spec():
         'shot_chart_empty': SHOT_CHART_EMPTY,
         'shot_chart_error': SHOT_CHART_ERROR,
         'add_table_control': 'icon_menu',
+        'csv_import_labels': (CSV_PLAY_TYPE_LABEL, CSV_IMPORT_LABEL),
+        'csv_block_type': CSV_BLOCK_TYPE,
+        'csv_max_bytes': CSV_MAX_BYTES,
+        'csv_max_columns': CSV_MAX_COLUMNS,
+        'csv_max_rows': CSV_MAX_BODY_ROWS,
+        'csv_title_fallback': CSV_TITLE_FALLBACK,
+        'csv_ppp_header': CSV_PPP_HEADER,
+        'csv_ppp_blue': CSV_PPP_BLUE,
+        'csv_ppp_red': CSV_PPP_RED,
+        'csv_ppp_blue_min': CSV_PPP_BLUE_MIN,
+        'csv_ppp_red_below': CSV_PPP_RED_BELOW,
+        'csv_errors': (
+            CSV_ERR_EMPTY,
+            CSV_ERR_UTF8,
+            CSV_ERR_HEADER,
+            CSV_ERR_READ,
+            CSV_ERR_BYTES,
+            CSV_ERR_COLUMNS,
+            CSV_ERR_ROWS,
+        ),
         'editor_chrome': 'dmc',
         'dialog': 'dmc.Modal',
         'sticky_top_px': 8,

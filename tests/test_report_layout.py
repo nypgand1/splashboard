@@ -15,7 +15,7 @@ ALLOWED_TABLE_KEYS = (
     'lineup_away',
     'lineup_home',
 )
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart', 'csv_table')
 
 
 def _layout():
@@ -647,6 +647,19 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertLess(markup.find('Away Player Stats'), markup.find('Home Player Stats'))
         self.assertLess(markup.find('Away Lineup Stats'), markup.find('Home Lineup Stats'))
         self.assertLess(markup.find('Key Stats'), markup.find('Away Player Stats'))
+        self.assertLess(markup.find('Home Lineup Stats'), markup.find('Import from Play-type CSV File'))
+        self.assertLess(
+            markup.find('Import from Play-type CSV File'),
+            markup.find('Import from CSV File'),
+        )
+        self.assertIn('data-csv-import', markup)
+        self.assertIn('report-table-menu-divider', markup)
+        import os
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(root, 'assets', 'report_canvas.js'), encoding='utf-8') as handle:
+            canvas = handle.read()
+        self.assertIn("input.id = 'report-csv-upload'", canvas)
+        self.assertIn("input.type = 'file'", canvas)
 
     def test_page_list_has_add_but_no_minus(self):
         from synergy_reporter.report_components import render_page_list
@@ -998,6 +1011,21 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['header_credit_size'], '9px')
         self.assertEqual(chrome['header_credit_align'], 'table_content_right')
         self.assertEqual(chrome['table_menu_order'], ALLOWED_TABLE_KEYS)
+        self.assertEqual(
+            chrome['csv_import_labels'],
+            ('Import from Play-type CSV File', 'Import from CSV File'),
+        )
+        self.assertEqual(chrome['csv_block_type'], 'csv_table')
+        self.assertEqual(chrome['csv_max_bytes'], 65536)
+        self.assertEqual(chrome['csv_max_columns'], 24)
+        self.assertEqual(chrome['csv_max_rows'], 40)
+        self.assertEqual(chrome['csv_title_fallback'], 'Imported table')
+        self.assertEqual(chrome['csv_ppp_header'], 'PPP')
+        self.assertEqual(chrome['csv_ppp_blue'], '#0077b6')
+        self.assertEqual(chrome['csv_ppp_red'], '#e63946')
+        self.assertEqual(chrome['csv_ppp_blue_min'], 1)
+        self.assertEqual(chrome['csv_ppp_red_below'], 0.8)
+        self.assertEqual(len(chrome['csv_errors']), 7)
         self.assertIn('report-toolbar', chrome['sticky_selectors'])
         self.assertIn('report-page-list', chrome['sticky_selectors'])
         self.assertEqual(chrome['rail_bg'], '#f1f5f9')

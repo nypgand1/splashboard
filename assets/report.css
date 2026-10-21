@@ -240,7 +240,7 @@ body {
 }
 
 .report-table-menu {
-    min-width: 220px;
+    min-width: 280px;
     padding: 6px;
     border-radius: 10px;
     background: #ffffff;
@@ -263,6 +263,25 @@ body {
 
 .report-table-menu-item:hover {
     background: #e0f2fe;
+}
+
+.report-table-menu-divider {
+    height: 1px;
+    margin: 4px 6px;
+    background: #e2e8f0;
+}
+
+.report-csv-upload {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.report-dialog.report-dialog-alert #report-dialog-cancel {
+    display: none;
 }
 
 #report-image-upload {

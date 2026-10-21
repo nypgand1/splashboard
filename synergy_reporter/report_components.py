@@ -7,6 +7,7 @@ import dash_mantine_components as dmc
 
 from ui_kit import icon as dmc_icon
 
+from synergy_reporter.csv_table import CSV_IMPORT_LABEL, CSV_PLAY_TYPE_LABEL
 from synergy_reporter.report_layout import (
     HEADER_CREDIT,
     TABLE_TITLES,
@@ -381,6 +382,19 @@ def render_toolbar():
             type="button",
             **{'data-add-table': key, 'role': 'menuitem'},
         ))
+    menu_items.append(html.Div(className="report-table-menu-divider", **{'role': 'separator'}))
+    menu_items.append(dmc.MenuItem(
+        CSV_PLAY_TYPE_LABEL,
+        className="report-table-menu-item",
+        closeMenuOnClick=True,
+        **{'data-csv-import': 'ppp'},
+    ))
+    menu_items.append(dmc.MenuItem(
+        CSV_IMPORT_LABEL,
+        className="report-table-menu-item",
+        closeMenuOnClick=True,
+        **{'data-csv-import': 'plain'},
+    ))
     
     flat_colors = [
         ('#e74c3c', 'Red'),

@@ -747,3 +747,142 @@ def test_report_pdf_contains_on_screen_text(page, e2e_server):
     text = '\n'.join((pdf_page.extract_text() or '') for pdf_page in reader.pages)
     assert 'PT' in text or 'Min' in text
     assert '20:00' in text or 'Lin' in text
+
+
+def _import_csv(page, kind, path):
+    page.locator('#report-add-table').click()
+    page.locator(f'[data-csv-import="{kind}"]').wait_for(state='visible', timeout=8000)
+    with page.expect_file_chooser() as chooser:
+        page.locator(f'[data-csv-import="{kind}"]').click()
+    chooser.value.set_files(str(path))
+
+
+def test_report_imports_csv_and_play_type_tables(page, e2e_server, tmp_path):
+    _open_report(page, e2e_server)
+    contract = page.evaluate(
+        '''() => {
+            const api = window.splashboardReport;
+            let bad = '';
+            try {
+                api.parseCsvTable('"open');
+            } catch (err) {
+                bad = err.message;
+            }
+            return {
+                rows: api.parseCsvTable('A,B,C\\n1\\n9,8,7,6\\n').rows,
+                title: api.csvBlockTitle('My.Table.CSV'),
+                blue: api.pppCellStyle('1.00'),
+                mid: api.pppCellStyle('0.80'),
+                red: api.pppCellStyle('.50'),
+                skip: api.pppCellStyle('100%'),
+                bad: bad,
+            };
+        }'''
+    )
+    assert contract['rows'] == [['1', '', ''], ['9', '8', '7']]
+    assert contract['title'] == 'My.Table'
+    assert contract['blue']['color'] == '#0077b6'
+    assert contract['blue']['fontWeight'] == '700'
+    assert contract['mid'] is None
+    assert contract['red']['color'] == '#e63946'
+    assert contract['skip'] is None
+    assert contract['bad'] == 'This CSV could not be read.'
+
+    page.locator('#report-add-table').click()
+    page.locator('[data-csv-import="plain"]').wait_for(state='visible', timeout=8000)
+    labels = [
+        text.strip()
+        for text in page.locator('#report-table-menu .report-table-menu-item').all_inner_texts()
+    ]
+    assert labels[-2:] == ['Import from Play-type CSV File', 'Import from CSV File']
+    page.locator('#report-add-table').click()
+
+    plain = tmp_path / 'bench.csv'
+    plain.write_text('Name,PPP\nLin,1.10\n', encoding='utf-8')
+    play = tmp_path / 'playtype.csv'
+    play.write_text(
+        'Play Type,PPP,Opp PPP\nIso,1.00,0.79\nSpot,0.80,1\nPost,.50,100%\n',
+        encoding='utf-8',
+    )
+    bad = tmp_path / 'bad.csv'
+    bad.write_bytes(b'\xff\xfeH\n')
+
+    _import_csv(page, 'plain', plain)
+    page.locator('.report-block-title', has_text='bench').wait_for(state='attached', timeout=20000)
+    plain_paint = page.evaluate(
+        '''() => {
+            const title = [...document.querySelectorAll('.report-block-title')]
+                .find((el) => (el.textContent || '').trim() === 'bench');
+            const item = title.closest('.grid-stack-item');
+            const table = item.querySelector('.report-js-table');
+            const ppp = table.querySelector('tbody tr td:nth-child(2)');
+            return {
+                type: item.getAttribute('data-block-type'),
+                editable: title.getAttribute('contenteditable'),
+                rows: table.querySelectorAll('thead tr').length,
+                text: ppp.textContent,
+                color: ppp.style.color,
+                weight: ppp.style.fontWeight,
+            };
+        }'''
+    )
+    assert plain_paint['type'] == 'csv_table'
+    assert plain_paint['editable'] is None
+    assert plain_paint['rows'] == 1
+    assert plain_paint['text'] == '1.10'
+    assert plain_paint['color'] == ''
+    assert plain_paint['weight'] == ''
+
+    _import_csv(page, 'ppp', play)
+    page.locator('.report-block-title', has_text='playtype').wait_for(state='attached', timeout=20000)
+    tones = page.evaluate(
+        '''() => {
+            const title = [...document.querySelectorAll('.report-block-title')]
+                .find((el) => (el.textContent || '').trim() === 'playtype');
+            const table = title.closest('.grid-stack-item').querySelector('.report-js-table');
+            const body = [...table.querySelectorAll('tbody tr')].map((tr) => {
+                return [...tr.children].map((td) => ({
+                    text: td.textContent,
+                    color: td.style.color,
+                    weight: td.style.fontWeight,
+                }));
+            });
+            return {
+                headers: [...table.querySelectorAll('thead th')].map((th) => th.textContent),
+                body: body,
+                klass: table.className,
+            };
+        }'''
+    )
+    assert 'report-js-table' in tones['klass']
+    assert tones['headers'] == ['Play Type', 'PPP', 'Opp PPP']
+    assert tones['body'][0][1] == {'text': '1.00', 'color': 'rgb(0, 119, 182)', 'weight': '700'}
+    assert tones['body'][0][2]['color'] == ''
+    assert tones['body'][1][1] == {'text': '0.80', 'color': '', 'weight': ''}
+    assert tones['body'][1][2]['color'] == ''
+    assert tones['body'][2][1] == {'text': '.50', 'color': 'rgb(230, 57, 70)', 'weight': '700'}
+    assert tones['body'][2][2] == {'text': '100%', 'color': '', 'weight': ''}
+
+    before = page.locator('.grid-stack-item[data-block-type="csv_table"]').count()
+    _import_csv(page, 'plain', bad)
+    page.wait_for_function(
+        '''() => {
+            const msg = document.getElementById('report-dialog-message');
+            return !!(msg && msg.textContent === 'This CSV is not UTF-8.');
+        }''',
+        timeout=8000,
+    )
+    cancel = page.locator('#report-dialog-cancel')
+    assert cancel.evaluate('el => getComputedStyle(el).display') == 'none'
+    page.locator('#report-dialog-ok').click()
+    assert page.locator('.grid-stack-item[data-block-type="csv_table"]').count() == before
+    stored = page.evaluate(
+        '''() => {
+            const id = (document.getElementById('report-game-id').textContent || '').trim();
+            const raw = localStorage.getItem('splashboard.report.layout.' + id);
+            return raw || '';
+        }'''
+    )
+    assert '"type": "csv_table"' in stored or '"type":"csv_table"' in stored
+    assert 'playtype' in stored
+    assert '1.00' in stored
