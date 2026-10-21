@@ -14,6 +14,8 @@ CSV_MAX_COLUMNS = 24
 CSV_MAX_BODY_ROWS = 40
 CSV_BLOCK_TYPE = 'csv_table'
 CSV_TITLE_FALLBACK = 'Imported table'
+CSV_OFFENSE_TITLE = 'Offense | Play-type Stats'
+CSV_DEFENSE_TITLE = 'Defense | Play-type Stats'
 CSV_IMPORT_LABEL = 'Import from CSV File'
 CSV_PLAY_TYPE_LABEL = 'Import from Play-type CSV File'
 CSV_ERR_EMPTY = 'This CSV is empty.'
@@ -38,9 +40,15 @@ class CsvTableError(ValueError):
         self.message = message
 
 
-def csv_block_title(filename):
+def csv_block_title(filename, coloring='plain'):
     name = str(filename or '').replace('\\', '/').split('/')[-1]
-    if name.lower().endswith('.csv'):
+    lower = name.lower()
+    if coloring == 'ppp':
+        if lower.endswith('_off.csv'):
+            return CSV_OFFENSE_TITLE
+        if lower.endswith('_def.csv'):
+            return CSV_DEFENSE_TITLE
+    if lower.endswith('.csv'):
         name = name[:-4]
     if not name.strip():
         return CSV_TITLE_FALLBACK
@@ -116,7 +124,7 @@ def load_csv_table(data, filename, coloring='plain'):
     mode = 'ppp' if coloring == 'ppp' else 'plain'
     return {
         'type': CSV_BLOCK_TYPE,
-        'title': csv_block_title(filename),
+        'title': csv_block_title(filename, mode),
         'coloring': mode,
         'columns': parsed['columns'],
         'rows': parsed['rows'],

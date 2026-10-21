@@ -1,6 +1,7 @@
 import unittest
 
 from synergy_reporter.csv_table import (
+    CSV_DEFENSE_TITLE,
     CSV_ERR_BYTES,
     CSV_ERR_COLUMNS,
     CSV_ERR_EMPTY,
@@ -9,6 +10,7 @@ from synergy_reporter.csv_table import (
     CSV_ERR_ROWS,
     CSV_ERR_UTF8,
     CSV_MAX_BYTES,
+    CSV_OFFENSE_TITLE,
     CSV_PPP_BLUE,
     CSV_PPP_RED,
     CsvTableError,
@@ -86,6 +88,17 @@ class CsvLoadTests(unittest.TestCase):
         self.assertEqual(csv_block_title('.csv'), 'Imported table')
         self.assertEqual(csv_block_title(''), 'Imported table')
         self.assertEqual(csv_block_title('dir/play type.csv'), 'play type')
+        self.assertEqual(csv_block_title('team_off.csv', 'ppp'), CSV_OFFENSE_TITLE)
+        self.assertEqual(csv_block_title('TEAM_OFF.CSV', 'ppp'), CSV_OFFENSE_TITLE)
+        self.assertEqual(csv_block_title(r'dir\a_def.csv', 'ppp'), CSV_DEFENSE_TITLE)
+        self.assertEqual(csv_block_title('_off.csv', 'ppp'), CSV_OFFENSE_TITLE)
+        self.assertEqual(csv_block_title('offense.csv', 'ppp'), 'offense')
+        self.assertEqual(csv_block_title('_offense.csv', 'ppp'), '_offense')
+        self.assertEqual(csv_block_title('off.csv', 'ppp'), 'off')
+        self.assertEqual(csv_block_title('x_off.csv', 'plain'), 'x_off')
+        self.assertEqual(csv_block_title('x_def.csv'), 'x_def')
+        self.assertEqual(CSV_OFFENSE_TITLE, 'Offense | Play-type Stats')
+        self.assertEqual(CSV_DEFENSE_TITLE, 'Defense | Play-type Stats')
 
     def test_byte_limits_and_encoding(self):
         payload = b'A\n1\n'
@@ -108,7 +121,13 @@ class CsvLoadTests(unittest.TestCase):
         block = load_csv_table(b'PPP\n1.25\n', 'plays.csv', 'ppp')
         self.assertEqual(block['type'], 'csv_table')
         self.assertEqual(block['coloring'], 'ppp')
+        self.assertEqual(block['title'], 'plays')
+        offense = load_csv_table(b'PPP\n1\n', 'braves_off.csv', 'ppp')
+        self.assertEqual(offense['title'], CSV_OFFENSE_TITLE)
+        plain = load_csv_table(b'PPP\n1\n', 'braves_off.csv', 'plain')
+        self.assertEqual(plain['title'], 'braves_off')
         self.assertEqual(load_csv_table(b'PPP\n1\n', 'a.csv', 'other')['coloring'], 'plain')
+        self.assertEqual(load_csv_table(b'PPP\n1\n', 'a_def.csv', 'other')['title'], 'a_def')
 
 
 class PppStyleTests(unittest.TestCase):

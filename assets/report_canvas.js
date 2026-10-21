@@ -8,6 +8,8 @@
     var CSV_MAX_COLUMNS = 24;
     var CSV_MAX_BODY_ROWS = 40;
     var CSV_TITLE_FALLBACK = 'Imported table';
+    var CSV_OFFENSE_TITLE = 'Offense | Play-type Stats';
+    var CSV_DEFENSE_TITLE = 'Defense | Play-type Stats';
     var CSV_ERR_EMPTY = 'This CSV is empty.';
     var CSV_ERR_UTF8 = 'This CSV is not UTF-8.';
     var CSV_ERR_HEADER = 'This CSV needs a header row.';
@@ -360,6 +362,10 @@
 
     function blockLocksSize(type) {
         return type === 'rotation' || type === 'shot_chart';
+    }
+
+    function locksResize(type) {
+        return blockLocksSize(type) || isReportTable(type);
     }
 
     function isReportTable(type) {
@@ -950,6 +956,16 @@
         } finally {
             pairLayoutLock = false;
         }
+        if (!pending) {
+            document.querySelectorAll('.grid-stack-item[data-resize-commit="1"]').forEach(function (item) {
+                if (pair.indexOf(item.getAttribute('data-table-key')) === -1) {
+                    return;
+                }
+                var gridEl = item.closest('.report-grid');
+                var grid = gridEl && gridEl.gridstack;
+                commitTableResize(grid, item);
+            });
+        }
         return pending;
     }
 
@@ -1006,8 +1022,17 @@
         PAIR_WIDTHS.forEach(syncPairColumnWidths);
     }
 
-    function csvBlockTitle(filename) {
+    function csvBlockTitle(filename, coloring) {
         var name = String(filename || '').replace(/\\/g, '/').split('/').pop();
+        var lower = name.toLowerCase();
+        if (coloring === 'ppp') {
+            if (lower.slice(-8) === '_off.csv') {
+                return CSV_OFFENSE_TITLE;
+            }
+            if (lower.slice(-8) === '_def.csv') {
+                return CSV_DEFENSE_TITLE;
+            }
+        }
         if (/\.csv$/i.test(name)) {
             name = name.slice(0, -4);
         }
@@ -1192,6 +1217,139 @@
         });
     }
 
+    function isCsvLabelHeader(text) {
+        var token = String(text == null ? '' : text).trim().toLowerCase();
+        return token === 'play type' || token === 'play-type';
+    }
+
+    function csvDefaultW(coloring) {
+        return coloring === 'ppp' ? 6 : 12;
+    }
+
+    function csvHostWidth(item) {
+        var host = item && item.querySelector('.report-table-host');
+        var width = host ? host.clientWidth : 0;
+        if (width < 1 && item) {
+            width = item.clientWidth || 0;
+        }
+        return Math.floor(width);
+    }
+
+    function readCsvFloors(table) {
+        try {
+            var parsed = JSON.parse(table.getAttribute('data-csv-floors') || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    function measureCsvFloors(table) {
+        var heads = table.querySelectorAll('thead th');
+        var rows = table.querySelectorAll('tbody tr');
+        var floors = [];
+        for (var i = 0; i < heads.length; i++) {
+            var label = heads[i].getAttribute('data-csv-label') === '1';
+            var max = pairTextWidth(heads[i]);
+            if (!label) {
+                for (var r = 0; r < rows.length; r++) {
+                    var cell = rows[r].children[i];
+                    if (!cell) {
+                        continue;
+                    }
+                    var width = pairTextWidth(cell);
+                    if (width > max) {
+                        max = width;
+                    }
+                }
+            }
+            floors.push(Math.max(1, max));
+        }
+        table.setAttribute('data-csv-floors', JSON.stringify(floors));
+        return floors;
+    }
+
+    function applyCsvColGroup(table, widths, hostW) {
+        var keys = [];
+        var map = {};
+        widths.forEach(function (width, index) {
+            var key = String(index);
+            keys.push(key);
+            map[key] = width;
+        });
+        applyPairColGroup(table, keys, map, hostW);
+    }
+
+    function applyCsvColumns(item, remeasure) {
+        var table = item && item.querySelector('.report-js-table[data-csv-coloring]');
+        if (!table) {
+            return;
+        }
+        var hostW = csvHostWidth(item);
+        if (hostW < 1) {
+            return;
+        }
+        var heads = table.querySelectorAll('thead th');
+        var count = heads.length;
+        if (!count) {
+            return;
+        }
+        if (remeasure || !readCsvFloors(table).length) {
+            measureCsvFloors(table);
+        }
+        var floors = readCsvFloors(table);
+        if (floors.length !== count) {
+            floors = [];
+            for (var i = 0; i < count; i++) {
+                floors.push(1);
+            }
+        }
+        var labels = [];
+        for (var c = 0; c < count; c++) {
+            if (heads[c].getAttribute('data-csv-label') === '1') {
+                labels.push(c);
+            }
+        }
+        var widths = [];
+        if (!labels.length) {
+            var each = Math.floor(hostW / count);
+            var extra = hostW - each * count;
+            for (var n = 0; n < count; n++) {
+                widths.push(Math.max(1, each + (n < extra ? 1 : 0)));
+            }
+            applyCsvColGroup(table, widths, hostW);
+            return;
+        }
+        var statSum = 0;
+        var labelSum = 0;
+        for (var k = 0; k < count; k++) {
+            if (labels.indexOf(k) === -1) {
+                statSum += floors[k];
+            } else {
+                labelSum += floors[k];
+            }
+        }
+        if (statSum + labelSum > hostW + 1) {
+            for (var a = 0; a < count; a++) {
+                widths.push(floors[a]);
+            }
+        } else {
+            var leftover = hostW - statSum - labelSum;
+            var share = Math.floor(leftover / labels.length);
+            var rem = leftover - share * labels.length;
+            var seen = 0;
+            for (var b = 0; b < count; b++) {
+                if (labels.indexOf(b) === -1) {
+                    widths.push(floors[b]);
+                } else {
+                    widths.push(floors[b] + share + (seen < rem ? 1 : 0));
+                    seen += 1;
+                }
+            }
+        }
+        applyCsvColGroup(table, widths, hostW);
+    }
+
     function paintCsvTable(host, block) {
         if (!host) {
             return;
@@ -1218,9 +1376,13 @@
         table.setAttribute('data-csv-coloring', coloring ? 'ppp' : 'plain');
         var thead = document.createElement('thead');
         var headRow = document.createElement('tr');
+        var labeling = coloring;
         columns.forEach(function (col) {
             var th = document.createElement('th');
             th.textContent = col == null ? '' : String(col);
+            if (labeling && isCsvLabelHeader(col)) {
+                th.setAttribute('data-csv-label', '1');
+            }
             headRow.appendChild(th);
         });
         thead.appendChild(headRow);
@@ -1232,6 +1394,10 @@
                 var td = document.createElement('td');
                 var text = record && record[index] != null ? String(record[index]) : '';
                 td.textContent = text;
+                if (labeling && isCsvLabelHeader(columns[index])) {
+                    td.className = 'report-lineup-name';
+                    td.style.fontWeight = '700';
+                }
                 if (pppIndex[index]) {
                     var tone = pppCellStyle(text);
                     if (tone) {
@@ -1712,6 +1878,53 @@
         });
     }
 
+    function bindCsvTitles(root) {
+        (root || document).querySelectorAll('.report-csv-title').forEach(function (title) {
+            if (title.dataset.bound === '1') {
+                return;
+            }
+            title.dataset.bound = '1';
+            title.addEventListener('focus', function () {
+                title.dataset.prevTitle = title.textContent || '';
+            });
+            title.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    title.blur();
+                } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    title.textContent = title.dataset.prevTitle || CSV_TITLE_FALLBACK;
+                    title.blur();
+                }
+            });
+            title.addEventListener('paste', function (event) {
+                event.preventDefault();
+                var text = (event.clipboardData || window.clipboardData).getData('text') || '';
+                text = text.replace(/[\r\n]+/g, ' ');
+                document.execCommand('insertText', false, text);
+            });
+            title.addEventListener('beforeinput', function (event) {
+                if (event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') {
+                    event.preventDefault();
+                }
+            });
+            title.addEventListener('blur', function () {
+                var next = (title.textContent || '').replace(/[\r\n]+/g, ' ').trim();
+                if (!next) {
+                    next = (title.dataset.prevTitle || '').trim() || CSV_TITLE_FALLBACK;
+                }
+                title.textContent = next;
+                var item = title.closest('.grid-stack-item');
+                if (item) {
+                    var stored = readCsvStore(item) || {};
+                    stored.title = next;
+                    writeCsvStore(item, stored);
+                }
+                persistLocal(readLayoutFromDom());
+            });
+        });
+    }
+
     function makePageDeleteButton(index) {
         var btn = document.createElement('button');
         btn.type = 'button';
@@ -1800,14 +2013,45 @@
                 persistLocal(readLayoutFromDom());
                 window.setTimeout(markPaperOverflow, 0);
             });
+            grid.on('resizestart', function (event, itemEl) {
+                var item = itemEl && itemEl.getAttribute ? itemEl : null;
+                if (!item || !isReportTable(item.getAttribute('data-block-type'))) {
+                    return;
+                }
+                var node = item.gridstackNode || {};
+                item.setAttribute('data-resize-start-h', String(node.h || 1));
+                item.setAttribute('data-min-h', '1');
+                item.setAttribute('data-min-w', '1');
+                grid.update(item, gridBox(item, { minH: 1, minW: 1 }));
+            });
+            grid.on('resize', function (event, itemEl) {
+                if (tableResizeLock) {
+                    return;
+                }
+                var item = itemEl && itemEl.getAttribute ? itemEl : null;
+                if (!item || item.getAttribute('data-block-type') !== 'csv_table') {
+                    return;
+                }
+                applyCsvColumns(item, false);
+            });
             grid.on('resizestop', function (event, itemEl) {
+                if (tableResizeLock) {
+                    return;
+                }
                 var gs = el.gridstack;
                 var item = itemEl && itemEl.getAttribute ? itemEl : null;
                 if (item && item.getAttribute('data-block-type') === 'image' && gs) {
                     snapImageAspect(gs, item);
                 }
                 if (item && pairForKey(item.getAttribute('data-table-key'))) {
+                    item.setAttribute('data-resize-commit', '1');
                     schedulePairWidths(item.getAttribute('data-table-key'));
+                    clampItemToPaper(grid, item);
+                    return;
+                }
+                if (item && isReportTable(item.getAttribute('data-block-type'))) {
+                    commitTableResize(grid, item);
+                    return;
                 }
                 if (item) {
                     clampItemToPaper(grid, item);
@@ -1873,7 +2117,7 @@
                         w: block.w || 6,
                         h: block.h || 3
                     };
-                    if (blockLocksSize(block.type)) {
+                    if (locksResize(block.type)) {
                         widgetOpts.noResize = true;
                     }
                     grid.addWidget(node, widgetOpts);
@@ -1883,6 +2127,7 @@
             });
             paper.setAttribute('data-hydrated', '1');
             bindTextBlocks(paper);
+            bindCsvTitles(paper);
             return paintRotationBlocks(paper).then(function () {
                 return paintShotChartBlocks(paper);
             }).then(function () {
@@ -2050,6 +2295,9 @@
         node.setAttribute('data-gs-id', block.id);
         node.setAttribute('gs-id', block.id);
         node.setAttribute('data-block-type', block.type || '');
+        if (locksResize(block.type)) {
+            node.setAttribute('gs-no-resize', 'true');
+        }
         node.setAttribute('data-table-key', block.table_key || '');
         if (block.aspect) {
             node.setAttribute('data-aspect', String(block.aspect));
@@ -2081,6 +2329,10 @@
             var title = document.createElement('div');
             title.className = 'report-block-title';
             if (isCsv) {
+                title.classList.add('report-csv-title');
+                title.setAttribute('contenteditable', 'true');
+                title.setAttribute('spellcheck', 'false');
+                title.setAttribute('aria-label', 'Table title');
                 title.textContent = block.title || CSV_TITLE_FALLBACK;
             } else {
                 fillBlockTitle(title, block.table_key);
@@ -2231,13 +2483,14 @@
         var y = node.y || 0;
         var minH = itemMinH(item, h);
         var minW = itemMinW(item);
+        var blockType = item.getAttribute('data-block-type');
         var oversized = minH > maxRows || h > maxRows;
         if (oversized) {
             x = Math.min(Math.max(0, x), Math.max(0, GRID_COLUMNS - w));
             y = 0;
             h = Math.max(h, minH);
             w = Math.min(Math.max(minW, w), GRID_COLUMNS);
-            grid.update(item, {
+            var oversizedBox = {
                 x: x,
                 y: y,
                 w: w,
@@ -2246,14 +2499,18 @@
                 minH: minH,
                 maxW: GRID_COLUMNS - x,
                 maxH: h
-            });
+            };
+            if (isReportTable(blockType)) {
+                oversizedBox.noResize = true;
+            }
+            grid.update(item, oversizedBox);
             return;
         }
         w = Math.min(Math.max(minW, w), GRID_COLUMNS);
         h = Math.min(Math.max(minH, h), maxRows);
         x = Math.min(Math.max(0, x), GRID_COLUMNS - w);
         y = Math.min(Math.max(0, y), maxRows - h);
-        grid.update(item, {
+        var fittedBox = {
             x: x,
             y: y,
             w: w,
@@ -2262,7 +2519,11 @@
             minH: minH,
             maxW: GRID_COLUMNS - x,
             maxH: maxRows - y
-        });
+        };
+        if (isReportTable(blockType)) {
+            fittedBox.noResize = true;
+        }
+        grid.update(item, fittedBox);
     }
 
     function clampGridToPaper(grid) {
@@ -2353,8 +2614,13 @@
         node.style.pointerEvents = 'none';
         node.style.left = '0';
         node.style.top = '0';
-        node.style.width = host.clientWidth + 'px';
+        var blockW = Math.max(1, Math.min(GRID_COLUMNS, block.w || GRID_COLUMNS));
+        var cellW = grid.cellWidth ? grid.cellWidth() : (host.clientWidth / GRID_COLUMNS);
+        node.style.width = Math.max(1, Math.round(cellW * blockW)) + 'px';
         host.appendChild(node);
+        if (block.type === 'csv_table') {
+            applyCsvColumns(node, true);
+        }
         var h = tableHugH({ opts: grid.opts, getCellHeight: grid.getCellHeight }, node);
         host.removeChild(node);
         node.style.position = '';
@@ -2393,6 +2659,22 @@
         return null;
     }
 
+    function gridBox(item, extra) {
+        var node = (item && item.gridstackNode) || {};
+        var box = {
+            x: node.x || 0,
+            y: node.y || 0,
+            w: node.w || 1,
+            h: node.h || 1
+        };
+        if (extra) {
+            Object.keys(extra).forEach(function (key) {
+                box[key] = extra[key];
+            });
+        }
+        return box;
+    }
+
     function fitTableBlocksOnGrid(grid) {
         if (!grid || !grid.el) {
             return;
@@ -2408,18 +2690,64 @@
                 syncPairColumnWidths(pair);
             });
         }
+        grid.el.querySelectorAll('.grid-stack-item[data-block-type="csv_table"]').forEach(function (item) {
+            applyCsvColumns(item, true);
+        });
         var updates = [];
+        var grew = false;
+        var origin = snapshotNodeYs(grid);
         grid.el.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"], .grid-stack-item[data-block-type="csv_table"]').forEach(function (item) {
             var node = item.gridstackNode || {};
             var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
             var h = tableHugH(grid, item);
+            if (h > currentH) {
+                grew = true;
+            }
             if (h !== currentH) {
                 updates.push({ item: item, h: h });
             }
         });
         updates.forEach(function (u) {
-            grid.update(u.item, { h: u.h });
+            u.item.setAttribute('data-min-h', String(u.h));
+            u.item.setAttribute('data-min-w', '1');
+            grid.update(u.item, gridBox(u.item, { h: u.h, minH: u.h, minW: 1, noResize: true }));
         });
+        if (grew) {
+            resolveOverlaps(grid, origin);
+        }
+    }
+
+    var tableResizeLock = false;
+
+    function commitTableResize(grid, item) {
+        if (tableResizeLock || !grid || !item || !isReportTable(item.getAttribute('data-block-type'))) {
+            return;
+        }
+        tableResizeLock = true;
+        try {
+            var startH = parseInt(item.getAttribute('data-resize-start-h') || '', 10);
+            if (!startH) {
+                startH = (item.gridstackNode && item.gridstackNode.h) || 1;
+            }
+            item.removeAttribute('data-resize-commit');
+            item.removeAttribute('data-resize-start-h');
+            if (item.getAttribute('data-block-type') === 'csv_table') {
+                applyCsvColumns(item, true);
+            }
+            var origin = snapshotNodeYs(grid);
+            var h = tableHugH(grid, item);
+            item.setAttribute('data-min-h', String(h));
+            item.setAttribute('data-min-w', '1');
+            grid.update(item, gridBox(item, { h: h, minH: h, minW: 1, noResize: true }));
+            if (h > startH) {
+                resolveOverlaps(grid, origin);
+            }
+            clampItemToPaper(grid, item);
+            persistLocal(readLayoutFromDom());
+            window.setTimeout(markPaperOverflow, 0);
+        } finally {
+            tableResizeLock = false;
+        }
     }
 
     function fitAllTableBlocks() {
@@ -4315,21 +4643,27 @@
                             y: slot.y,
                             w: w,
                             h: h,
-                            minW: isReportTable(block.type) || blockLocksSize(block.type) ? w : 1,
+                            minW: blockLocksSize(block.type) ? w : 1,
                             minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
                         };
-                        if (blockLocksSize(block.type)) {
+                        if (locksResize(block.type)) {
                             newOpts.noResize = true;
                         }
                         grid.addWidget(node, newOpts);
                         bindTextBlocks(node);
+                        bindCsvTitles(node);
                         node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-                        node.setAttribute('data-min-w', isReportTable(block.type) || blockLocksSize(block.type) ? String(w) : '1');
+                        node.setAttribute('data-min-w', blockLocksSize(block.type) ? String(w) : '1');
                         var afterNew = paintPlacedBlock(node, block);
                         return afterNew.then(function () {
-                            clampItemToPaper(grid, node);
-                            persistLocal(readLayoutFromDom());
-                            window.setTimeout(markPaperOverflow, 0);
+                            if (isReportTable(block.type)) {
+                                node.setAttribute('data-resize-start-h', String((node.gridstackNode && node.gridstackNode.h) || h));
+                                commitTableResize(grid, node);
+                            } else {
+                                clampItemToPaper(grid, node);
+                                persistLocal(readLayoutFromDom());
+                                window.setTimeout(markPaperOverflow, 0);
+                            }
                             if (paper) {
                                 paper.scrollIntoView({ behavior: 'smooth', block: 'start' });
                             }
@@ -4343,21 +4677,27 @@
                 y: slot.y,
                 w: w,
                 h: h,
-                minW: isReportTable(block.type) || blockLocksSize(block.type) ? w : 1,
+                minW: blockLocksSize(block.type) ? w : 1,
                 minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
             };
-            if (blockLocksSize(block.type)) {
+            if (locksResize(block.type)) {
                 placeOpts.noResize = true;
             }
             grid.addWidget(node, placeOpts);
             bindTextBlocks(node);
+            bindCsvTitles(node);
             node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-            node.setAttribute('data-min-w', isReportTable(block.type) || blockLocksSize(block.type) ? String(w) : '1');
+            node.setAttribute('data-min-w', blockLocksSize(block.type) ? String(w) : '1');
             var afterPlace = paintPlacedBlock(node, block);
             afterPlace.then(function () {
-                clampItemToPaper(grid, node);
-                persistLocal(readLayoutFromDom());
-                window.setTimeout(markPaperOverflow, 0);
+                if (isReportTable(block.type)) {
+                    node.setAttribute('data-resize-start-h', String((node.gridstackNode && node.gridstackNode.h) || h));
+                    commitTableResize(grid, node);
+                } else {
+                    clampItemToPaper(grid, node);
+                    persistLocal(readLayoutFromDom());
+                    window.setTimeout(markPaperOverflow, 0);
+                }
             });
         });
     }
@@ -4446,6 +4786,8 @@
         parseCsvTable: parseCsvTable,
         pppCellStyle: pppCellStyle,
         csvBlockTitle: csvBlockTitle,
+        isCsvLabelHeader: isCsvLabelHeader,
+        csvDefaultW: csvDefaultW,
         addTable: function (tableKey) {
             if (!tableKey) {
                 return readLayoutFromDom();
@@ -4470,7 +4812,7 @@
                 coloring: block.coloring === 'ppp' ? 'ppp' : 'plain',
                 columns: block.columns,
                 rows: block.rows || [],
-                w: block.w || 12,
+                w: block.w || csvDefaultW(block.coloring),
                 h: block.h || 4
             });
             return readLayoutFromDom();
@@ -4665,7 +5007,7 @@
                 return;
             }
             window.splashboardReport.addCsvTable({
-                title: csvBlockTitle(file.name),
+                title: csvBlockTitle(file.name, coloring),
                 coloring: coloring,
                 columns: parsed.columns,
                 rows: parsed.rows
