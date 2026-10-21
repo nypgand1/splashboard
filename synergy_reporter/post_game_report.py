@@ -2,7 +2,14 @@ import pandas as pd
 import json
 import os
 
-from synergy_inbounder.names import display_name, person_full_name, person_name
+from synergy_inbounder.names import (
+    display_name,
+    lineup_token,
+    person_full_name,
+    person_name,
+    shared_short_labels,
+    team_person_ids,
+)
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import possession_counts
@@ -110,6 +117,13 @@ def sort_lineup_table(df):
         inplace=True,
     )
     return res.drop(columns=['_ppp_sort', '_min_sort'])
+
+
+def _lineup_identity(players):
+    """Sorted player ids. The painted short label is not unique."""
+    if not isinstance(players, (list, tuple)):
+        return ''
+    return '|'.join(sorted((str(pid) for pid in players), key=str))
 
 
 def efg_pct_display(made2, attempted2, made3, attempted3, efg_val=None):
@@ -787,8 +801,13 @@ class PostGameReport():
         lineup_df_dict = self._raw_lineup_stats()
         roster_shirt_dict = {r['personId']: r['shirtNumber'] for r in (self.roster or []) if r.get('shirtNumber') is not None}
 
+        def _shirt(pid):
+            if pid in roster_shirt_dict:
+                return roster_shirt_dict[pid]
+            return roster_shirt_dict.get(str(pid))
+
         def _player_sort_key(pid):
-            bib_str = roster_shirt_dict.get(pid)
+            bib_str = _shirt(pid)
             if bib_str is not None:
                 try:
                     return (0, int(bib_str))
@@ -796,14 +815,26 @@ class PostGameReport():
                     pass
             return (1, person_name(self.id_table, pid))
 
-        def decode_lineup(lineup):
-            sorted_players = sorted(lineup, key=_player_sort_key)
-            return "-".join(person_name(self.id_table, p) for p in sorted_players)
-
         u_df_dict = dict()
         for t in lineup_df_dict:
             team_name = self.id_table.get(t, t)
-            team_lineup_df = lineup_df_dict[t].copy()
+            raw_lineup_df = lineup_df_dict[t]
+            on_court = raw_lineup_df[t].tolist() if t in raw_lineup_df.columns else []
+            shared = shared_short_labels(
+                self.id_table,
+                team_person_ids(self.roster, t, on_court),
+            )
+
+            def decode_lineup(lineup, shared=shared):
+                if not isinstance(lineup, (list, tuple)):
+                    return ''
+                sorted_players = sorted(lineup, key=_player_sort_key)
+                return '-'.join(
+                    lineup_token(self.id_table, pid, _shirt(pid), shared)
+                    for pid in sorted_players
+                )
+
+            team_lineup_df = raw_lineup_df.copy()
 
             if lineup_size and lineup_size < 5:
                 import itertools
@@ -826,6 +857,7 @@ class PostGameReport():
                 team_lineup_df = team_lineup_df[team_lineup_df[t].apply(lambda x: len(x) == lineup_size)]
 
             team_lineup_df['Lineup'] = team_lineup_df[t].apply(lambda x: decode_lineup(x))
+            team_lineup_df['_lineup_key'] = team_lineup_df[t].apply(_lineup_identity)
 
             team_lineup_df['Min'] = team_lineup_df.apply(lambda x: f"{int(x['duration']//60)}:{x['duration']%60:02.0f}", axis=1)
             team_lineup_df['+/-'] = team_lineup_df['PTS']-team_lineup_df['Opp_PTS']
@@ -920,6 +952,7 @@ class PostGameReport():
                 'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
                 'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BS', 'Opp_PF', 'Opp_FD',
                 'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
+                '_lineup_key',
             ]].copy()
 
         return u_df_dict
@@ -1088,12 +1121,29 @@ class PostGameReport():
                 continue
             shirts[person['personId']] = person['shirtNumber']
             shirts[str(person['personId'])] = person['shirtNumber']
+
+        def _on_court(team_id):
+            if team_id is None:
+                return []
+            column = team_id if team_id in df.columns else str(team_id)
+            if column not in df.columns:
+                return []
+            return df[column].tolist()
+
+        team_people = {}
+        for team_id in (home_team_id, away_team_id):
+            if team_id is None:
+                continue
+            team_people[str(team_id)] = team_person_ids(
+                self.roster, team_id, _on_court(team_id),
+            )
         self._matchup_payload = build_matchup_payload(
             df,
             home_id=home_team_id,
             away_id=away_team_id,
             id_table=self.id_table or {},
             shirts=shirts,
+            team_people=team_people,
         )
         self._matchup_key = cache_key
         return self._matchup_payload
@@ -1117,20 +1167,36 @@ class PostGameReport():
             return str({self.id_table.get(t ,t):  d[t] for t in d})[1:-1].replace('\'', '')
         df['scores'] = df['scores'].apply(lambda x: decode_scores(x))
     
-        def decode_lineup(lineup):
-            return str(sorted(person_name(self.id_table, p) for p in lineup))[1:-1].replace('\'', '')
-        for t in team_id_list:
-            df[self.id_table.get(t, f"name_{t}")] = df[t].apply(lambda x: decode_lineup(x))
-        
         shirts = {}
         for person in self.roster or []:
             if isinstance(person, dict) and person.get('personId') is not None:
+                shirts[person['personId']] = person.get('shirtNumber')
                 shirts[str(person['personId'])] = person.get('shirtNumber')
 
         def shirt_of(pid):
             if pid is None or (isinstance(pid, float) and pd.isna(pid)):
                 return None
+            if pid in shirts:
+                return shirts[pid]
             return shirts.get(str(pid))
+
+        def decode_lineup(lineup, shared):
+            if not isinstance(lineup, (list, tuple)):
+                return ''
+            names = [
+                lineup_token(self.id_table, pid, shirt_of(pid), shared)
+                for pid in lineup
+            ]
+            return str(sorted(names))[1:-1].replace('\'', '')
+
+        for t in team_id_list:
+            lists = df[t].tolist() if t in df.columns else []
+            shared = shared_short_labels(
+                self.id_table, team_person_ids(self.roster, t, lists),
+            )
+            df[self.id_table.get(t, f"name_{t}")] = df[t].apply(
+                lambda lineup, shared=shared: decode_lineup(lineup, shared)
+            )
 
         if 'personId' in df.columns:
             df['shirtNumber'] = df['personId'].map(shirt_of)

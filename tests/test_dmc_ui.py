@@ -530,6 +530,34 @@ class FourStateTests(unittest.TestCase):
         self.assertIn(':opp', grid.getRowId)
         self.assertEqual(grid.rowClassRules['lineup-opp-row'], 'params.data && params.data._opp')
 
+    def test_same_lineup_label_with_different_keys_keeps_two_row_ids(self):
+        frame = pd.DataFrame([
+            {
+                'Lineup': 'A-B-C-D-E',
+                'Min': '14:13',
+                'PTS': 26,
+                '_lineup_key': 'p1|p2|p3|p4|p5',
+            },
+            {
+                'Lineup': 'A-B-C-D-E',
+                'Min': '5:23',
+                'PTS': 9,
+                '_lineup_key': 'p2|p3|p4|p5|p9',
+            },
+        ])
+        records = game_page._lineup_pair_records(frame)
+        ours = [row for row in records if not row['_opp']]
+        opps = [row for row in records if row['_opp']]
+        self.assertEqual([row['Lineup'] for row in ours], ['A-B-C-D-E', 'A-B-C-D-E'])
+        self.assertEqual([row['Lineup'] for row in opps], ['A-B-C-D-E', 'A-B-C-D-E'])
+        self.assertEqual(
+            [row['_pair'] for row in ours],
+            ['p1|p2|p3|p4|p5', 'p2|p3|p4|p5|p9'],
+        )
+        self.assertEqual([row['_pair'] for row in opps], [row['_pair'] for row in ours])
+        self.assertNotIn('_lineup_key', ours[0])
+        self.assertNotIn('_lineup_key', opps[0])
+
     def test_game_change_turns_show_opp_off(self):
         self.assertIs(game_page.reset_lineup_show_opp('next-game'), False)
 
@@ -1524,6 +1552,13 @@ class PageDeleteSvgTests(unittest.TestCase):
         self.assertIn('.is-scrollable', css)
         self.assertIn('.braves-table-scroll', css)
         self.assertIn('scrollbar-width: none', css)
+        self.assertIn('.braves-clean-table thead tr:first-child > th:first-child', css)
+        self.assertIn('.braves-clean-table tbody td:first-child', css)
+        self.assertNotIn('.braves-clean-table th:first-child,', css)
+        self.assertNotIn('.braves-clean-table td:first-child', css)
+        fit = js.split('function _applyLineupWidth')[1].split('function splashboardFitLineupWidth')[0]
+        self.assertLess(fit.index('if (unchanged)'), fit.index('api.setColumnWidths(updates)'))
+        self.assertLess(fit.index('api.setColumnWidths(updates)'), fit.index('api.resetRowHeights()'))
 
 
 class GameLayoutContractTests(unittest.TestCase):

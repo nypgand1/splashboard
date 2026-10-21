@@ -1586,7 +1586,9 @@ def _lineup_pair_records(df):
     records = []
     for raw in df.to_dict('records'):
         own = {col: _display_cell(raw.get(col)) for col in columns}
-        pair = own.get('Lineup', own.get('Lineups', ''))
+        label = own.get('Lineup', own.get('Lineups', ''))
+        key = _display_cell(raw.get('_lineup_key'))
+        pair = key or label
         our = dict(own)
         our['_opp'] = False
         our['_pair'] = pair
@@ -1597,7 +1599,7 @@ def _lineup_pair_records(df):
             if col in ('Min', '+/-'):
                 opp[col] = ''
             elif 'lineup' in str(col).lower():
-                opp[col] = pair
+                opp[col] = label
             else:
                 opp[col] = _display_cell(raw.get('Opp_' + col, ''))
         opp['_opp'] = True

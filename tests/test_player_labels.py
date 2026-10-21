@@ -8,10 +8,12 @@ import dash_mantine_components as dmc
 from synergy_inbounder.names import (
     TEAM_TBD,
     display_name,
+    lineup_token,
     person_full_name,
     person_name,
     player_label,
     player_sort_key,
+    shared_short_labels,
 )
 from synergy_reporter.matchups import lineup_name
 from synergy_reporter.rotation import _shirt_label
@@ -184,6 +186,34 @@ class ShortLabelWiringTests(unittest.TestCase):
             '#7 K.Y.Lee',
         )
 
+    def test_a_shared_short_label_gains_the_shirt_only(self):
+        names = {
+            'a': 'LEE Junghyun',
+            'b': 'LEE Jaedo',
+            'c': 'KIM Jinyoo',
+            'd': 'LEE Geunjoon',
+        }
+        self.assertEqual(
+            lineup_name(['a', 'b', 'c'], {'a': 6, 'b': 4, 'c': 55}, names),
+            'J.Lee#4-J.Lee#6-J.Kim',
+        )
+        self.assertEqual(
+            lineup_name(['b', 'c'], {'b': 4.0, 'c': 55}, names, team_ids=['a', 'd']),
+            'J.Lee#4-J.Kim',
+        )
+        self.assertEqual(
+            lineup_name(['b', 'c'], {'b': 4, 'c': 55}, names),
+            'J.Lee-J.Kim',
+        )
+        self.assertEqual(
+            lineup_name(['a', 'b'], {'a': 6}, names),
+            'J.Lee#6-J.Lee',
+        )
+        shared = shared_short_labels(names, ['a', 'b'])
+        self.assertEqual(lineup_token(names, 'a', None, shared), 'J.Lee')
+        self.assertEqual(lineup_token(names, 'c', 55, shared), 'J.Kim')
+        self.assertNotIn('#', player_label('LEE Junghyun'))
+
     def test_player_stats_keep_the_full_name_beside_the_short_label(self):
         from unittest.mock import patch
 
@@ -228,3 +258,38 @@ class ShortLabelWiringTests(unittest.TestCase):
         row = report._get_player_stats_df_dict()['Braves'].iloc[0]
         self.assertEqual(row['Player'], 'K.Y.Lee')
         self.assertEqual(row['_playerFull'], 'LEE Kai-Yan')
+
+    def test_player_box_keeps_a_shared_short_label(self):
+        from unittest.mock import patch
+
+        from synergy_inbounder.parser import Parser
+        from synergy_reporter.post_game_report import PostGameReport
+
+        def player(person_id):
+            return {
+                'entityId': 'home',
+                'personId': person_id,
+                'minutes': 'PT12M00S',
+                'participated': True,
+                'plusMinus': 0,
+                'points': 1,
+                'starter': False,
+            }
+
+        bundle = (
+            pd.DataFrame([{'entityId': 'home'}]),
+            pd.DataFrame(),
+            pd.DataFrame([player('p1'), player('p2')]),
+            {'home': []},
+            pd.DataFrame(),
+            {'home': 'Braves', 'p1': 'LEE Junghyun', 'p2': 'LEE Jaedo'},
+            [
+                {'personId': 'p1', 'shirtNumber': '6', 'entityId': 'home'},
+                {'personId': 'p2', 'shirtNumber': '4', 'entityId': 'home'},
+            ],
+            pd.DataFrame(),
+        )
+        with patch.object(Parser, 'parse_game_bundle', return_value=bundle):
+            report = PostGameReport('game-1')
+        names = set(report._get_player_stats_df_dict()['Braves']['Player'])
+        self.assertEqual(names, {'J.Lee'})

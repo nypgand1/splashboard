@@ -2,7 +2,7 @@
 """5v5 matchup pairs from play-by-play on-court lists."""
 import pandas as pd
 
-from synergy_inbounder.names import person_name
+from synergy_inbounder.names import lineup_token, person_name, shared_short_labels
 from synergy_inbounder.possessions import annotate_possessions
 from synergy_inbounder.pre_processing_func import _option_on
 from synergy_reporter.post_game_report import lineup_ppp_display, shot_pct_display
@@ -105,9 +105,16 @@ def _sort_key(player_id, shirts, id_table):
     return (1, _player_name(player_id, id_table))
 
 
-def lineup_name(player_ids, shirts, id_table):
+def lineup_name(player_ids, shirts, id_table, team_ids=None):
+    """Jersey order. team_ids is the collision pool; omitted, the five is the pool."""
     ordered = sorted(player_ids, key=lambda player_id: _sort_key(player_id, shirts, id_table))
-    return '-'.join(_player_name(player_id, id_table) for player_id in ordered)
+    pool = list(team_ids) if team_ids else []
+    pool.extend(player_ids)
+    shared = shared_short_labels(id_table, pool)
+    return '-'.join(
+        lineup_token(id_table, player_id, _shirt(player_id, shirts), shared)
+        for player_id in ordered
+    )
 
 
 def _add_event(side, row):
@@ -169,10 +176,16 @@ def _durations(work):
     return seconds
 
 
-def build_matchup_payload(df, home_id, away_id, id_table=None, shirts=None):
+def build_matchup_payload(df, home_id, away_id, id_table=None, shirts=None, team_people=None):
     """Pairs whose two on-court lists are both length 5, summed for the game."""
     id_table = id_table or {}
     shirts = shirts or {}
+    people = team_people or {}
+
+    def _pool(team_id):
+        if team_id in people:
+            return people[team_id]
+        return people.get(str(team_id))
     payload = {
         'home_id': None if _missing(home_id) else str(home_id),
         'away_id': None if _missing(away_id) else str(away_id),
@@ -226,8 +239,8 @@ def build_matchup_payload(df, home_id, away_id, id_table=None, shirts=None):
             continue
         pairs.append({
             'id': ','.join(home_ids) + '|' + ','.join(away_ids),
-            'home_name': lineup_name(home_ids, shirts, id_table),
-            'away_name': lineup_name(away_ids, shirts, id_table),
+            'home_name': lineup_name(home_ids, shirts, id_table, _pool(home_id)),
+            'away_name': lineup_name(away_ids, shirts, id_table, _pool(away_id)),
             'duration': bucket['duration'],
             'home': bucket['home'],
             'away': bucket['away'],

@@ -119,10 +119,10 @@ def _player_table_json(bs_dict, match_info, side):
 
 
 def _without_opp_columns(payload):
-    """Drop Opp_* columns from a split payload. Leave other payloads untouched.
+    """Drop Opp_* and private `_` columns from a split payload.
 
     pandas split text for `.000` and `0.00` must stay as written when the
-    frame has no opponent columns. Rewriting every payload would change it.
+    frame has neither. Rewriting every payload would change it.
     """
     if not isinstance(payload, str) or not payload.strip():
         return payload
@@ -131,9 +131,14 @@ def _without_opp_columns(payload):
     except Exception:
         return payload
     columns = parsed.get('columns') if isinstance(parsed, dict) else None
-    if not isinstance(columns, list) or not any(str(col).startswith('Opp_') for col in columns):
+
+    def _hidden(col):
+        name = str(col)
+        return name.startswith('Opp_') or name.startswith('_')
+
+    if not isinstance(columns, list) or not any(_hidden(col) for col in columns):
         return payload
-    keep = [index for index, col in enumerate(columns) if not str(col).startswith('Opp_')]
+    keep = [index for index, col in enumerate(columns) if not _hidden(col)]
     parsed['columns'] = [columns[index] for index in keep]
     parsed['data'] = [
         [row[index] for index in keep] if isinstance(row, list) else row

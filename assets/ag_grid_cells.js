@@ -211,6 +211,9 @@ function _applyLineupWidth(api, clientWidth, textWidth) {
         return;
     }
     api.setColumnWidths(updates);
+    if (api.resetRowHeights) {
+        api.resetRowHeights();
+    }
 }
 
 function splashboardFitLineupWidth(params) {
