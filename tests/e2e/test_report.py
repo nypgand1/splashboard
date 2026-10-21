@@ -563,12 +563,34 @@ def test_report_table_cannot_resize_below_content(page, e2e_server):
             const item = items[items.length - 1];
             const grid = item.closest('.report-grid').gridstack;
             const minH = item.gridstackNode.minH;
+            const w = parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || '0', 10);
             grid.update(item, { h: 1 });
-            return { minH: minH, h: item.gridstackNode.h };
+            return {
+                minH: minH,
+                h: item.gridstackNode.h,
+                w: w,
+                minW: item.getAttribute('data-min-w'),
+                noResize: item.getAttribute('gs-no-resize'),
+                resizeOff: item.classList.contains('ui-resizable-disabled'),
+                dragOn: !item.classList.contains('ui-draggable-disabled'),
+                noteNoResize: (() => {
+                    const note = document.querySelector('.grid-stack-item[data-block-type="text"]');
+                    return note ? note.getAttribute('gs-no-resize') : 'missing';
+                })(),
+                tablesLocked: [...document.querySelectorAll('.grid-stack-item[data-block-type="builtin_table"]')]
+                    .every((el) => el.getAttribute('gs-no-resize') === 'true'),
+            };
         }'''
     )
     assert result['minH'] >= 1
     assert result['h'] >= result['minH']
+    assert result['w'] == 12
+    assert result['minW'] == '1'
+    assert result['noResize'] == 'true'
+    assert result['resizeOff'] is True
+    assert result['dragOn'] is True
+    assert result['noteNoResize'] in (None, 'false')
+    assert result['tablesLocked'] is True
 
 
 def test_report_pdf_warns_when_paper_overflows(page, e2e_server):
@@ -747,3 +769,303 @@ def test_report_pdf_contains_on_screen_text(page, e2e_server):
     text = '\n'.join((pdf_page.extract_text() or '') for pdf_page in reader.pages)
     assert 'PT' in text or 'Min' in text
     assert '20:00' in text or 'Lin' in text
+
+
+def _import_csv(page, kind, path):
+    page.locator('#report-add-table').click()
+    page.locator(f'[data-csv-import="{kind}"]').wait_for(state='visible', timeout=8000)
+    with page.expect_file_chooser() as chooser:
+        page.locator(f'[data-csv-import="{kind}"]').click()
+    chooser.value.set_files(str(path))
+
+
+def test_report_imports_csv_and_play_type_tables(page, e2e_server, tmp_path):
+    _open_report(page, e2e_server)
+    contract = page.evaluate(
+        '''() => {
+            const api = window.splashboardReport;
+            let bad = '';
+            try {
+                api.parseCsvTable('"open');
+            } catch (err) {
+                bad = err.message;
+            }
+            return {
+                rows: api.parseCsvTable('A,B,C\\n1\\n9,8,7,6\\n').rows,
+                title: api.csvBlockTitle('My.Table.CSV'),
+                offense: api.csvBlockTitle('team_OFF.CSV', 'ppp'),
+                defense: api.csvBlockTitle('dir/a_def.csv', 'ppp'),
+                other: api.csvBlockTitle('offense.csv', 'ppp'),
+                plainOff: api.csvBlockTitle('x_off.csv', 'plain'),
+                blue: api.pppCellStyle('1.00'),
+                mid: api.pppCellStyle('0.80'),
+                red: api.pppCellStyle('.50'),
+                skip: api.pppCellStyle('100%'),
+                bad: bad,
+                playW: api.csvDefaultW('ppp'),
+                plainW: api.csvDefaultW('plain'),
+                label: api.isCsvLabelHeader(' Play-Type '),
+                playType: api.isCsvLabelHeader('Play type'),
+                plainLabel: api.isCsvLabelHeader('Name'),
+            };
+        }'''
+    )
+    assert contract['rows'] == [['1', '', ''], ['9', '8', '7']]
+    assert contract['title'] == 'My.Table'
+    assert contract['offense'] == 'Offense | Play-type Stats'
+    assert contract['defense'] == 'Defense | Play-type Stats'
+    assert contract['other'] == 'offense'
+    assert contract['plainOff'] == 'x_off'
+    assert contract['playW'] == 6
+    assert contract['plainW'] == 12
+    assert contract['label'] is True
+    assert contract['playType'] is True
+    assert contract['plainLabel'] is False
+    assert contract['blue']['color'] == '#0077b6'
+    assert contract['blue']['fontWeight'] == '700'
+    assert contract['mid'] is None
+    assert contract['red']['color'] == '#e63946'
+    assert contract['skip'] is None
+    assert contract['bad'] == 'This CSV could not be read.'
+
+    page.locator('#report-add-table').click()
+    page.locator('#report-table-menu').wait_for(state='visible', timeout=8000)
+    menu_box = page.evaluate(
+        '''() => {
+            const menu = document.querySelector('#report-table-menu');
+            const items = [...menu.querySelectorAll('.report-table-menu-item')];
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            let longestGlyphs = 0;
+            let longestText = '';
+            for (const el of items) {
+                const label = el.querySelector('.mantine-Menu-itemLabel') || el;
+                const style = getComputedStyle(label);
+                ctx.font = style.font;
+                const text = (label.innerText || '').replace(/\s+/g, ' ').trim();
+                const glyphs = ctx.measureText(text).width;
+                if (glyphs >= longestGlyphs) {
+                    longestGlyphs = glyphs;
+                    longestText = text;
+                }
+            }
+            const menuStyle = getComputedStyle(menu);
+            const itemStyle = getComputedStyle(items[0]);
+            const menuRect = menu.getBoundingClientRect();
+            return {
+                minWidth: menuStyle.minWidth,
+                wrap: itemStyle.whiteSpace,
+                menuWidth: menuRect.width,
+                longestGlyphs,
+                longestText,
+                itemWidths: items.map((el) => el.getBoundingClientRect().width),
+                padX: parseFloat(menuStyle.paddingLeft) + parseFloat(menuStyle.paddingRight),
+                borderX: parseFloat(menuStyle.borderLeftWidth) + parseFloat(menuStyle.borderRightWidth),
+                viewport: window.innerWidth,
+            };
+        }'''
+    )
+    assert menu_box['minWidth'] in ('0px', 'auto')
+    assert menu_box['wrap'] == 'nowrap'
+    assert menu_box['longestText'] == 'Import from Play-type CSV File'
+    assert menu_box['menuWidth'] > menu_box['longestGlyphs'], menu_box
+    assert menu_box['menuWidth'] < menu_box['longestGlyphs'] + 80, menu_box
+    assert menu_box['menuWidth'] < 320, menu_box
+    item_widths = menu_box['itemWidths']
+    assert max(item_widths) - min(item_widths) <= 2, menu_box
+    assert abs(
+        max(item_widths) + menu_box['padX'] + menu_box['borderX'] - menu_box['menuWidth']
+    ) <= 2, menu_box
+    page.locator('[data-csv-import="plain"]').wait_for(state='visible', timeout=8000)
+    labels = [
+        text.strip()
+        for text in page.locator('#report-table-menu .report-table-menu-item').all_inner_texts()
+    ]
+    assert labels[-2:] == ['Import from Play-type CSV File', 'Import from CSV File']
+    page.locator('#report-add-table').click()
+
+    plain = tmp_path / 'bench.csv'
+    plain.write_text('Name,PPP\nLin,1.10\n', encoding='utf-8')
+    plain_off = tmp_path / 'x_off.csv'
+    plain_off.write_text('Name,PPP\nLin,0.50\n', encoding='utf-8')
+    offense = tmp_path / 'team_off.csv'
+    offense.write_text('Play Type,PPP\nIso,1.20\n', encoding='utf-8')
+    play = tmp_path / 'playtype.csv'
+    play.write_text(
+        'Play Type,PPP,Opp PPP\nIso,1.00,0.79\nSpot,0.80,1\nPost,.50,100%\n',
+        encoding='utf-8',
+    )
+    bad = tmp_path / 'bad.csv'
+    bad.write_bytes(b'\xff\xfeH\n')
+
+    _import_csv(page, 'plain', plain)
+    page.locator('.report-block-title', has_text='bench').wait_for(state='attached', timeout=20000)
+    plain_paint = page.evaluate(
+        '''() => {
+            const title = [...document.querySelectorAll('.report-block-title')]
+                .find((el) => (el.textContent || '').trim() === 'bench');
+            const item = title.closest('.grid-stack-item');
+            const table = item.querySelector('.report-js-table');
+            const ppp = table.querySelector('tbody tr td:nth-child(2)');
+            const name = table.querySelector('tbody tr td:nth-child(1)');
+            return {
+                type: item.getAttribute('data-block-type'),
+                editable: title.getAttribute('contenteditable'),
+                spellcheck: title.getAttribute('spellcheck'),
+                aria: title.getAttribute('aria-label'),
+                rows: table.querySelectorAll('thead tr').length,
+                text: ppp.textContent,
+                color: ppp.style.color,
+                weight: ppp.style.fontWeight,
+                w: parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || '0', 10),
+                minW: item.getAttribute('data-min-w'),
+                layout: getComputedStyle(table).tableLayout,
+                nameWeight: name.style.fontWeight,
+                nameClass: name.className,
+            };
+        }'''
+    )
+    assert plain_paint['type'] == 'csv_table'
+    assert plain_paint['editable'] == 'true'
+    assert plain_paint['spellcheck'] == 'false'
+    assert plain_paint['aria'] == 'Table title'
+    assert plain_paint['rows'] == 1
+    assert plain_paint['text'] == '1.10'
+    assert plain_paint['color'] == ''
+    assert plain_paint['weight'] == ''
+    assert plain_paint['w'] == 12
+    assert plain_paint['minW'] == '1'
+    assert plain_paint['layout'] == 'fixed'
+    assert plain_paint['nameWeight'] == ''
+    assert 'report-lineup-name' not in plain_paint['nameClass']
+
+    _import_csv(page, 'ppp', play)
+    page.locator('.report-block-title', has_text='playtype').wait_for(state='attached', timeout=20000)
+    tones = page.evaluate(
+        '''() => {
+            const title = [...document.querySelectorAll('.report-block-title')]
+                .find((el) => (el.textContent || '').trim() === 'playtype');
+            const item = title.closest('.grid-stack-item');
+            const table = item.querySelector('.report-js-table');
+            const body = [...table.querySelectorAll('tbody tr')].map((tr) => {
+                return [...tr.children].map((td) => ({
+                    text: td.textContent,
+                    color: td.style.color,
+                    weight: td.style.fontWeight,
+                }));
+            });
+            const labelCell = table.querySelector('tbody tr td');
+            const labelHead = table.querySelector('thead th');
+            return {
+                headers: [...table.querySelectorAll('thead th')].map((th) => th.textContent),
+                body: body,
+                klass: table.className,
+                w: parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || '0', 10),
+                minW: item.getAttribute('data-min-w'),
+                layout: getComputedStyle(table).tableLayout,
+                labelClass: labelCell.className,
+                labelWeight: labelCell.style.fontWeight,
+                headClass: labelHead.className,
+                headWrap: getComputedStyle(labelHead).whiteSpace,
+            };
+        }'''
+    )
+    assert 'report-js-table' in tones['klass']
+    assert tones['headers'] == ['Play Type', 'PPP', 'Opp PPP']
+    assert tones['w'] == 6
+    assert tones['minW'] == '1'
+    assert tones['layout'] == 'fixed'
+    assert 'report-lineup-name' in tones['labelClass']
+    assert tones['labelWeight'] == '700'
+    assert 'report-lineup-name' not in tones['headClass']
+    assert tones['headWrap'] == 'nowrap'
+    assert tones['body'][0][1] == {'text': '1.00', 'color': 'rgb(0, 119, 182)', 'weight': '700'}
+    assert tones['body'][0][2]['color'] == ''
+    assert tones['body'][1][1] == {'text': '0.80', 'color': '', 'weight': ''}
+    assert tones['body'][1][2]['color'] == ''
+    assert tones['body'][2][1] == {'text': '.50', 'color': 'rgb(230, 57, 70)', 'weight': '700'}
+    assert tones['body'][2][2] == {'text': '100%', 'color': '', 'weight': ''}
+
+    _import_csv(page, 'ppp', offense)
+    page.locator('.report-block-title', has_text='Offense | Play-type Stats').wait_for(
+        state='attached', timeout=20000,
+    )
+    offense_paint = page.evaluate(
+        '''() => {
+            const title = [...document.querySelectorAll('.report-csv-title')]
+                .find((el) => (el.textContent || '').trim() === 'Offense | Play-type Stats');
+            const item = title.closest('.grid-stack-item');
+            return {
+                editable: title.getAttribute('contenteditable'),
+                noResize: item.getAttribute('gs-no-resize'),
+                w: parseInt(item.getAttribute('gs-w') || item.getAttribute('data-w') || '0', 10),
+            };
+        }'''
+    )
+    assert offense_paint['editable'] == 'true'
+    assert offense_paint['noResize'] == 'true'
+    assert offense_paint['w'] == 6
+
+    _import_csv(page, 'plain', plain_off)
+    page.locator('.report-block-title', has_text='x_off').wait_for(state='attached', timeout=20000)
+
+    edited = page.evaluate(
+        '''() => {
+            const title = [...document.querySelectorAll('.report-csv-title')]
+                .find((el) => (el.textContent || '').trim() === 'bench');
+            const toolbar = document.getElementById('report-note-toolbar');
+            title.focus();
+            const toolbarDisplay = toolbar ? toolbar.style.display : '';
+            title.textContent = '   ';
+            title.dispatchEvent(new FocusEvent('blur'));
+            const blank = title.textContent;
+            title.focus();
+            title.textContent = 'Nope';
+            title.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            const escaped = title.textContent;
+            title.focus();
+            title.textContent = 'Bench renamed';
+            title.dispatchEvent(new FocusEvent('blur'));
+            const id = (document.getElementById('report-game-id').textContent || '').trim();
+            const raw = localStorage.getItem('splashboard.report.layout.' + id) || '';
+            const builtin = document.querySelector('.report-block-title:not(.report-csv-title)');
+            return {
+                blank: blank,
+                escaped: escaped,
+                shown: title.textContent,
+                stored: raw.indexOf('Bench renamed') !== -1,
+                toolbar: toolbarDisplay,
+                builtinEditable: builtin ? builtin.getAttribute('contenteditable') : 'missing',
+            };
+        }'''
+    )
+    assert edited['blank'] == 'bench'
+    assert edited['escaped'] == 'bench'
+    assert edited['shown'] == 'Bench renamed'
+    assert edited['stored'] is True
+    assert edited['toolbar'] == 'none'
+    assert edited['builtinEditable'] is None
+
+    before = page.locator('.grid-stack-item[data-block-type="csv_table"]').count()
+    _import_csv(page, 'plain', bad)
+    page.wait_for_function(
+        '''() => {
+            const msg = document.getElementById('report-dialog-message');
+            return !!(msg && msg.textContent === 'This CSV is not UTF-8.');
+        }''',
+        timeout=8000,
+    )
+    cancel = page.locator('#report-dialog-cancel')
+    assert cancel.evaluate('el => getComputedStyle(el).display') == 'none'
+    page.locator('#report-dialog-ok').click()
+    assert page.locator('.grid-stack-item[data-block-type="csv_table"]').count() == before
+    stored = page.evaluate(
+        '''() => {
+            const id = (document.getElementById('report-game-id').textContent || '').trim();
+            const raw = localStorage.getItem('splashboard.report.layout.' + id);
+            return raw || '';
+        }'''
+    )
+    assert '"type": "csv_table"' in stored or '"type":"csv_table"' in stored
+    assert 'playtype' in stored
+    assert '1.00' in stored

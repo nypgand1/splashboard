@@ -15,7 +15,7 @@ ALLOWED_TABLE_KEYS = (
     'lineup_away',
     'lineup_home',
 )
-ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart')
+ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart', 'csv_table')
 
 
 def _layout():
@@ -595,6 +595,43 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn("text: 'Key Stats'", js)
         self.assertIn('report-lineup-name', js)
         self.assertIn('function lineupNameLines', js)
+        self.assertIn('function isCsvLabelHeader', js)
+        self.assertIn('function csvDefaultW', js)
+        self.assertIn('function locksResize', js)
+        self.assertIn('blockLocksSize(type) || isReportTable(type)', js)
+        self.assertIn("return CSV_OFFENSE_TITLE", js)
+        self.assertIn("return CSV_DEFENSE_TITLE", js)
+        self.assertIn("lower.slice(-8) === '_off.csv'", js)
+        self.assertIn("lower.slice(-8) === '_def.csv'", js)
+        self.assertIn('csvBlockTitle(file.name, coloring)', js)
+        self.assertIn('function commitTableResize', js)
+        self.assertIn('function applyCsvColumns', js)
+        self.assertIn('data-resize-start-h', js)
+        self.assertIn("coloring === 'ppp' ? 6 : 12", js)
+        self.assertIn("title.setAttribute('contenteditable', 'true')", js)
+        self.assertIn("text.replace(/[\\r\\n]+/g, ' ')", js)
+        self.assertIn('insertParagraph', js)
+        self.assertIn('blockLocksSize(block.type) ? w : 1', js)
+        csv_bind = js.split('function bindCsvTitles', 1)[1].split('function makePageDeleteButton', 1)[0]
+        self.assertNotIn('showNoteToolbar', csv_bind)
+        menu_css = css.split('.report-table-menu {', 1)[1].split('}', 1)[0]
+        self.assertNotIn('min-width: 280px', menu_css)
+        menu_hug = css.split('#report-table-menu {', 1)[1].split('}', 1)[0]
+        self.assertIn('display: flex', menu_hug)
+        self.assertIn('flex-direction: column', menu_hug)
+        self.assertIn('align-items: stretch', menu_hug)
+        self.assertIn('width: max-content', menu_hug)
+        item_hug = css.split('#report-table-menu .report-table-menu-item {', 1)[1].split('}', 1)[0]
+        self.assertIn('width: auto', item_hug)
+        self.assertNotIn('width: 100%', item_hug)
+        label_hug = css.split('#report-table-menu .mantine-Menu-itemLabel {', 1)[1].split('}', 1)[0]
+        self.assertIn('flex: none', label_hug)
+        self.assertIn('width: auto', label_hug)
+        self.assertIn('white-space: nowrap', css.split('.report-table-menu-item {', 1)[1].split('}', 1)[0])
+        self.assertIn('.report-block-title-row .report-csv-title', css)
+        csv_title_css = css.split('.report-block-title-row .report-csv-title', 1)[1].split('}', 1)[0]
+        self.assertIn('text-overflow: ellipsis', csv_title_css)
+        self.assertIn('white-space: nowrap', csv_title_css)
         self.assertIn('td.report-lineup-name', css)
         self.assertIn('white-space: normal', css)
         second_head = css.split('.report-js-table thead tr:nth-child(2) th', 1)[1].split('}', 1)[0]
@@ -647,6 +684,19 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertLess(markup.find('Away Player Stats'), markup.find('Home Player Stats'))
         self.assertLess(markup.find('Away Lineup Stats'), markup.find('Home Lineup Stats'))
         self.assertLess(markup.find('Key Stats'), markup.find('Away Player Stats'))
+        self.assertLess(markup.find('Home Lineup Stats'), markup.find('Import from Play-type CSV File'))
+        self.assertLess(
+            markup.find('Import from Play-type CSV File'),
+            markup.find('Import from CSV File'),
+        )
+        self.assertIn('data-csv-import', markup)
+        self.assertIn('report-table-menu-divider', markup)
+        import os
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(root, 'assets', 'report_canvas.js'), encoding='utf-8') as handle:
+            canvas = handle.read()
+        self.assertIn("input.id = 'report-csv-upload'", canvas)
+        self.assertIn("input.type = 'file'", canvas)
 
     def test_page_list_has_add_but_no_minus(self):
         from synergy_reporter.report_components import render_page_list
@@ -953,7 +1003,9 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['resize_handles'], 'se')
         self.assertEqual(chrome['image_place'], 'natural_or_max_remaining')
         self.assertEqual(chrome['image_aspect'], 'lock')
-        self.assertEqual(chrome['table_min_size'], 'max_content')
+        self.assertEqual(chrome['table_min_size'], 'min_w_1_h_hug')
+        self.assertFalse(chrome['table_resize'])
+        self.assertEqual(chrome['table_menu_width'], 'hug_label')
         self.assertEqual(chrome['block_place'], 'clamp_to_paper')
         self.assertEqual(chrome['oversized_drag'], 'x_only_y0')
         self.assertEqual(chrome['notes_enter_overflow'], 'reject')
@@ -998,6 +1050,30 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['header_credit_size'], '9px')
         self.assertEqual(chrome['header_credit_align'], 'table_content_right')
         self.assertEqual(chrome['table_menu_order'], ALLOWED_TABLE_KEYS)
+        self.assertEqual(
+            chrome['csv_import_labels'],
+            ('Import from Play-type CSV File', 'Import from CSV File'),
+        )
+        self.assertEqual(chrome['csv_block_type'], 'csv_table')
+        self.assertEqual(chrome['csv_max_bytes'], 65536)
+        self.assertEqual(chrome['csv_max_columns'], 24)
+        self.assertEqual(chrome['csv_max_rows'], 40)
+        self.assertEqual(chrome['csv_title_fallback'], 'Imported table')
+        self.assertEqual(chrome['csv_offense_title'], 'Offense | Play-type Stats')
+        self.assertEqual(chrome['csv_defense_title'], 'Defense | Play-type Stats')
+        self.assertEqual(chrome['csv_ppp_header'], 'PPP')
+        self.assertEqual(chrome['csv_ppp_blue'], '#0077b6')
+        self.assertEqual(chrome['csv_ppp_red'], '#e63946')
+        self.assertEqual(chrome['csv_ppp_blue_min'], 1)
+        self.assertEqual(chrome['csv_ppp_red_below'], 0.8)
+        self.assertEqual(chrome['csv_plain_w'], 12)
+        self.assertEqual(chrome['csv_play_type_w'], 6)
+        self.assertEqual(
+            chrome['csv_label_headers'],
+            ('Play Type', 'Play-type', 'Play type'),
+        )
+        self.assertEqual(chrome['csv_title_edit'], 'single_line')
+        self.assertEqual(len(chrome['csv_errors']), 7)
         self.assertIn('report-toolbar', chrome['sticky_selectors'])
         self.assertIn('report-page-list', chrome['sticky_selectors'])
         self.assertEqual(chrome['rail_bg'], '#f1f5f9')

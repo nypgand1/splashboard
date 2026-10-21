@@ -513,13 +513,30 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
 
     page.set_viewport_size({'width': 768, 'height': 900})
     page.wait_for_function(_ROTATION_LANE_WIDE)
+    page.wait_for_function(
+        '''() => {
+            const sample = [...document.querySelectorAll('.braves-clean-tabs [role="tab"]')]
+                .find((tab) => (tab.innerText || '').includes('Play-By-Play'));
+            if (!sample) {
+                return false;
+            }
+            const cs = getComputedStyle(sample);
+            const bottom = parseFloat(cs.borderBottomLeftRadius);
+            return cs.padding === '8px 18px'
+                && cs.borderTopLeftRadius === '10px'
+                && bottom < 0.05;
+        }''',
+        timeout=3000,
+    )
     wide_tabs = _game_tab_strip(page)
     assert wide_tabs['display'] == 'flex'
     assert wide_tabs['wrap'] == 'nowrap'
     assert wide_tabs['rows'] == 1
     assert wide_tabs['fontSize'] == '13px'
     assert wide_tabs['padding'] == '8px 18px'
-    assert wide_tabs['radius'] == '10px/0px'
+    radius_top, radius_bottom = wide_tabs['radius'].split('/')
+    assert radius_top == '10px'
+    assert abs(float(radius_bottom.replace('px', ''))) < 0.05
 
 
 def _playhead_t(page):

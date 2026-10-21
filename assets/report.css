@@ -240,12 +240,19 @@ body {
 }
 
 .report-table-menu {
-    min-width: 220px;
     padding: 6px;
     border-radius: 10px;
     background: #ffffff;
     border: 1px solid var(--border);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+#report-table-menu {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: max-content;
+    min-width: 0;
 }
 
 .report-table-menu-item {
@@ -261,8 +268,41 @@ body {
     width: 100%;
 }
 
+/* Percentage width and flex-basis 0% resolve against the viewport inside this
+   portaled popover, so the menu would grow to the right edge. Size the column
+   from the label text, then stretch each row to that column. */
+#report-table-menu .report-table-menu-item {
+    width: auto;
+    align-self: stretch;
+    box-sizing: border-box;
+}
+
+#report-table-menu .mantine-Menu-itemLabel {
+    flex: none;
+    width: auto;
+}
+
 .report-table-menu-item:hover {
     background: #e0f2fe;
+}
+
+.report-table-menu-divider {
+    height: 1px;
+    margin: 4px 6px;
+    background: #e2e8f0;
+}
+
+.report-csv-upload {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.report-dialog.report-dialog-alert #report-dialog-cancel {
+    display: none;
 }
 
 #report-image-upload {
@@ -571,6 +611,17 @@ body {
 
 .report-block-title-row .report-block-title {
     margin-bottom: 0;
+}
+
+.report-block-title-row .report-csv-title {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    font-weight: 800;
 }
 
 .report-block-title-dot {
