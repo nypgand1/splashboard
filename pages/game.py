@@ -9,6 +9,7 @@ import dash_ag_grid as dag
 import pandas as pd
 
 from synergy_inbounder.communicator import SynergyAuthError
+from synergy_inbounder.live_clock import clock_from_pbp_store
 from synergy_inbounder.names import display_name
 from synergy_inbounder.settings import organization_for_league, season_ids_for_organization
 from synergy_inbounder.parser import Parser
@@ -208,13 +209,14 @@ def _box_score_wrap():
                     cols={'base': 1, 'lg': 2},
                     spacing='12px',
                     children=[
-                        _bs_scroll_card('bs-pace-scroll', 'Pace & 4 Factors'),
-                        _bs_scroll_card(
-                            'bs-key-scroll',
-                            'Paint / 2nd Chance / Fastbreak / Off TOV / Bench',
-                        ),
+                        _bs_scroll_card('bs-pace-scroll', PACE_CARD_TITLE),
+                        _bs_scroll_card('bs-advanced-scroll', ADVANCED_CARD_TITLE),
                     ],
                     style={'marginBottom': '12px'},
+                ),
+                dmc.Box(
+                    _bs_scroll_card('bs-key-scroll', KEY_CARD_TITLE),
+                    mb='sm',
                 ),
                 dmc.Box(_bs_scroll_card('bs-team-scroll'), mb='sm'),
                 _bs_player_block(0, '#94a3b8'),
@@ -615,6 +617,7 @@ def update_bs_store(n, game_id, league='plg'):
         'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
         'qt_tout_df': report.get_period_team_timeout_df().to_json(date_format='iso', orient='split'),
         't_adv_df': report.get_team_advance_stats_df().to_json(date_format='iso', orient='split'),
+        'adv_df': report.get_team_advanced_df().to_json(date_format='iso', orient='split'),
         't_df': report.get_team_stats_df().to_json(date_format='iso', orient='split'),
         'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
         'p_df_dict': report.get_player_stats_json_dict(),
@@ -682,12 +685,18 @@ def update_match_info_store(n, game_id, league='plg', previous=None):
 
 @callback(
     Output('game-info-banner-wrap', 'children'),
-    Input('match_info_store', 'data')
+    Input('match_info_store', 'data'),
+    Input('pbp_store', 'data'),
 )
-def render_game_info_banner(match_info_store):
+def render_game_info_banner(match_info_store, pbp_store=None):
     info = safe_loads(match_info_store)
     if not info or info.get('_ui') == 'error':
         return html.Div()
+    time_display = info.get('time') or ''
+    if str(info.get('status') or '').strip() == 'IN_PROGRESS':
+        label = clock_from_pbp_store(pbp_store)
+        if label:
+            time_display = label
     return game_banner(
         home_team=info.get('home_team') or 'Home',
         away_team=info.get('away_team') or 'Away',
@@ -695,7 +704,7 @@ def render_game_info_banner(match_info_store):
         away_score=info.get('away_score') or '—',
         status=info.get('status') or '',
         date=info.get('date') or '',
-        time=info.get('time') or '',
+        time=time_display,
         venue=info.get('venue') or '',
     )
 
@@ -924,6 +933,20 @@ def _stat_header(name):
     return {'AST': 'AS', 'PTS': 'PT'}.get(name, name)
 
 
+_KEY_STAT_GROUPS = (
+    ('Points in the Paint', (('PIPM', 'M'), ('PIPA', 'A'), ('PIP', 'PT'))),
+    ('Second Chance Points', (('SCP2M', '2M'), ('SCP2A', '2A'), ('SCP3M', '3M'), ('SCP3A', '3A'), ('SCP', 'PT'))),
+    ('Fast Break Points', (('FBP2M', '2M'), ('FBP2A', '2A'), ('FBP3M', '3M'), ('FBP3A', '3A'), ('FBP', 'PT'))),
+    ('Points off Turnovers', (('POT2M', '2M'), ('POT2A', '2A'), ('POT3M', '3M'), ('POT3A', '3A'), ('POT', 'PT'))),
+)
+_KEY_STAT_LEAVES = tuple(
+    column for _name, pairs in _KEY_STAT_GROUPS for column, _label in pairs
+) + ('BP',)
+PACE_CARD_TITLE = 'Pace & Four Factors'
+ADVANCED_CARD_TITLE = 'ADVANCED'
+KEY_CARD_TITLE = 'Paint / 2nd Chance / Fastbreak / Off TO / Bench'
+
+
 def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
@@ -939,14 +962,16 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
             val0 = _parse_numeric_stat(df.iloc[0][col])
             val1 = _parse_numeric_stat(df.iloc[1][col])
             if val0 is not None and val1 is not None and val0 != val1:
-                # Lower is better for Fouls, TO, TOV, TOV%, PF
-                if is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TOV%'):
+                # Lower is better for Fouls, TO, TO%, PF. 3P-R is a mix, not a result.
+                if col in ('3Pr', '3P-R'):
+                    continue
+                if is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TO%'):
                     col_winners[col] = 0 if val0 < val1 else 1
                 else:
                     col_winners[col] = 0 if val0 > val1 else 1
 
     has_grouped_cols = any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%'))
-    has_key_stats_grouped = any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP', 'SCPM', 'SCPA', 'SCP'))
+    has_key_stats_grouped = any(c in df.columns for c in _KEY_STAT_LEAVES)
     
     if has_grouped_cols:
         top_row = []
@@ -1001,7 +1026,7 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
                 dmc.TableTh("T", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
             ])
 
-        for col in ('AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
+        for col in ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
                 top_row.append(dmc.TableTh(
                     _stat_header(col),
@@ -1022,55 +1047,49 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
     elif has_key_stats_grouped:
         top_row = []
         sub_row = []
+        top_style = {
+            "textAlign": "center",
+            "verticalAlign": "middle",
+            "padding": "6px 10px",
+            "fontSize": "12px",
+            "fontWeight": 700,
+            "color": "#0f172a",
+            "borderBottom": "1px solid #e2e8f0",
+            "backgroundColor": "#f8fafc",
+            "whiteSpace": "nowrap",
+        }
+        group_style = {
+            "textAlign": "center",
+            "padding": "4px 8px",
+            "fontSize": "12px",
+            "fontWeight": 700,
+            "color": "#0f172a",
+            "borderBottom": "1px solid #e2e8f0",
+            "backgroundColor": "#f8fafc",
+        }
+        sub_style = {
+            "textAlign": "center",
+            "padding": "4px 6px",
+            "fontSize": "11px",
+            "fontWeight": 700,
+            "color": "#475569",
+            "borderBottom": "1px solid #e2e8f0",
+            "backgroundColor": "#f8fafc",
+        }
         if 'Team' in df.columns:
+            top_row.append(dmc.TableTh("TEAM", tableProps={"rowSpan": 2}, style=top_style))
+        for name, pairs in _KEY_STAT_GROUPS:
+            present = [(column, label) for column, label in pairs if column in df.columns]
+            if not present:
+                continue
             top_row.append(dmc.TableTh(
-                "TEAM",
-                tableProps={"rowSpan": 2},
-                style={
-                    "textAlign": "center",
-                    "verticalAlign": "middle",
-                    "padding": "6px 10px",
-                    "fontSize": "12px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                    "whiteSpace": "nowrap",
-                }
+                name, tableProps={"colSpan": len(present)}, style=group_style,
             ))
-        if any(c in df.columns for c in ('PIPM', 'PIPA', 'PIP')):
-            top_row.append(dmc.TableTh("PIP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
-            sub_row.extend([
-                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("PT", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-            ])
-        if any(c in df.columns for c in ('SCPM', 'SCPA', 'SCP')):
-            top_row.append(dmc.TableTh("SCP", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
-            sub_row.extend([
-                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("PT", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-            ])
-        for col in ('FBP', 'POT', 'BP'):
-            if col in df.columns:
-                top_row.append(dmc.TableTh(
-                    col,
-                    tableProps={"rowSpan": 2},
-                    style={
-                        "textAlign": "center",
-                        "verticalAlign": "middle",
-                        "padding": "6px 8px",
-                        "fontSize": "12px",
-                        "fontWeight": 700,
-                        "color": "#0f172a",
-                        "borderBottom": "1px solid #e2e8f0",
-                        "backgroundColor": "#f8fafc",
-                        "whiteSpace": "nowrap",
-                    }
-                ))
+            sub_row.extend(dmc.TableTh(label, style=sub_style) for _column, label in present)
+        if 'BP' in df.columns:
+            top_row.append(dmc.TableTh("BP", tableProps={"rowSpan": 2}, style=top_style))
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
-    elif any(c in df.columns for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R')):
+    elif any(c in df.columns for c in ('eFG%', 'TO%', 'ORB%', 'FT-R')):
         top_row = []
         sub_row = []
         if 'Team' in df.columns:
@@ -1105,26 +1124,10 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
                     "whiteSpace": "nowrap",
                 }
             ))
-        if 'PPP' in df.columns:
-            top_row.append(dmc.TableTh(
-                "PPP",
-                tableProps={"rowSpan": 2},
-                style={
-                    "textAlign": "center",
-                    "verticalAlign": "middle",
-                    "padding": "6px 10px",
-                    "fontSize": "12px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                    "whiteSpace": "nowrap",
-                }
-            ))
-        ff_cols = [c for c in ('eFG%', 'TOV%', 'ORB%', 'FT-R') if c in df.columns]
+        ff_cols = [c for c in ('eFG%', 'TO%', 'ORB%', 'FT-R') if c in df.columns]
         if ff_cols:
             top_row.append(dmc.TableTh(
-                "4 FACTORS",
+                "FOUR FACTORS",
                 tableProps={"colSpan": len(ff_cols)},
                 style={
                     "textAlign": "center",
@@ -1150,6 +1153,24 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
                     }
                 ))
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
+    elif any(c in df.columns for c in ('PPP', 'AS/TO', 'AST%', '3P-R', 'TS%')):
+        labels = ['TEAM'] if 'Team' in df.columns else []
+        labels.extend(col for col in ('PPP', 'AS/TO', 'AST%', '3P-R', 'TS%') if col in df.columns)
+        header = [dmc.TableTr([
+            dmc.TableTh(
+                label,
+                style={
+                    "textAlign": "center",
+                    "padding": "7px 10px",
+                    "fontSize": "13px",
+                    "fontWeight": 700,
+                    "color": "#0f172a",
+                    "borderBottom": "1px solid #e2e8f0",
+                    "backgroundColor": "#f8fafc",
+                    "whiteSpace": "nowrap",
+                }
+            ) for label in labels
+        ])]
     else:
         header = [dmc.TableTr([
             dmc.TableTh(
@@ -1476,7 +1497,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         ('AST', 'AS', letter_min, letter_w),
         ('TO', 'TO', letter_min, letter_w),
         ('ST', 'ST', letter_min, letter_w),
-        ('BL', 'BL', letter_min, letter_w),
+        ('BS', 'BS', letter_min, letter_w),
         ('PF', 'PF', letter_min, letter_w),
         ('FD', 'FD', letter_min, letter_w),
         ('PTS', 'PT', pt_min, pt_w),
@@ -1565,7 +1586,9 @@ def _lineup_pair_records(df):
     records = []
     for raw in df.to_dict('records'):
         own = {col: _display_cell(raw.get(col)) for col in columns}
-        pair = own.get('Lineup', own.get('Lineups', ''))
+        label = own.get('Lineup', own.get('Lineups', ''))
+        key = _display_cell(raw.get('_lineup_key'))
+        pair = key or label
         our = dict(own)
         our['_opp'] = False
         our['_pair'] = pair
@@ -1576,7 +1599,7 @@ def _lineup_pair_records(df):
             if col in ('Min', '+/-'):
                 opp[col] = ''
             elif 'lineup' in str(col).lower():
-                opp[col] = pair
+                opp[col] = label
             else:
                 opp[col] = _display_cell(raw.get('Opp_' + col, ''))
         opp['_opp'] = True
@@ -1589,7 +1612,7 @@ def _lineup_pair_records(df):
 _DESC_SORT_FIELDS = {
     '#', 'Min', '+/-',
     '2M', '2A', '2FG%', '3M', '3A', '3FG%', 'FTM', 'FTA', 'FT%',
-    'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS',
+    'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS',
     'PIP', 'SCP', 'FBP', 'POT', 'PPP', 'eFG%', 'USG%',
 }
 DESC_FIRST_SORT = ['desc', 'asc', None]
@@ -1768,7 +1791,7 @@ def _apply_matchup_pair_columns(column_defs):
 def _matchup_column_defs():
     columns = [
         'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
-        'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+        'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
         'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
     ]
     column_defs = _build_stats_column_defs(
@@ -2025,8 +2048,18 @@ def _bs_frames(bs_dict, period='all', match_info=None):
     t_adv_df = order_team_frame(pd.read_json(io.StringIO(view['t_adv_df']), orient='split'), away_name, home_name)
     if 'Pace' in t_adv_df.columns:
         t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: _format_metric(x, 1))
-    if 'PPP' in t_adv_df.columns:
-        t_adv_df['PPP'] = t_adv_df['PPP'].apply(lambda x: _format_metric(x, 2))
+    adv_raw = view.get('adv_df') if isinstance(view, dict) else None
+    if isinstance(adv_raw, str) and adv_raw.strip():
+        try:
+            adv_df = order_team_frame(
+                pd.read_json(io.StringIO(adv_raw), orient='split'), away_name, home_name,
+            )
+        except Exception:
+            adv_df = pd.DataFrame()
+    else:
+        adv_df = pd.DataFrame()
+    if 'PPP' in adv_df.columns:
+        adv_df['PPP'] = adv_df['PPP'].apply(lambda x: _format_metric(x, 2))
 
     players = []
     p_dict = view.get('p_df_dict') if isinstance(view.get('p_df_dict'), dict) else {}
@@ -2042,6 +2075,7 @@ def _bs_frames(bs_dict, period='all', match_info=None):
         'qt_foul': qt_foul_df,
         'qt_tout': qt_tout_df,
         't_adv': t_adv_df,
+        'adv': adv_df,
         't_df': order_team_frame(read_split_frame(view['t_df']), away_name, home_name),
         'k_df': order_team_frame(pd.read_json(io.StringIO(view['k_df']), orient='split'), away_name, home_name),
         'players': players,
@@ -2135,16 +2169,20 @@ def render_bs_sections(bs_store, period='all', match_info=None):
         cols={"base": 1, "lg": 2},
         spacing="12px",
         children=[
-            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title="Pace & 4 Factors", away_name=away_name, home_name=home_name),
-            _dmc_table_from_df(
-                frames['k_df'],
-                is_team_summary=True,
-                title="Paint / 2nd Chance / Fastbreak / Off TOV / Bench",
-                away_name=away_name,
-                home_name=home_name,
-            ),
+            _dmc_table_from_df(frames['t_adv'], is_team_summary=True, title=PACE_CARD_TITLE, away_name=away_name, home_name=home_name),
+            _dmc_table_from_df(frames['adv'], is_team_summary=True, title=ADVANCED_CARD_TITLE, away_name=away_name, home_name=home_name),
         ],
         style={"marginBottom": "12px"}
+    )
+    row_key = dmc.Box(
+        _dmc_table_from_df(
+            frames['k_df'],
+            is_team_summary=True,
+            title=KEY_CARD_TITLE,
+            away_name=away_name,
+            home_name=home_name,
+        ),
+        mb="sm",
     )
     row3 = dmc.Box(
         _dmc_table_from_df(frames['t_df'], is_team_summary=True, away_name=away_name, home_name=home_name),
@@ -2155,7 +2193,7 @@ def render_bs_sections(bs_store, period='all', match_info=None):
         bs_dict.get('game_id'),
         info.get('organization_id'),
     ), row1]
-    detail = [row2, row3]
+    detail = [row2, row_key, row3]
     for idx, (team_name, p_df, summary_rows) in enumerate(frames['players']):
         dot_color = section_dot(team_name, away_name, home_name, idx)
         detail.append(dmc.Group(
@@ -2199,6 +2237,7 @@ BS_SYNC_KEYS = (
     'fouls',
     'tout',
     'pace',
+    'advanced',
     'key',
     'team',
     'title0',
@@ -2313,13 +2352,9 @@ def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, t
     patch.update(_bs_player_outputs(models, names, column_state))
     away_name = frames.get('away_name')
     home_name = frames.get('home_name')
-    patch['pace'] = _table_children(frames['t_adv'], 'Pace & 4 Factors', away_name, home_name)
-    patch['key'] = _table_children(
-        frames['k_df'],
-        'Paint / 2nd Chance / Fastbreak / Off TOV / Bench',
-        away_name,
-        home_name,
-    )
+    patch['pace'] = _table_children(frames['t_adv'], PACE_CARD_TITLE, away_name, home_name)
+    patch['advanced'] = _table_children(frames['adv'], ADVANCED_CARD_TITLE, away_name, home_name)
+    patch['key'] = _table_children(frames['k_df'], KEY_CARD_TITLE, away_name, home_name)
     patch['team'] = _table_children(frames['t_df'], away_name=away_name, home_name=home_name)
     if triggered_id != 'bs-period':
         patch['chip_data'] = frames['chips']
@@ -2862,6 +2897,7 @@ def update_pane_bs(bs_store, active_tab, period='all'):
     Output('bs-fouls-scroll', 'children'),
     Output('bs-tout-scroll', 'children'),
     Output('bs-pace-scroll', 'children'),
+    Output('bs-advanced-scroll', 'children'),
     Output('bs-key-scroll', 'children'),
     Output('bs-team-scroll', 'children'),
     Output('bs-player-title-0', 'children'),

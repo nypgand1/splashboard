@@ -84,19 +84,23 @@ class LineupOrderTests(unittest.TestCase):
 
 
 class LineupTableTests(unittest.TestCase):
-    def _report(self, rows, starters):
+    def _report(self, rows, starters, id_table=None, roster=None):
+        names = {
+            'home': 'Braves',
+            'away': 'Dreamers',
+            'p1': 'A', 'p2': 'B', 'p3': 'C', 'p4': 'D', 'p5': 'E', 'p6': 'F',
+        }
+        if id_table:
+            names.update(id_table)
+        people = roster or [{'personId': f'p{i}', 'shirtNumber': str(i)} for i in range(1, 7)]
         bundle = (
             pd.DataFrame([{'entityId': 'home'}]),
             pd.DataFrame(),
             pd.DataFrame(),
             starters,
             pd.DataFrame(),
-            {
-                'home': 'Braves',
-                'away': 'Dreamers',
-                'p1': 'A', 'p2': 'B', 'p3': 'C', 'p4': 'D', 'p5': 'E', 'p6': 'F',
-            },
-            [{'personId': f'p{i}', 'shirtNumber': str(i)} for i in range(1, 7)],
+            names,
+            people,
             pd.DataFrame(),
         )
         with patch.object(Parser, 'parse_game_bundle', return_value=bundle):
@@ -138,16 +142,20 @@ class LineupTableTests(unittest.TestCase):
             columns,
             [
                 'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
-                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
                 'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
                 'Opp_2M', 'Opp_2A', 'Opp_2FG%', 'Opp_3M', 'Opp_3A', 'Opp_3FG%',
                 'Opp_FTM', 'Opp_FTA', 'Opp_FT%', 'Opp_OR', 'Opp_DR', 'Opp_REB',
-                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BL', 'Opp_PF', 'Opp_FD',
+                'Opp_AST', 'Opp_TO', 'Opp_ST', 'Opp_BS', 'Opp_PF', 'Opp_FD',
                 'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT', 'Opp_PPP',
+                '_lineup_key',
             ],
         )
+        keys = [row['_lineup_key'] for row in rows_out]
+        self.assertEqual(len(keys), len(set(keys)))
         by_name = {row['Lineup']: row for row in rows_out}
         first = by_name['A-B-C-D-E']
+        self.assertEqual(first['_lineup_key'], 'p1|p2|p3|p4|p5')
         self.assertEqual(first['PTS'], 3)
         self.assertEqual(first['PIP'], 2)
         self.assertEqual(first['FBP'], 3)
@@ -163,6 +171,71 @@ class LineupTableTests(unittest.TestCase):
         scoreless = by_name['A-C-D-E-F']
         self.assertEqual(scoreless['PTS'], '')
         self.assertEqual(scoreless['PPP'], '0.00')
+
+    def test_same_short_label_keeps_a_key_per_id_set(self):
+        rows = [
+            _event(eventType='period', subType='start', clock='PT12M0S', success=None, sequence=1),
+            _event(clock='PT11M0S', sequence=2),
+            _event(eventType='substitution', subType='out', personId='p1', clock='PT10M0S', success=None, sequence=3),
+            _event(eventType='substitution', subType='in', personId='p7', clock='PT10M0S', success=None, sequence=4),
+            _event(clock='PT9M0S', sequence=5),
+            _event(eventType='period', subType='end', entityId=None, clock='PT8M0S', success=None, sequence=6),
+        ]
+        roster = [{'personId': f'p{i}', 'shirtNumber': str(i)} for i in range(1, 7)]
+        roster.append({'personId': 'p7', 'shirtNumber': '7'})
+        report = self._report(
+            rows,
+            {'home': ['p1', 'p2', 'p3', 'p4', 'p5']},
+            id_table={'p7': 'A'},
+            roster=roster,
+        )
+        _, rows_out = self._rows(report.get_lineup_stats_json_dict()['Braves'])
+        by_key = {row['_lineup_key']: row['Lineup'] for row in rows_out}
+        self.assertEqual(by_key['p1|p2|p3|p4|p5'], 'A#1-B-C-D-E')
+        self.assertEqual(by_key['p2|p3|p4|p5|p7'], 'B-C-D-E-A#7')
+        _, fours = self._rows(report.get_lineup_stats_json_dict(4)['Braves'])
+        four_names = {row['Lineup'] for row in fours}
+        self.assertIn('A#1-B-C-D', four_names)
+        self.assertIn('B-C-D-A#7', four_names)
+        view = report.get_play_by_play_df()
+        self.assertIn('A#1, B, C, D, E', view['Braves'].tolist())
+        self.assertIn('A#7, B, C, D, E', view['Braves'].tolist())
+        entered = view[view['personId'] == 'p7'].iloc[0]
+        self.assertEqual(entered['Player'], 'A')
+
+    def test_dnp_teammate_suffixes_and_the_other_team_does_not(self):
+        rows = [
+            _event(eventType='period', subType='start', clock='PT12M0S', success=None, sequence=1),
+            _event(clock='PT11M0S', sequence=2),
+            _event(eventType='period', subType='end', entityId=None, clock='PT10M0S', success=None, sequence=3),
+        ]
+        roster = [
+            {'personId': f'p{i}', 'shirtNumber': str(i), 'entityId': 'home'}
+            for i in range(1, 6)
+        ]
+        roster.append({'personId': 'p8', 'shirtNumber': '8', 'entityId': 'home'})
+        report = self._report(
+            rows,
+            {'home': ['p1', 'p2', 'p3', 'p4', 'p5']},
+            id_table={'p8': 'A'},
+            roster=roster,
+        )
+        _, rows_out = self._rows(report.get_lineup_stats_json_dict()['Braves'])
+        self.assertEqual(rows_out[0]['Lineup'], 'A#1-B-C-D-E')
+
+        other = [
+            {'personId': f'p{i}', 'shirtNumber': str(i), 'entityId': 'home'}
+            for i in range(1, 6)
+        ]
+        other.append({'personId': 'a9', 'shirtNumber': '9', 'entityId': 'away'})
+        report = self._report(
+            rows,
+            {'home': ['p1', 'p2', 'p3', 'p4', 'p5']},
+            id_table={'a9': 'A'},
+            roster=other,
+        )
+        _, rows_out = self._rows(report.get_lineup_stats_json_dict()['Braves'])
+        self.assertEqual(rows_out[0]['Lineup'], 'A-B-C-D-E')
 
     def test_smaller_lineups_recompute_ppp_from_the_sum(self):
         rows = [
@@ -231,7 +304,7 @@ class LineupTableTests(unittest.TestCase):
         self.assertEqual(first['Opp_AST'], 1)
         self.assertEqual(first['Opp_TO'], 1)
         self.assertEqual(first['Opp_ST'], '')
-        self.assertEqual(first['Opp_BL'], '')
+        self.assertEqual(first['Opp_BS'], '')
         self.assertEqual(first['Opp_PF'], 1)
         self.assertEqual(first['Opp_FD'], 1)
         self.assertEqual(first['Opp_PIP'], 2)
@@ -282,6 +355,24 @@ class LineupTableTests(unittest.TestCase):
             stripped['columns'],
             ['Lineup', 'PTS', '2FG%', 'PPP'],
         )
+        keyed = pd.DataFrame([{
+            'Lineup': '林志傑-張宗憲',
+            'PTS': '',
+            '2FG%': '.000',
+            'PPP': '0.00',
+            '_lineup_key': 'p1|p2',
+        }]).to_json(orient='split')
+        keyed_text = report_table_payload(
+            {},
+            {'5': {'Braves': keyed}},
+            {'home_team': 'Braves'},
+        )['lineup_home']
+        keyed_payload = json.loads(keyed_text)
+        self.assertEqual(keyed_payload['columns'], ['Lineup', 'PTS', '2FG%', 'PPP'])
+        keyed_row = dict(zip(keyed_payload['columns'], keyed_payload['data'][0]))
+        self.assertEqual(keyed_row['2FG%'], '.000')
+        self.assertEqual(keyed_row['PPP'], '0.00')
+        self.assertNotIn('_lineup_key', keyed_text)
         row = dict(zip(stripped['columns'], stripped['data'][0]))
         self.assertEqual(row['PTS'], 2)
         self.assertEqual(row['2FG%'], '.000')

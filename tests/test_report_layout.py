@@ -8,6 +8,7 @@ except ImportError:
 ALLOWED_TABLE_KEYS = (
     'score_group',
     't_adv_df',
+    'adv_df',
     't_df',
     'k_df',
     'p_df_away',
@@ -70,7 +71,7 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(p1_notes[0].get('x'), 6)
         self.assertEqual(p1_notes[0].get('w'), 6)
         self.assertEqual(p1_notes[0].get('y'), 0)
-        self.assertEqual(p1_notes[0].get('h'), 6)
+        self.assertEqual(p1_notes[0].get('h'), 9)
         self.assertEqual(len(p2_notes), 2)
         left, right = sorted(p2_notes, key=lambda block: block.get('x'))
         self.assertEqual(left.get('content'), '')
@@ -123,7 +124,7 @@ class DefaultLayoutTests(unittest.TestCase):
         page1 = _blocks(_layout(), 0)
         self.assertEqual(
             set(_table_keys(page1)),
-            {'score_group', 't_adv_df'},
+            {'score_group', 't_adv_df', 'adv_df'},
         )
         texts = [b for b in page1 if b.get('type') == 'text']
         self.assertEqual(len(texts), 1)
@@ -132,18 +133,24 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(texts[0].get('y'), 0)
         score = [b for b in page1 if b.get('table_key') == 'score_group'][0]
         four = [b for b in page1 if b.get('table_key') == 't_adv_df'][0]
+        advanced = [b for b in page1 if b.get('table_key') == 'adv_df'][0]
         self.assertEqual(score.get('x'), 0)
         self.assertEqual(score.get('w'), 6)
         self.assertEqual(four.get('x'), 0)
         self.assertEqual(four.get('w'), 6)
         self.assertEqual(four.get('y'), score.get('y') + score.get('h'))
-        self.assertEqual(texts[0].get('h'), score.get('h') + four.get('h'))
+        self.assertEqual(advanced.get('x'), 0)
+        self.assertEqual(advanced.get('w'), 6)
+        self.assertEqual(advanced.get('h'), 3)
+        self.assertEqual(advanced.get('y'), four.get('y') + four.get('h'))
+        stack_h = score.get('h') + four.get('h') + advanced.get('h')
+        self.assertEqual(texts[0].get('h'), stack_h)
         rotations = [b for b in page1 if b.get('type') == 'rotation']
         self.assertEqual(len(rotations), 1)
         rotation = rotations[0]
         self.assertEqual(rotation.get('x'), 0)
         self.assertEqual(rotation.get('w'), 12)
-        self.assertEqual(rotation.get('y'), score.get('h') + four.get('h'))
+        self.assertEqual(rotation.get('y'), stack_h)
         self.assertGreaterEqual(rotation.get('h'), 1)
         self.assertNotIn('src', rotation)
         self.assertNotIn('figure', rotation)
@@ -351,7 +358,7 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
         spec = report_layout.report_header_groups_spec()
-        self.assertEqual(spec['four_factors_label'], '4 FACTORS')
+        self.assertEqual(spec['four_factors_label'], 'FOUR FACTORS')
         self.assertEqual(spec['four_factors_tables'], ('t_adv_df',))
         self.assertEqual(
             spec['no_four_factors_tables'],
@@ -369,6 +376,12 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertIn("tableKey === 'p_df_home'", js)
         self.assertIn("tableKey === 'lineup_away'", js)
         self.assertIn("groupedHeader(columns, tableKey)", js)
+        self.assertIn("text: 'FOUR FACTORS'", js)
+        self.assertIn("name: 'Points in the Paint'", js)
+        self.assertIn("name: 'Second Chance Points'", js)
+        self.assertIn("name: 'Fast Break Points'", js)
+        self.assertIn("name: 'Points off Turnovers'", js)
+        self.assertIn("var KEY_STATS = ['PIP', 'SCP', 'FBP', 'POT']", js)
         skip_fn = js.split('function skipFourFactorsGroup')[1].split('function groupedHeader')[0]
         self.assertNotIn('t_adv_df', skip_fn)
 
@@ -683,6 +696,9 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertGreater(lineup_pos, player_pos)
         self.assertLess(markup.find('Away Player Stats'), markup.find('Home Player Stats'))
         self.assertLess(markup.find('Away Lineup Stats'), markup.find('Home Lineup Stats'))
+        self.assertLess(markup.find('Pace & Four Factors'), markup.find('Advanced Stats'))
+        self.assertLess(markup.find('Advanced Stats'), markup.find('Team Stats'))
+        self.assertLess(markup.find('Team Stats'), markup.find('Key Stats'))
         self.assertLess(markup.find('Key Stats'), markup.find('Away Player Stats'))
         self.assertLess(markup.find('Home Lineup Stats'), markup.find('Import from Play-type CSV File'))
         self.assertLess(
@@ -1090,6 +1106,9 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertLess(titles.index('Home Player Stats'), titles.index('Home Lineup Stats'))
         self.assertLess(titles.index('Away Player Stats'), titles.index('Home Player Stats'))
         self.assertLess(titles.index('Away Lineup Stats'), titles.index('Home Lineup Stats'))
+        self.assertLess(titles.index('Pace & Four Factors'), titles.index('Advanced Stats'))
+        self.assertLess(titles.index('Advanced Stats'), titles.index('Team Stats'))
+        self.assertLess(titles.index('Team Stats'), titles.index('Key Stats'))
         self.assertLess(titles.index('Key Stats'), titles.index('Away Player Stats'))
 
     def test_python_does_not_rebuild_on_layout_store(self):
@@ -1365,7 +1384,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         from pages.game import _build_stats_column_defs
         cols = [
             '#', 'Player', 'S', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
-            'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+            'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
             'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'
         ]
         cdefs = _build_stats_column_defs(cols)
@@ -1421,12 +1440,13 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         child_headers_reb = [ch['headerName'] for ch in group_reb['children']]
         self.assertEqual(child_headers_reb, ['O', 'D', 'T'])
 
-        # Check tail standalone columns order: AST, TO, ST, BL, PF, FD, PTS, eFG%, USG%, PM
+        # Check tail standalone columns order: AST, TO, ST, BS, PF, FD, PTS, eFG%, USG%, PM
         tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('#', 'Player', 'S', 'Min', '+/-')]
-        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'])
+        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'])
         headers = {c['field']: c['headerName'] for c in cdefs if 'field' in c}
         self.assertEqual(headers['AST'], 'AS')
         self.assertEqual(headers['PTS'], 'PT')
+        self.assertEqual(headers['BS'], 'BS')
         for c in cdefs:
             if 'field' in c and c['field'] in tail_cols:
                 self.assertEqual(c['headerClass'], 'ag-header-align-center')
@@ -1445,7 +1465,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         from pages.game import _build_stats_column_defs
         cols = [
             'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
-            'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BL',
+            'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
             'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP'
         ]
         cdefs = _build_stats_column_defs(cols, lineup_size=5)
@@ -1475,10 +1495,11 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual([ch['field'] for ch in key_stats['children']], ['PIP', 'SCP', 'FBP', 'POT'])
         self.assertEqual([ch['headerName'] for ch in key_stats['children']], ['PIP', 'SCP', 'FBP', 'POT'])
         tail_cols = [c['field'] for c in cdefs if 'field' in c and c['field'] not in ('Lineup', 'Min', '+/-')]
-        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BL', 'PF', 'FD', 'PTS', 'PPP'])
+        self.assertEqual(tail_cols, ['AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS', 'PPP'])
         headers = {c['field']: c['headerName'] for c in cdefs if 'field' in c}
         self.assertEqual(headers['AST'], 'AS')
         self.assertEqual(headers['PTS'], 'PT')
+        self.assertEqual(headers['BS'], 'BS')
         self.assertEqual(headers['PPP'], 'PPP')
         self.assertNotIn('eFG%', headers)
         self.assertNotIn('PM', headers)
@@ -1499,7 +1520,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(widths['AST'], (28, 30))
         self.assertEqual(widths['TO'], (28, 30))
         self.assertEqual(widths['ST'], (28, 30))
-        self.assertEqual(widths['BL'], (28, 30))
+        self.assertEqual(widths['BS'], (28, 30))
         self.assertEqual(widths['PF'], (28, 30))
         self.assertEqual(widths['FD'], (28, 30))
         self.assertEqual(widths['PTS'], (36, 40))
@@ -1519,7 +1540,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
             '3M': 8, '3A': 34, '3FG%': '23.5%',
             'FTM': 21, 'FTA': 37, 'FT%': '56.8%',
             'OR': 16, 'DR': 42, 'REB': 58,
-            'AST': 18, 'TO': 23, 'ST': 12, 'BL': 5, 'PF': 24, 'FD': 29, 'PTS': 97
+            'AST': 18, 'TO': 23, 'ST': 12, 'BS': 5, 'PF': 24, 'FD': 29, 'PTS': 97
         }])
         card = _dmc_table_from_df(df, is_team_summary=True)
         # Verify component contains dmc.Table with Thead containing 2 rows (group header + sub header)
@@ -1554,8 +1575,10 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertIn('REB', top_titles)
         self.assertIn('AS', top_titles)
         self.assertIn('PT', top_titles)
+        self.assertIn('BS', top_titles)
         self.assertNotIn('AST', top_titles)
         self.assertNotIn('PTS', top_titles)
+        self.assertNotIn('BL', top_titles)
         self.assertIn('FD', top_titles)
         sub_titles = [th.children for th in sub_row.children]
         self.assertEqual(sub_titles, ['M', 'A', '%', 'M', 'A', '%', 'M', 'A', '%', 'O', 'D', 'T'])
@@ -1572,6 +1595,58 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         for node in walk(dmc_tbl):
             if isinstance(node, (dmc.TableTh, dmc.TableTd)):
                 self.assertEqual(node.style.get('textAlign'), 'center')
+
+        pace = pd.DataFrame([{
+            'Team': 'Braves', 'Pace': '70.0',
+            'eFG%': '52.0%', 'TO%': '12.0%', 'ORB%': '28.0%', 'FT-R': '25.0%',
+        }, {
+            'Team': 'Visitors', 'Pace': '70.0',
+            'eFG%': '48.0%', 'TO%': '16.0%', 'ORB%': '22.0%', 'FT-R': '20.0%',
+        }])
+        pace_card = _dmc_table_from_df(pace, is_team_summary=True, title='Pace & Four Factors')
+        pace_tbl = _find_dmc_table(pace_card)
+        pace_top = [th.children for th in pace_tbl.children[0].children[0].children]
+        pace_sub = [th.children for th in pace_tbl.children[0].children[1].children]
+        self.assertEqual(pace_top, ['TEAM', 'PACE', 'FOUR FACTORS'])
+        self.assertEqual(pace_sub, ['eFG%', 'TO%', 'ORB%', 'FT-R'])
+        advanced = pd.DataFrame([{
+            'Team': 'Braves', 'PPP': '1.15', 'AS/TO': '1.50', 'AST%': '62.5%', '3P-R': '40.0%', 'TS%': '55.0%',
+        }, {
+            'Team': 'Visitors', 'PPP': '0.90', 'AS/TO': '1.00', 'AST%': '33.3%', '3P-R': '35.0%', 'TS%': '48.0%',
+        }])
+        advanced_card = _dmc_table_from_df(advanced, is_team_summary=True, title='ADVANCED')
+        advanced_tbl = _find_dmc_table(advanced_card)
+        advanced_top = [th.children for th in advanced_tbl.children[0].children[0].children]
+        self.assertEqual(advanced_top, ['TEAM', 'PPP', 'AS/TO', 'AST%', '3P-R', 'TS%'])
+        self.assertEqual(len(advanced_tbl.children[0].children), 1)
+        advanced_tds = [n for n in walk(advanced_card) if isinstance(n, dmc.TableTd)]
+        ppp = next(td for td in advanced_tds if td.children == '1.15')
+        self.assertEqual(ppp.style.get('color'), '#0077b6')
+        three_rate = next(td for td in advanced_tds if td.children == '40.0%')
+        self.assertNotEqual(three_rate.style.get('color'), '#0077b6')
+        assist_pct = next(td for td in advanced_tds if td.children == '62.5%')
+        self.assertEqual(assist_pct.style.get('color'), '#0077b6')
+        assist_ratio = next(td for td in advanced_tds if td.children == '1.50')
+        self.assertEqual(assist_ratio.style.get('color'), '#0077b6')
+        true_shooting = next(td for td in advanced_tds if td.children == '55.0%')
+        self.assertEqual(true_shooting.style.get('color'), '#0077b6')
+        key = pd.DataFrame([{
+            'Team': 'Braves',
+            'PIPM': 4, 'PIPA': 8, 'PIP': 10,
+            'SCP2M': 1, 'SCP2A': 2, 'SCP3M': 1, 'SCP3A': 1, 'SCP': 5,
+            'FBP2M': 1, 'FBP2A': 1, 'FBP3M': 0, 'FBP3A': 1, 'FBP': 4,
+            'POT2M': 0, 'POT2A': 0, 'POT3M': 1, 'POT3A': 1, 'POT': 3,
+            'BP': 7,
+        }])
+        key_card = _dmc_table_from_df(key, is_team_summary=True, title='Paint / 2nd Chance / Fastbreak / Off TO / Bench')
+        key_tbl = _find_dmc_table(key_card)
+        key_top = [th.children for th in key_tbl.children[0].children[0].children]
+        key_sub = [th.children for th in key_tbl.children[0].children[1].children]
+        self.assertEqual(key_top, [
+            'TEAM', 'Points in the Paint', 'Second Chance Points',
+            'Fast Break Points', 'Points off Turnovers', 'BP',
+        ])
+        self.assertEqual(key_sub, ['M', 'A', 'PT', '2M', '2A', '3M', '3A', 'PT', '2M', '2A', '3M', '3A', 'PT', '2M', '2A', '3M', '3A', 'PT'])
 
     def test_dmc_table_winner_color_and_team_stripe(self):
         from pages.game import _dmc_table_from_df

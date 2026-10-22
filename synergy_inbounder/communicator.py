@@ -15,7 +15,7 @@ from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_PLAYER_STATS_PERIODS_URL, SYNERGY_PLAYER_STATS_PERIODS_LIVE_URL, \
         SYNERGY_TEAM_STATS_URL, SYNERGY_TEAM_STATS_LIVE_URL, \
         SYNERGY_TEAM_STATS_PERIODS_URL, SYNERGY_TEAM_STATS_PERIODS_LIVE_URL, \
-        SYNERGY_FIXTURE_ROSTER_URL, \
+        SYNERGY_FIXTURE_ROSTER_URL, SYNERGY_FIXTURE_LIVE_SUMMARY_URL, \
         SYNERGY_ORG_PERSONS_URL, SYNERGY_ORG_ENTITIES_URL, \
         SYNERGY_ORG_VENUES_URL, \
         SYNERGY_ORGANIZATION_ID, SYNERGY_EASL_ORGANIZATION_ID, \
@@ -291,6 +291,14 @@ class Communicator:
         if period_id:
             params['periodId'] = period_id
         r = Communicator.get_synergy(url, params=params, organization_id=org_id)
+        return payload_from_response(r, url=url)
+
+    @staticmethod
+    def get_fixture_live_summary(org_id, game_id):
+        url = SYNERGY_FIXTURE_LIVE_SUMMARY_URL.format(
+            organizationId=org_id, fixtureId=game_id,
+        )
+        r = Communicator.get_synergy(url, organization_id=org_id)
         return payload_from_response(r, url=url)
 
     @staticmethod

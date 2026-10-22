@@ -195,3 +195,71 @@ def person_name(id_table, person_id):
     if not full or full == str(person_id).strip():
         return full
     return player_label(full)
+
+
+def shirt_text(shirt):
+    """Jersey text. 7 and 7.0 are 7. A blank shirt is empty."""
+    if isinstance(shirt, bool) or _blank(shirt):
+        return ''
+    if isinstance(shirt, int):
+        return str(shirt)
+    if isinstance(shirt, float):
+        if shirt.is_integer():
+            return str(int(shirt))
+        return str(shirt).strip()
+    text = str(shirt).strip()
+    if len(text) > 2 and text.endswith('.0') and text[:-2].lstrip('-').isdigit():
+        return text[:-2]
+    return text
+
+
+def shared_short_labels(id_table, person_ids):
+    """Short labels worn by two or more of these people."""
+    groups = {}
+    for pid in person_ids or []:
+        if _blank(pid):
+            continue
+        label = person_name(id_table, pid)
+        if not label:
+            continue
+        groups.setdefault(label, set()).add(str(pid).strip())
+    return {label for label, ids in groups.items() if len(ids) >= 2}
+
+
+def lineup_token(id_table, person_id, shirt, shared_labels):
+    """Short label. A shared label with a shirt gains # and that shirt."""
+    label = person_name(id_table, person_id)
+    if shared_labels and label in shared_labels:
+        text = shirt_text(shirt)
+        if text:
+            return f'{label}#{text}'
+    return label
+
+
+def team_person_ids(roster, team_id, on_court_lists):
+    """That team's roster, including DNP, plus anyone on its on-court lists."""
+    found = []
+    seen = set()
+
+    def add(pid):
+        if _blank(pid):
+            return
+        key = str(pid).strip()
+        if key in seen:
+            return
+        seen.add(key)
+        found.append(pid)
+
+    team = None if team_id is None else str(team_id).strip()
+    for person in roster or []:
+        if not isinstance(person, dict):
+            continue
+        entity = person.get('entityId')
+        if not team or entity is None or str(entity).strip() != team:
+            continue
+        add(person.get('personId'))
+    for players in on_court_lists or []:
+        if isinstance(players, (list, tuple)):
+            for pid in players:
+                add(pid)
+    return found

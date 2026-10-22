@@ -75,6 +75,20 @@ class MatchupAggregateTests(unittest.TestCase):
         self.assertEqual(pair['duration'], 60)
         self.assertEqual(pair['home_name'], 'Wu-Yeh-Ho-Lin-Kuo')
         self.assertEqual(pair['away_name'], 'Liu-Wang-Chen-Chang-Chou')
+
+    def test_same_team_short_label_keeps_the_suffix_when_the_twin_sits(self):
+        names = _names()
+        names['h6'] = 'Lin'
+        names['a1'] = 'Lin'
+        shirts = _shirts()
+        shirts['h6'] = 20
+        payload = build_matchup_payload(
+            _shared_frame(), HOME, AWAY, names, shirts,
+            team_people={HOME: list(HOME_IDS) + ['h6'], AWAY: list(AWAY_IDS)},
+        )
+        pair = payload['pairs'][0]
+        self.assertEqual(pair['home_name'], 'Wu-Yeh-Ho-Lin#7-Kuo')
+        self.assertEqual(pair['away_name'], 'Liu-Wang-Lin-Chang-Chou')
         self.assertEqual(pair['home']['PTS'], 2)
         self.assertEqual(pair['home']['2M'], 1)
         self.assertEqual(pair['home']['2A'], 1)
@@ -250,6 +264,31 @@ class MatchupReportTests(unittest.TestCase):
         self.assertEqual(payload['pairs'][0]['duration'], 60)
         self.assertEqual(payload['pairs'][0]['home']['PTS'], 2)
         self.assertEqual(payload['pairs'][0]['home_name'], 'Wu-Yeh-Ho-Lin-Kuo')
+
+    def test_report_pool_includes_a_dnp_twin(self):
+        report = PostGameReport.__new__(PostGameReport)
+        report.playbyplay_df = pd.DataFrame([
+            {'periodId': 1, 'clock': 'PT10M00S', 'eventType': 'jumpBall', 'entityId': HOME,
+             'subType': 'won', 'success': 0, 'personId': None},
+            {'periodId': 1, 'clock': 'PT09M00S', 'eventType': 'period', 'entityId': None,
+             'subType': 'end', 'success': 0, 'personId': None},
+        ])
+        report.starter_dict = {HOME: list(HOME_IDS), AWAY: list(AWAY_IDS)}
+        report.id_table = _names()
+        report.id_table['h6'] = 'Lin'
+        report.roster = [
+            {'personId': player_id, 'shirtNumber': _shirts()[player_id], 'entityId': HOME}
+            for player_id in HOME_IDS
+        ]
+        report.roster.append({'personId': 'h6', 'shirtNumber': 20, 'entityId': HOME})
+        report.roster.extend(
+            {'personId': player_id, 'shirtNumber': _shirts()[player_id], 'entityId': AWAY}
+            for player_id in AWAY_IDS
+        )
+        report._matchup_payload = None
+        payload = report.get_matchup_payload(HOME, AWAY)
+        self.assertEqual(payload['pairs'][0]['home_name'], 'Wu-Yeh-Ho-Lin#7-Kuo')
+        self.assertEqual(payload['pairs'][0]['away_name'], 'Liu-Wang-Chen-Chang-Chou')
 
 
 def _plain(node):
