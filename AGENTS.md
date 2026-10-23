@@ -19,6 +19,7 @@ Read the matching spec before changing behavior or fixing a bug.
 
 - Resume unfinished work by querying `codebase-memory` MCP first and checking `git status -s` for modified file names. NEVER run bare `git diff` across the entire workspace. Inspect specific files (`git diff path/to/file.py`) only when strictly necessary. Do not reread whole page modules (`pages/game.py`, `pages/home.py`) when the targeted diff or graph already names the change.
 - Save product decisions to `codebase-memory` by updating the ADR before ending the turn. Keep the test ladder in this file, out of the ADR.
+- Do not create or edit `docs/adr/`. Behavior and the reason for a rule live in `docs/spec.md`. The graph ADR stays a short index written with `manage_adr` `mode=set_sections`; when the merged document would exceed 8000 characters, shorten an older section in that same call. Do not use `mode=update`.
 - Grill or lock product decisions before editing. Implementation is cheap; a second Playwright run is not.
 - When changing user-visible UI (layout, tabs, routing, rendered data), run the Playwright command in Verification cadence. A single static screenshot is not enough.
 
