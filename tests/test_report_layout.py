@@ -668,6 +668,40 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertNotIn('lineH * 0.4 > maxY', draw_note)
         self.assertIn('if (cursorY >= maxY)', draw_note)
 
+    def test_note_pdf_and_paste_drop_invisible_chars(self):
+        import os
+        import re
+        js_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 'assets', 'report_canvas.js'
+        )
+        with open(js_path, 'r', encoding='utf-8') as handle:
+            js = handle.read()
+        found = re.search(r'var REPORT_INVISIBLE_CHARS = (/.*?/g);', js)
+        self.assertIsNotNone(found)
+        body = found.group(1)[1:-2]
+        pattern = bytes(body, 'utf-8').decode('unicode_escape')
+        rx = re.compile(pattern)
+        self.assertEqual(rx.sub('', '是\u200b 5 STOPS'), '是 5 STOPS')
+        self.assertEqual(rx.sub('', '開\u2009\u2009 2'), '開 2')
+        self.assertEqual(rx.sub('', '是\ufeff5'), '是5')
+        self.assertEqual(rx.sub('', '全\u3000形'), '全\u3000形')
+        self.assertEqual(rx.sub('', 'a\u00a0b'), 'a\u00a0b')
+        self.assertEqual(rx.sub('', 'en\u2002sp'), 'en\u2002sp')
+        self.assertEqual(rx.sub('', 'em\u2003sp'), 'em\u2003sp')
+        self.assertEqual(rx.sub('', '普通 空格'), '普通 空格')
+        line = js.split('var REPORT_INVISIBLE_CHARS = ', 1)[1].split('\n', 1)[0]
+        for kept in ('\\u3000', '\\u00A0', '\\u2002', '\\u2003', '\\u0020'):
+            self.assertNotIn(kept, line)
+        draw_note = js.split('function drawNote', 1)[1].split('function drawImageBlock', 1)[0]
+        self.assertIn('stripReportInvisibleChars(node.textContent || \'\')', draw_note)
+        self.assertLess(
+            draw_note.find('stripReportInvisibleChars(node.textContent'),
+            draw_note.find('pdf.getTextWidth(w)'),
+        )
+        bind = js.split('function bindTextBlocks', 1)[1].split('function bindCsvTitles', 1)[0]
+        self.assertIn("addEventListener('paste'", bind)
+        self.assertIn('stripReportInvisibleIn(note)', bind)
+
     def test_toolbar_add_table_is_icon_menu(self):
         from synergy_reporter.report_components import render_toolbar
         import dash_mantine_components as dmc

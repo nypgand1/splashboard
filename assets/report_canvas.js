@@ -44,6 +44,10 @@
     var JSPDF_JS = '/assets/jspdf.umd.min.js';
     var REPORT_FONT_NAME = 'NotoSansTC';
     var REPORT_FONT_URL = '/assets/NotoSansTC-Regular.ttf';
+    // Missing from NotoSansTC. Screen fallback is zero-width or narrower than U+0020.
+    // jsPDF otherwise measures each one as .notdef (1em) and then drops the glyph.
+    // U+0020, U+00A0, U+2002, U+2003, and U+3000 stay.
+    var REPORT_INVISIBLE_CHARS = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u2004-\u200A\u202F\u205F]/g;
     var TABLE_TITLES = {
         score_group: 'Score',
         t_adv_df: 'Pace & Four Factors',
@@ -1805,6 +1809,25 @@
         return Math.max(1, paperMaxRows(grid) - (node.y || 0));
     }
 
+    function stripReportInvisibleChars(text) {
+        return String(text || '').replace(REPORT_INVISIBLE_CHARS, '');
+    }
+
+    function stripReportInvisibleIn(root) {
+        if (!root || typeof document.createTreeWalker !== 'function') {
+            return;
+        }
+        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+        var node = walker.nextNode();
+        while (node) {
+            var cleaned = stripReportInvisibleChars(node.nodeValue);
+            if (cleaned !== node.nodeValue) {
+                node.nodeValue = cleaned;
+            }
+            node = walker.nextNode();
+        }
+    }
+
     function bindTextBlocks(root) {
         (root || document).querySelectorAll('#report-papers [data-text-block]').forEach(function (note) {
             if (note.dataset.bound === '1') {
@@ -1855,6 +1878,13 @@
                     }
                     persistLocal(readLayoutFromDom());
                 }
+            });
+
+            note.addEventListener('paste', function () {
+                requestAnimationFrame(function () {
+                    stripReportInvisibleIn(note);
+                    resizeNote(note);
+                });
             });
 
             note.addEventListener('beforeinput', function () {
@@ -3597,7 +3627,7 @@
                 var spans = [];
                 function traverse(node, currentStyle) {
                     if (node.nodeType === 3) {
-                        var text = node.textContent || '';
+                        var text = stripReportInvisibleChars(node.textContent || '');
                         if (!text) return;
                         pdf.setFontSize(ptSize);
                         var words = text.split(/( +|\n)/);
