@@ -44,9 +44,17 @@
     var JSPDF_JS = '/assets/jspdf.umd.min.js';
     var REPORT_FONT_NAME = 'NotoSansTC';
     var REPORT_FONT_URL = '/assets/NotoSansTC-Regular.ttf';
-    // Missing from NotoSansTC. Screen fallback is zero-width or narrower than U+0020.
+
+    function reportFontUrl() {
+        var node = document.getElementById('report-font-url');
+        var url = node && (node.textContent || '').trim();
+        return url || REPORT_FONT_URL;
+    }
+
+    // Missing from NotoSansTC Regular. Screen fallback is zero-width or narrower than U+0020.
     // jsPDF otherwise measures each one as .notdef (1em) and then drops the glyph.
     // U+0020, U+00A0, U+2002, U+2003, and U+3000 stay.
+    // cmap format 4 includes U+FF01, U+FF08, U+FF09, U+FF0C, U+FF1A, U+FF1B, U+FF1F.
     var REPORT_INVISIBLE_CHARS = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u2004-\u200A\u202F\u205F]/g;
     var TABLE_TITLES = {
         score_group: 'Score',
@@ -3237,7 +3245,7 @@
         if (reportFontLoading) {
             return reportFontLoading;
         }
-        reportFontLoading = fetch(REPORT_FONT_URL).then(function (res) {
+        reportFontLoading = fetch(reportFontUrl()).then(function (res) {
             if (!res.ok) {
                 throw new Error('font ' + res.status);
             }
@@ -4135,7 +4143,7 @@
         if (document.fonts.check('12px "Noto Sans TC"')) {
             return document.fonts.ready;
         }
-        return fetch(REPORT_FONT_URL).then(function (res) {
+        return fetch(reportFontUrl()).then(function (res) {
             if (!res.ok) {
                 throw new Error('font ' + res.status);
             }

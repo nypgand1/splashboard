@@ -444,6 +444,10 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertIn("pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'F')", js)
         self.assertIn("pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'S')", js)
         self.assertNotIn("pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'bold')", js)
+        self.assertIn("pdf.addFileToVFS('NotoSansTC-Regular.ttf', reportFontBinary)", js)
+        self.assertIn("document.getElementById('report-font-url')", js)
+        self.assertIn('fetch(reportFontUrl())', js)
+        self.assertNotIn('fetch(REPORT_FONT_URL)', js)
         self.assertIn('function boxOutsideClip', js)
         self.assertIn('function clipBoxIsUsable', js)
         self.assertIn('drawTableCell(pdf, cell, paperRect, scale, clip)', js)
@@ -483,6 +487,9 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('report-table-data', markup)
         self.assertIn('report-rotation-figure', markup)
         self.assertIn('report-shot-chart', markup)
+        self.assertIn('report-font-url', markup)
+        from asset_url import font_fetch_url
+        self.assertIn(font_fetch_url(), markup)
         self.assertIn('report-workspace', markup)
         self.assertNotIn('report-tpl-item-table', markup)
         self.assertNotIn('report-templates', markup)
@@ -1202,6 +1209,86 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertFalse(header['draggable'])
 
 
+def _ttf_tables(data):
+    import struct
+    count = struct.unpack_from('>H', data, 4)[0]
+    tables = {}
+    cursor = 12
+    for _ in range(count):
+        tag, _checksum, offset, length = struct.unpack_from('>4sIII', data, cursor)
+        tables[tag] = (offset, length)
+        cursor += 16
+    return tables
+
+
+def _ttf_name(data, name_id):
+    import struct
+    offset, length = _ttf_tables(data)[b'name']
+    table = data[offset:offset + length]
+    _fmt, count, string_offset = struct.unpack_from('>HHH', table, 0)
+    fallback = None
+    for index in range(count):
+        platform, encoding, _lang, nid, size, name_offset = struct.unpack_from(
+            '>HHHHHH', table, 6 + index * 12,
+        )
+        if nid != name_id:
+            continue
+        raw = table[string_offset + name_offset:string_offset + name_offset + size]
+        if platform == 3 and encoding == 1:
+            return raw.decode('utf-16-be')
+        if platform == 1 and encoding == 0 and fallback is None:
+            fallback = raw.decode('latin-1')
+    return fallback
+
+
+def _ttf_os2_weight(data):
+    import struct
+    offset, _length = _ttf_tables(data)[b'OS/2']
+    return struct.unpack_from('>H', data, offset + 4)[0]
+
+
+def _ttf_format4_glyphs(data, codepoints):
+    import struct
+    tables = _ttf_tables(data)
+    cmap_offset = tables[b'cmap'][0]
+    _version, subtables = struct.unpack_from('>HH', data, cmap_offset)
+    format4 = None
+    for index in range(subtables):
+        platform, encoding, sub_offset = struct.unpack_from('>HHI', data, cmap_offset + 4 + index * 8)
+        fmt = struct.unpack_from('>H', data, cmap_offset + sub_offset)[0]
+        if fmt == 4 and platform == 3 and encoding == 1:
+            format4 = cmap_offset + sub_offset
+            break
+    if format4 is None:
+        raise AssertionError('cmap format 4 platform 3 encoding 1 missing')
+    seg_count = struct.unpack_from('>H', data, format4 + 6)[0] // 2
+    end_offset = format4 + 14
+    ends = struct.unpack_from('>' + 'H' * seg_count, data, end_offset)
+    start_offset = end_offset + seg_count * 2 + 2
+    starts = struct.unpack_from('>' + 'H' * seg_count, data, start_offset)
+    delta_offset = start_offset + seg_count * 2
+    deltas = struct.unpack_from('>' + 'h' * seg_count, data, delta_offset)
+    range_offset = delta_offset + seg_count * 2
+    range_offsets = struct.unpack_from('>' + 'H' * seg_count, data, range_offset)
+
+    def glyph_id(codepoint):
+        for index in range(seg_count):
+            if starts[index] <= codepoint <= ends[index]:
+                if range_offsets[index] == 0:
+                    return (codepoint + deltas[index]) & 0xFFFF
+                position = (
+                    range_offset + index * 2 + range_offsets[index]
+                    + (codepoint - starts[index]) * 2
+                )
+                glyph = struct.unpack_from('>H', data, position)[0]
+                if glyph == 0:
+                    return 0
+                return (glyph + deltas[index]) & 0xFFFF
+        return 0
+
+    return {codepoint: glyph_id(codepoint) for codepoint in codepoints}
+
+
 class ReportTabAndPlayerSortTests(unittest.TestCase):
     def test_report_tab_only_for_finished_games(self):
         if report_layout is None:
@@ -1233,13 +1320,28 @@ class ReportTabAndPlayerSortTests(unittest.TestCase):
         import os
         if report_layout is None:
             raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
-        font_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'assets',
-            'NotoSansTC-Regular.ttf',
-        )
+        root = os.path.dirname(os.path.dirname(__file__))
+        font_path = os.path.join(root, 'assets', 'NotoSansTC-Regular.ttf')
+        license_path = os.path.join(root, 'assets', 'NotoSansTC-OFL.txt')
         self.assertTrue(os.path.isfile(font_path))
-        self.assertGreater(os.path.getsize(font_path), 100000)
+        self.assertGreater(os.path.getsize(font_path), 6000000)
+        with open(license_path, 'r', encoding='utf-8') as handle:
+            license_text = handle.read()
+        self.assertIn('SIL Open Font License, Version 1.1', license_text)
+        self.assertIn("Reserved Font Name 'Source'", license_text)
+        with open(font_path, 'rb') as handle:
+            data = handle.read()
+        self.assertEqual(_ttf_name(data, 1), 'Noto Sans TC')
+        self.assertEqual(_ttf_name(data, 2), 'Regular')
+        self.assertEqual(_ttf_os2_weight(data), 400)
+        glyphs = _ttf_format4_glyphs(data, (
+            0xFF01, 0xFF08, 0xFF09, 0xFF0C, 0xFF1A, 0xFF1B, 0xFF1F,
+            0x3001, 0x3002, 0x200B, 0xFEFF,
+        ))
+        for codepoint in (0xFF01, 0xFF08, 0xFF09, 0xFF0C, 0xFF1A, 0xFF1B, 0xFF1F, 0x3001, 0x3002):
+            self.assertGreater(glyphs[codepoint], 0, hex(codepoint))
+        self.assertEqual(glyphs[0x200B], 0)
+        self.assertEqual(glyphs[0xFEFF], 0)
 
 
 class DmcInfrastructureContractTests(unittest.TestCase):

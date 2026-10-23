@@ -4,6 +4,10 @@ Fly's Paketo buildpack freezes asset mtimes at 1980-01-01, so a mtime
 query never changes and phones keep the previous CSS.
 """
 import hashlib
+import os
+
+_FONT_URL = '/assets/NotoSansTC-Regular.ttf'
+_font_fetch_url = None
 
 
 def asset_token(path):
@@ -32,3 +36,12 @@ def stamp_asset_urls(resources):
         return found
 
     resources._filter_resources = wrapped
+
+
+def font_fetch_url():
+    """Fetch URL for the PDF font. The jsPDF VFS name stays unstamped."""
+    global _font_fetch_url
+    if _font_fetch_url is None:
+        path = os.path.join(os.path.dirname(__file__), 'assets', 'NotoSansTC-Regular.ttf')
+        _font_fetch_url = _FONT_URL + '?m=' + asset_token(path)
+    return _font_fetch_url
