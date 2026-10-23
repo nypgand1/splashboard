@@ -17,9 +17,8 @@ COUNT_INK = 11
 SEAM_LINE = 11
 SUBPLOT_TITLE_FONT = 14
 RUN_SCORE_SHIFT = 2
-# Home run ink is the 2px shift plus the 14px subplot-title pass. The home
-# title is that same 14px, one 11px count above the panel. One extra 14px
-# line keeps the run number off the team name.
+# The lower seam stays 55px. Painted run ink is 11px plus the 2px shift.
+# The home title is 14px, with one clear 14px line and the 11px count.
 LOWER_SEAM_INK = (
     RUN_SCORE_SHIFT
     + SUBPLOT_TITLE_FONT
@@ -996,6 +995,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             (home or {}).get('team_name') or 'Home',
         ),
     )
+    _paint_team_titles(fig)
     total_height = _open_lower_seam(fig, base_height)
 
 
@@ -1318,7 +1318,6 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         hovermode='closest',
         uirevision=uirevision if uirevision is not None else f'{view_end - view_start:.3f}',
     )
-    fig.update_annotations(font=dict(size=SUBPLOT_TITLE_FONT, color='#1e293b'))
 
     def layout_axis(ref):
         if ref == 'y':
@@ -1482,14 +1481,6 @@ def _add_kill_annotations(fig):
             )
 
 
-def _is_stop_count(ann):
-    return (
-        getattr(ann, 'yref', None) == 'paper'
-        and getattr(ann, 'xref', None) == 'x2'
-        and str(ann.text or '').isdigit()
-    )
-
-
 def _add_stop_counts(fig, kills, periods):
     top_bottom = float(fig.layout.yaxis.domain[0])
     bottom_top = float(fig.layout.yaxis3.domain[1])
@@ -1509,14 +1500,19 @@ def _add_stop_counts(fig, kills, periods):
         )
 
 
-def _paint_kill_annotations(fig):
+def _paint_team_titles(fig):
+    """Team names keep 14px slate. Other annotations keep the font they were given."""
     for ann in fig.layout.annotations or []:
-        if ann.text == KILL_ROW:
-            ann.font.color = KILL_COLOR
-            ann.font.size = 12
-        elif _is_stop_count(ann):
-            ann.font.color = KILL_COLOR
-            ann.font.size = STOP_COUNT_FONT
+        if (
+            getattr(ann, 'xref', None) == 'paper'
+            and getattr(ann, 'yref', None) == 'paper'
+            and getattr(ann, 'yanchor', None) == 'bottom'
+            and ann.text
+            and ann.text != KILL_ROW
+            and not str(ann.text).isdigit()
+        ):
+            ann.font.size = SUBPLOT_TITLE_FONT
+            ann.font.color = '#1e293b'
 
 
 def report_rotation_figure(payload):
@@ -1530,10 +1526,6 @@ def report_rotation_figure(payload):
         font=dict(size=12, color='#334155'),
         margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
     )
-    fig.update_annotations(font=dict(size=12, color='#1e293b'))
-    _paint_kill_annotations(fig)
     _raise_away_title(fig)
-    fig.update_yaxes(tickfont=dict(size=12), row=2, col=1)
-    fig.layout.yaxis5.tickfont.size = 12
     return fig
 

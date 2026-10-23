@@ -511,6 +511,14 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(home_ann.y, -5)
         self.assertEqual(home_ann.yanchor, 'top')
         self.assertEqual(home_ann.yshift, -2)
+        self.assertEqual(home_ann.font.size, 11)
+        self.assertEqual(home_ann.font.color, '#0077b6')
+        self.assertEqual(away_ann.font.size, 11)
+        self.assertEqual(away_ann.font.color, '#475569')
+        for name in ('Home', 'Away'):
+            title = next(ann for ann in fig.layout.annotations if ann.text == name)
+            self.assertEqual(title.font.size, 14)
+            self.assertEqual(title.font.color, '#1e293b')
 
     def test_margin_grows_toward_the_leading_team(self):
         payload = self._payload()
@@ -658,9 +666,14 @@ class RotationFigureTests(unittest.TestCase):
         self.assertTrue(opacities)
         self.assertTrue(all(opacity == 1.0 for opacity in opacities))
         self.assertEqual(fig.layout.font.size, 12)
-        for ann in fig.layout.annotations or []:
-            self.assertEqual(ann.font.size, 12)
-        self.assertEqual(fig.layout.yaxis2.tickfont.size, 12)
+        self.assertEqual(fig.layout.yaxis2.tickfont.size, 10)
+        run = next(ann for ann in fig.layout.annotations if ann.text == '<b>10-2</b>')
+        self.assertEqual(run.font.size, 11)
+        self.assertEqual(run.font.color, '#0077b6')
+        for name in ('Home', 'Away'):
+            title = next(ann for ann in fig.layout.annotations if ann.text == name)
+            self.assertEqual(title.font.size, 14)
+            self.assertEqual(title.font.color, '#1e293b')
 
     def test_report_rotation_right_margin_matches_name_lane(self):
         report = report_rotation_figure(self._payload())
@@ -698,7 +711,8 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(categories(report.layout.yaxis6), ['A', '3+ STOPS'])
         self.assertFalse(any('●' in label for label in categories(report.layout.yaxis4)))
         self.assertEqual(numbers(report.layout.yaxis5), numbers(report.layout.yaxis2))
-        self.assertEqual(report.layout.yaxis5.tickfont.size, 12)
+        self.assertEqual(report.layout.yaxis2.tickfont.size, 10)
+        self.assertEqual(report.layout.yaxis5.tickfont.size, 10)
         self.assertEqual(fig.layout.yaxis5.tickfont.size, 10)
 
     def test_playhead_dims_bench_and_marks_on_court(self):
@@ -944,7 +958,8 @@ class KillFigureTests(unittest.TestCase):
         report = report_rotation_figure(self._payload())
         report_title = next(ann for ann in report.layout.annotations if ann.text == 'Home')
         self.assertEqual(report_title.yshift, 11)
-        self.assertEqual(report_title.font.size, 12)
+        self.assertEqual(report_title.font.size, 14)
+        self.assertEqual(report_title.font.color, '#1e293b')
         self.assertAlmostEqual(report.layout.height, fig.layout.height)
 
     def test_tall_figure_keeps_its_height_and_still_raises_the_bottom_title(self):
