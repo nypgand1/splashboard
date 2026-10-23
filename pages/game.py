@@ -338,7 +338,7 @@ def _shot_chart_court(side):
             ),
             html.Div(
                 id=f'shot-chart-court-{side}',
-                style={'width': '100%', 'maxWidth': '380px'},
+                style={'width': '100%'},
             ),
         ],
         gap='xs',
@@ -947,6 +947,18 @@ ADVANCED_CARD_TITLE = 'ADVANCED'
 KEY_CARD_TITLE = 'Paint / 2nd Chance / Fastbreak / Off TO / Bench'
 
 
+def _th(label, kind, span=None, cols=None):
+    table_props = {}
+    if span:
+        table_props['rowSpan'] = span
+    if cols:
+        table_props['colSpan'] = cols
+    props = {'className': kind}
+    if table_props:
+        props['tableProps'] = table_props
+    return dmc.TableTh(label, **props)
+
+
 def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
@@ -978,214 +990,57 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
         sub_row = []
         for col in ('Team', 'Min'):
             if col in df.columns:
-                top_row.append(dmc.TableTh(
-                    col.upper(),
-                    tableProps={"rowSpan": 2},
-                    style={
-                        "textAlign": "center",
-                        "verticalAlign": "middle",
-                        "padding": "6px 10px",
-                        "fontSize": "12px",
-                        "fontWeight": 700,
-                        "color": "#0f172a",
-                        "borderBottom": "1px solid #e2e8f0",
-                        "backgroundColor": "#f8fafc",
-                        "whiteSpace": "nowrap",
-                    }
-                ))
+                top_row.append(_th(col.upper(), 'braves-th-span', span=2))
 
-        if any(c in df.columns for c in ('2M', '2A', '2FG%')):
-            top_row.append(dmc.TableTh("2PT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
-            sub_row.extend([
-                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-            ])
-
-        if any(c in df.columns for c in ('3M', '3A', '3FG%')):
-            top_row.append(dmc.TableTh("3PT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
-            sub_row.extend([
-                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-            ])
-
-        if any(c in df.columns for c in ('FTM', 'FTA', 'FT%')):
-            top_row.append(dmc.TableTh("FT", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
-            sub_row.extend([
-                dmc.TableTh("M", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("A", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("%", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-            ])
-
-        if any(c in df.columns for c in ('OR', 'DR', 'REB')):
-            top_row.append(dmc.TableTh("REB", tableProps={"colSpan": 3}, style={"textAlign": "center", "padding": "4px 8px", "fontSize": "12px", "fontWeight": 700, "color": "#0f172a", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}))
-            sub_row.extend([
-                dmc.TableTh("O", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("D", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-                dmc.TableTh("T", style={"textAlign": "center", "padding": "4px 6px", "fontSize": "11px", "fontWeight": 700, "color": "#475569", "borderBottom": "1px solid #e2e8f0", "backgroundColor": "#f8fafc"}),
-            ])
+        for title_text, members, leaves in (
+            ('2PT', ('2M', '2A', '2FG%'), ('M', 'A', '%')),
+            ('3PT', ('3M', '3A', '3FG%'), ('M', 'A', '%')),
+            ('FT', ('FTM', 'FTA', 'FT%'), ('M', 'A', '%')),
+            ('REB', ('OR', 'DR', 'REB'), ('O', 'D', 'T')),
+        ):
+            if any(col in df.columns for col in members):
+                top_row.append(_th(title_text, 'braves-th-group', cols=3))
+                sub_row.extend(_th(leaf, 'braves-th-sub') for leaf in leaves)
 
         for col in ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
-                top_row.append(dmc.TableTh(
-                    _stat_header(col),
-                    tableProps={"rowSpan": 2},
-                    style={
-                        "textAlign": "center",
-                        "verticalAlign": "middle",
-                        "padding": "6px 8px",
-                        "fontSize": "12px",
-                        "fontWeight": 700,
-                        "color": "#0f172a",
-                        "borderBottom": "1px solid #e2e8f0",
-                        "backgroundColor": "#f8fafc",
-                        "whiteSpace": "nowrap",
-                    }
-                ))
+                top_row.append(_th(_stat_header(col), 'braves-th-span-tight', span=2))
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif has_key_stats_grouped:
         top_row = []
         sub_row = []
-        top_style = {
-            "textAlign": "center",
-            "verticalAlign": "middle",
-            "padding": "6px 10px",
-            "fontSize": "12px",
-            "fontWeight": 700,
-            "color": "#0f172a",
-            "borderBottom": "1px solid #e2e8f0",
-            "backgroundColor": "#f8fafc",
-            "whiteSpace": "nowrap",
-        }
-        group_style = {
-            "textAlign": "center",
-            "padding": "4px 8px",
-            "fontSize": "12px",
-            "fontWeight": 700,
-            "color": "#0f172a",
-            "borderBottom": "1px solid #e2e8f0",
-            "backgroundColor": "#f8fafc",
-        }
-        sub_style = {
-            "textAlign": "center",
-            "padding": "4px 6px",
-            "fontSize": "11px",
-            "fontWeight": 700,
-            "color": "#475569",
-            "borderBottom": "1px solid #e2e8f0",
-            "backgroundColor": "#f8fafc",
-        }
         if 'Team' in df.columns:
-            top_row.append(dmc.TableTh("TEAM", tableProps={"rowSpan": 2}, style=top_style))
+            top_row.append(_th('TEAM', 'braves-th-span', span=2))
         for name, pairs in _KEY_STAT_GROUPS:
             present = [(column, label) for column, label in pairs if column in df.columns]
             if not present:
                 continue
-            top_row.append(dmc.TableTh(
-                name, tableProps={"colSpan": len(present)}, style=group_style,
-            ))
-            sub_row.extend(dmc.TableTh(label, style=sub_style) for _column, label in present)
+            top_row.append(_th(name, 'braves-th-group', cols=len(present)))
+            sub_row.extend(_th(label, 'braves-th-sub') for _column, label in present)
         if 'BP' in df.columns:
-            top_row.append(dmc.TableTh("BP", tableProps={"rowSpan": 2}, style=top_style))
+            top_row.append(_th('BP', 'braves-th-span', span=2))
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('eFG%', 'TO%', 'ORB%', 'FT-R')):
         top_row = []
         sub_row = []
         if 'Team' in df.columns:
-            top_row.append(dmc.TableTh(
-                "TEAM",
-                tableProps={"rowSpan": 2},
-                style={
-                    "textAlign": "center",
-                    "verticalAlign": "middle",
-                    "padding": "6px 10px",
-                    "fontSize": "12px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                    "whiteSpace": "nowrap",
-                }
-            ))
+            top_row.append(_th('TEAM', 'braves-th-span', span=2))
         if 'Pace' in df.columns:
-            top_row.append(dmc.TableTh(
-                "PACE",
-                tableProps={"rowSpan": 2},
-                style={
-                    "textAlign": "center",
-                    "verticalAlign": "middle",
-                    "padding": "6px 10px",
-                    "fontSize": "12px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                    "whiteSpace": "nowrap",
-                }
-            ))
+            top_row.append(_th('PACE', 'braves-th-span', span=2))
         ff_cols = [c for c in ('eFG%', 'TO%', 'ORB%', 'FT-R') if c in df.columns]
         if ff_cols:
-            top_row.append(dmc.TableTh(
-                "FOUR FACTORS",
-                tableProps={"colSpan": len(ff_cols)},
-                style={
-                    "textAlign": "center",
-                    "padding": "4px 8px",
-                    "fontSize": "12px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                }
-            ))
-            for fc in ff_cols:
-                sub_row.append(dmc.TableTh(
-                    fc,
-                    style={
-                        "textAlign": "center",
-                        "padding": "4px 6px",
-                        "fontSize": "11px",
-                        "fontWeight": 700,
-                        "color": "#475569",
-                        "borderBottom": "1px solid #e2e8f0",
-                        "backgroundColor": "#f8fafc",
-                    }
-                ))
+            top_row.append(_th('FOUR FACTORS', 'braves-th-group', cols=len(ff_cols)))
+            sub_row.extend(_th(fc, 'braves-th-sub') for fc in ff_cols)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('PPP', 'AS/TO', 'AST%', '3P-R', 'TS%')):
         labels = ['TEAM'] if 'Team' in df.columns else []
         labels.extend(col for col in ('PPP', 'AS/TO', 'AST%', '3P-R', 'TS%') if col in df.columns)
         header = [dmc.TableTr([
-            dmc.TableTh(
-                label,
-                style={
-                    "textAlign": "center",
-                    "padding": "7px 10px",
-                    "fontSize": "13px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                    "whiteSpace": "nowrap",
-                }
-            ) for label in labels
+            _th(label, 'braves-th-single') for label in labels
         ])]
     else:
         header = [dmc.TableTr([
-            dmc.TableTh(
-                col,
-                style={
-                    "textAlign": "center",
-                    "padding": "7px 10px",
-                    "fontSize": "13px",
-                    "fontWeight": 700,
-                    "color": "#0f172a",
-                    "borderBottom": "1px solid #e2e8f0",
-                    "backgroundColor": "#f8fafc",
-                    "whiteSpace": "nowrap",
-                }
-            ) for col in df.columns
+            _th(col, 'braves-th-single') for col in df.columns
         ])]
 
     rows = []
@@ -1209,27 +1064,16 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
 
             # Determine bolding and color: Only winning row in column is bold blue (team name itself is regular or semi-bold)
             is_winner = col_winners.get(col) == row_idx
-            text_color = "#0077b6" if is_winner else "#1e293b"
-            font_weight = 700 if is_winner else 400
-
-            cell_style = {
-                "textAlign": "center",
-                "padding": "7px 10px",
-                "fontSize": "13px",
-                "fontWeight": font_weight,
-                "color": text_color,
-                "whiteSpace": "nowrap",
-            }
+            cell_style = {}
+            if is_winner:
+                cell_style['color'] = '#0077b6'
+                cell_style['fontWeight'] = 700
             if c_idx == 0 and team_stripe_style:
                 cell_style.update(team_stripe_style)
 
-            cells.append(dmc.TableTd(val_str, style=cell_style))
+            cells.append(dmc.TableTd(val_str, style=cell_style or None))
 
-        rows.append(dmc.TableTr(
-            cells,
-            className="braves-clean-row",
-            style={"backgroundColor": "#ffffff"}
-        ))
+        rows.append(dmc.TableTr(cells, className="braves-clean-row"))
 
     table = dmc.Table(
         [dmc.TableThead(header), dmc.TableTbody(rows)],
@@ -2469,7 +2313,7 @@ def _court_image(src, alt):
     return html.Img(
         src=src,
         alt=alt,
-        style={'width': '100%', 'maxWidth': '380px', 'height': 'auto', 'display': 'block'},
+        style={'width': '100%', 'height': 'auto', 'display': 'block'},
     )
 
 

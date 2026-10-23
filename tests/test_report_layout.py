@@ -1367,6 +1367,8 @@ class DmcInfrastructureContractTests(unittest.TestCase):
         self.assertIn('AppShell', code)
         self.assertIn('AppShellHeader', code)
         self.assertIn('AppShellMain', code)
+        self.assertIn('"primaryColor": "bravesBlue"', code)
+        self.assertNotIn('"cyan"', code)
 
 
 class NavbarDmcContractTests(unittest.TestCase):
@@ -1728,9 +1730,19 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
             elif ch is not None:
                 yield from walk(ch)
 
+        header_kinds = {
+            'braves-th-span',
+            'braves-th-span-tight',
+            'braves-th-group',
+            'braves-th-sub',
+            'braves-th-single',
+        }
         for node in walk(dmc_tbl):
-            if isinstance(node, (dmc.TableTh, dmc.TableTd)):
-                self.assertEqual(node.style.get('textAlign'), 'center')
+            if isinstance(node, dmc.TableTh):
+                self.assertIn(node.className, header_kinds)
+                self.assertFalse(getattr(node, 'style', None))
+            if isinstance(node, dmc.TableTd):
+                self.assertFalse((node.style or {}).get('textAlign'))
 
         pace = pd.DataFrame([{
             'Team': 'Braves', 'Pace': '70.0',
@@ -1759,7 +1771,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         ppp = next(td for td in advanced_tds if td.children == '1.15')
         self.assertEqual(ppp.style.get('color'), '#0077b6')
         three_rate = next(td for td in advanced_tds if td.children == '40.0%')
-        self.assertNotEqual(three_rate.style.get('color'), '#0077b6')
+        self.assertFalse(three_rate.style)
         assist_pct = next(td for td in advanced_tds if td.children == '62.5%')
         self.assertEqual(assist_pct.style.get('color'), '#0077b6')
         assist_ratio = next(td for td in advanced_tds if td.children == '1.50')
@@ -1808,7 +1820,7 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         pts_away = next(td for td in tds if td.children == '79')
         self.assertEqual(pts_home.style.get('color'), '#0077b6')
         self.assertEqual(pts_home.style.get('fontWeight'), 700)
-        self.assertEqual(pts_away.style.get('color'), '#1e293b')
+        self.assertFalse(pts_away.style)
         team_home = next(td for td in tds if td.children == 'Home')
         team_away = next(td for td in tds if td.children == 'Away')
         self.assertEqual(team_home.style.get('borderLeft'), '3.5px solid #0077b6')

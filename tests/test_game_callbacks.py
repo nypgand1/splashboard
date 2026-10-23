@@ -817,6 +817,11 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('border-radius: 10px', narrow)
         phone = css.split('@media (max-width: 768px)', 1)[1].split('@media', 1)[0]
         self.assertIn('flex-wrap: nowrap', phone)
+        self.assertIn('border-radius: 10px', phone)
+        self.assertIn('border: 1px solid var(--border)', phone)
+        self.assertIn('box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15)', phone)
+        self.assertIn('margin: 0 !important', phone)
+        self.assertNotIn('border-radius: 0', phone)
 
 
 def _shot_frame():
