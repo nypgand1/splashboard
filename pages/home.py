@@ -19,7 +19,7 @@ import pandas as pd
 
 from synergy_inbounder.communicator import SynergyAuthError
 from synergy_inbounder.live_clock import forget_finished, recall, refresh_summaries
-from synergy_inbounder.names import display_name
+from synergy_inbounder.names import TEAM_TBD, display_name
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
     id_refresh_state,
@@ -43,6 +43,7 @@ from ui_kit import (
     EMPTY_HOME,
     EMPTY_HOME_FILTER,
     EMPTY_HOME_FILTER_NEXT,
+    EMPTY_HOME_FILTER_TEAM_NEXT,
     EMPTY_HOME_NEXT,
     ERROR_HOME,
     REFRESH_DELAYED,
@@ -65,13 +66,17 @@ register_page(
 )
 
 SHOW_UPCOMING = 'upcoming'
-SHOW_FINISHED = 'finished'
+SHOW_RESULTS = 'results'
 SHOW_ALL = 'all'
 SHOW_OPTIONS = [
     {'label': 'Upcoming', 'value': SHOW_UPCOMING},
-    {'label': 'Finished', 'value': SHOW_FINISHED},
+    {'label': 'Results', 'value': SHOW_RESULTS},
     {'label': 'All', 'value': SHOW_ALL},
 ]
+TEAM_ALL = 'all'
+TEAM_ALL_LABEL = 'All Teams'
+TEAM_INPUT_PAD = 12
+TEAM_CHEVRON = 28
 LEAGUE_PLG = 'PLG'
 LEAGUE_EASL = 'EASL'
 LEAGUE_OPTIONS = [
@@ -98,6 +103,7 @@ def initial_home_filters():
     return {
         'show': SHOW_UPCOMING,
         'game_type': None,
+        'team': TEAM_ALL,
         'league': LEAGUE_PLG,
         'seasons': {
             LEAGUE_PLG: SYNERGY_SEASON_ID,
@@ -163,7 +169,22 @@ def _season_map(filters):
     return raw
 
 
-def apply_home_filters(show, game_type, league, season_id, filters, triggered, records=None):
+def _stored_team(value):
+    text = str(value or '').strip()
+    return text or TEAM_ALL
+
+
+def _active_team(team, filters):
+    if team is not None:
+        return _stored_team(team)
+    if isinstance(filters, dict):
+        return _stored_team(filters.get('team'))
+    return TEAM_ALL
+
+
+def apply_home_filters(
+    show, game_type, league, season_id, filters, triggered, records=None, team=None,
+):
     filters = filters if isinstance(filters, dict) else {}
     seasons = _season_map(filters)
     current = filters.get('league') or LEAGUE_PLG
@@ -171,26 +192,36 @@ def apply_home_filters(show, game_type, league, season_id, filters, triggered, r
         current = LEAGUE_PLG
     next_show = filters.get('show') or SHOW_UPCOMING
     next_type = filters.get('game_type')
+    next_team = _active_team(team, filters)
     scope = None
     if triggered == 'home-show':
         next_show = show or SHOW_UPCOMING
         next_type = game_type
         if isinstance(records, list):
-            next_type = game_type_after_show_change(records, next_show, game_type)
+            next_team = coerce_team(records, next_team)
+            next_type = game_type_for_show(records, next_show, game_type, next_team)
     elif triggered == 'home-game-type':
         next_type = game_type
+    elif triggered == 'home-team':
+        next_team = _stored_team(team)
+        if isinstance(records, list):
+            next_team = coerce_team(records, next_team)
+            next_type = game_type_for_show(records, next_show, game_type, next_team)
     elif triggered == 'home-league':
         current = league if league in (LEAGUE_PLG, LEAGUE_EASL) else LEAGUE_PLG
         next_type = None
+        next_team = TEAM_ALL
         scope = {'league': current, 'season_id': seasons[current]}
     elif triggered == 'home-season':
         if season_id:
             seasons[current] = season_id
         next_type = None
+        next_team = TEAM_ALL
         scope = {'league': current, 'season_id': seasons[current]}
     data = {
         'show': next_show,
         'game_type': next_type,
+        'team': next_team,
         'league': current,
         'seasons': seasons,
     }
@@ -210,6 +241,7 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     triggered = _triggered_id()
     scope_change = triggered == 'home-scope-store'
     show, game_type = _home_filter_values(filters)
+    team = _active_team(None, filters)
     league, season_id = _scope_values(scope, filters)
     prefetch = bool(first or scope_change)
     try:
@@ -245,12 +277,16 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     delayed = bool(refresh.get('delayed') or names.get('delayed'))
     if first or scope_change:
         show, game_type = entry_home_view(records)
-    records = _apply_live_clocks(records, show, game_type, league)
+        team = TEAM_ALL
+    else:
+        team = coerce_team(records, team)
+    records = _apply_live_clocks(records, show, game_type, league, team)
     if first or scope_change:
         page = render_home_page(
             records,
             show=show,
             game_type=game_type,
+            team=team,
             league=league,
             season_id=season_id,
             stamp=stamp,
@@ -263,11 +299,19 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
         records,
         show=show,
         game_type=game_type,
+        team=team,
         league=league,
         season_id=season_id,
         stamp=stamp,
         delayed=delayed,
     )
+    stored_team = _active_team(None, filters)
+    if team != stored_team and isinstance(filters, dict):
+        data = dict(filters)
+        data['show'] = show
+        data['game_type'] = game_type
+        data['team'] = team
+        return page, data
     return page, no_update
 
 
@@ -279,13 +323,14 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
     Input('home-game-type', 'value'),
     Input('home-league', 'value'),
     Input('home-season', 'value'),
+    Input('home-team', 'value'),
     State('home-filter-store', 'data'),
     State('home-schedule-store', 'data'),
     prevent_initial_call=True,
 )
-def remember_home_filters(show, game_type, league, season_id, filters, records):
+def remember_home_filters(show, game_type, league, season_id, team, filters, records):
     data, scope = apply_home_filters(
-        show, game_type, league, season_id, filters, ctx.triggered_id, records,
+        show, game_type, league, season_id, filters, ctx.triggered_id, records, team=team,
     )
     type_out = no_update
     if scope is None and data.get('game_type') != game_type:
@@ -300,18 +345,23 @@ def remember_home_filters(show, game_type, league, season_id, filters, records):
     Input('home-schedule-store', 'data'),
     Input('home-show', 'value'),
     Input('home-game-type', 'value'),
+    Input('home-team', 'value'),
     prevent_initial_call=True,
 )
-def update_home_view(records, show, game_type):
+def update_home_view(records, show, game_type, team=None):
     if isinstance(records, dict) and records.get('_ui') == 'error':
         return error_alert(ERROR_HOME)
-    rows = records or []
-    if _triggered_id() == 'home-show':
-        game_type = game_type_after_show_change(rows, show, game_type)
+    rows = list(records or [])
+    team = _active_team(team, None)
+    triggered = _triggered_id()
+    if triggered in ('home-show', 'home-team'):
+        if triggered == 'home-team':
+            team = coerce_team(rows, team)
+        game_type = game_type_for_show(rows, show, game_type, team)
     head = rows[0] if rows else None
     league = head.get('league') if isinstance(head, dict) and head.get('league') else LEAGUE_PLG
-    rows = _apply_live_clocks(rows, show, game_type, league)
-    return render_schedule_list(rows, show, game_type)
+    rows = _apply_live_clocks(rows, show, game_type, league, team)
+    return render_schedule_list(rows, show, game_type, team)
 
 
 def _jsonable(node):
@@ -335,6 +385,7 @@ clientside_callback(
     Input('home-game-type', 'value'),
     Input('home-league', 'value'),
     Input('home-season', 'value'),
+    Input('home-team', 'value'),
     prevent_initial_call=True,
 )
 
@@ -414,13 +465,15 @@ def _row_meta_time(record):
     return format_row_time(start)
 
 
-def _apply_live_clocks(records, show, game_type, league):
+def _apply_live_clocks(records, show, game_type, league, team=None):
     rows = list(records or [])
     dict_rows = [row for row in rows if isinstance(row, dict)]
     org = _organization_for_home_league(league)
     forget_finished(org, dict_rows)
     visible = _by_start([
-        row for row in filter_schedule_records(dict_rows, show, game_type)
+        row for row in filter_schedule_records(
+            candidates_for_team(dict_rows, team), show, game_type,
+        )
         if str(row.get('status') or '').strip() == 'IN_PROGRESS' and row.get('fixtureId')
     ])
     refresh_summaries(org, visible)
@@ -468,9 +521,80 @@ def schedule_records(df, league=LEAGUE_PLG):
             'awayScore': away_score,
             'statusBucket': status_bucket(status),
             'scoreClickable': clickable,
+            'teamIdHome': _entity_id(row.get('teamIdHome')),
+            'teamIdAway': _entity_id(row.get('teamIdAway')),
         })
     records.sort(key=lambda item: _parse_start(item['startTimeLocal']) or pd.Timestamp.max)
     return records
+
+
+def _entity_id(value):
+    plain = _plain(value)
+    if plain is None:
+        return ''
+    text = str(plain).strip()
+    if not text or text.lower() in ('nan', 'none'):
+        return ''
+    return text
+
+
+def _named_side(record, id_key, name_key):
+    entity_id = _entity_id(record.get(id_key) if isinstance(record, dict) else None)
+    name = str((record or {}).get(name_key) or '').strip() if isinstance(record, dict) else ''
+    if not entity_id or not name or name == TEAM_TBD:
+        return None
+    return entity_id, name
+
+
+def team_menu(records):
+    found = {}
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        for pair in (
+            _named_side(record, 'teamIdHome', 'homeTeam'),
+            _named_side(record, 'teamIdAway', 'awayTeam'),
+        ):
+            if pair is None:
+                continue
+            entity_id, name = pair
+            found.setdefault(entity_id, name)
+    ordered = sorted(found.items(), key=lambda item: (item[1], item[0]))
+    options = [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}]
+    options.extend(
+        {'label': name, 'value': entity_id} for entity_id, name in ordered
+    )
+    return options, len(ordered) >= 2
+
+
+def coerce_team(records, team):
+    team = _stored_team(team)
+    _options, visible = team_menu(records)
+    if not visible or team == TEAM_ALL:
+        return TEAM_ALL
+    ids = {
+        option['value'] for option in _options if option['value'] != TEAM_ALL
+    }
+    if team in ids:
+        return team
+    return TEAM_ALL
+
+
+def candidates_for_team(records, team):
+    rows = [row for row in records or [] if isinstance(row, dict)]
+    team = _stored_team(team)
+    if team == TEAM_ALL:
+        return rows
+    return [
+        row for row in rows
+        if row.get('teamIdHome') == team or row.get('teamIdAway') == team
+    ]
+
+
+def game_type_for_show(records, show, game_type, team):
+    return game_type_after_show_change(
+        candidates_for_team(records, team), show, game_type,
+    )
 
 
 def game_type_options(records):
@@ -548,7 +672,7 @@ def entry_home_view(records):
         return SHOW_UPCOMING, _stage(_earliest(real))
     finished = _matching(records, lambda record: _bucket(record) == 'finished')
     if finished:
-        return SHOW_FINISHED, _stage(_latest(finished))
+        return SHOW_RESULTS, _stage(_latest(finished))
     needed = _matching(records, _is_if_needed)
     if needed:
         return SHOW_UPCOMING, _stage(_earliest(needed))
@@ -561,7 +685,7 @@ def _in_show(record, show):
     bucket = _bucket(record)
     if show == SHOW_UPCOMING:
         return bucket in ('live', 'unplayed')
-    if show == SHOW_FINISHED:
+    if show == SHOW_RESULTS:
         return bucket == 'finished'
     return True
 
@@ -578,7 +702,7 @@ def stage_has_games(records, show, game_type):
 
 def default_stage_for_show(records, show):
     records = list(records or [])
-    if show == SHOW_FINISHED:
+    if show == SHOW_RESULTS:
         finished = _matching(records, lambda record: _bucket(record) == 'finished')
         return _stage(_latest(finished)) if finished else None
     if show == SHOW_ALL:
@@ -626,6 +750,7 @@ def home_filters_after_default(filters, league, season_id, show, game_type):
     return {
         'show': show,
         'game_type': game_type,
+        'team': TEAM_ALL,
         'league': league,
         'seasons': seasons,
     }
@@ -641,7 +766,7 @@ def filter_schedule_records(records, show, game_type):
             if status_bucket(row.get('status')) in ('live', 'unplayed')
         ]
         rows.sort(key=lambda item: _parse_start(item.get('startTimeLocal')) or pd.Timestamp.max)
-    elif show == SHOW_FINISHED:
+    elif show == SHOW_RESULTS:
         rows = [
             row for row in rows
             if status_bucket(row.get('status')) == 'finished'
@@ -731,14 +856,21 @@ def _compact_row(record):
     return dmc.Box(inner, className='home-schedule-row home-schedule-row-static')
 
 
-def render_schedule_list(records, show, game_type):
+def render_schedule_list(records, show, game_type, team=None):
     source = list(records or [])
     if not source:
         body = empty_state(EMPTY_HOME, EMPTY_HOME_NEXT)
     else:
-        filtered = filter_schedule_records(source, show, game_type)
+        filtered = filter_schedule_records(
+            candidates_for_team(source, team), show, game_type,
+        )
         if not filtered:
-            body = empty_state(EMPTY_HOME_FILTER, EMPTY_HOME_FILTER_NEXT)
+            next_step = (
+                EMPTY_HOME_FILTER_NEXT
+                if _stored_team(team) == TEAM_ALL
+                else EMPTY_HOME_FILTER_TEAM_NEXT
+            )
+            body = empty_state(EMPTY_HOME_FILTER, next_step)
         else:
             children = []
             for date_key, group in grouped_by_date(filtered):
@@ -772,10 +904,45 @@ def _season_select_data(league):
     ]
 
 
+def _team_select(options, value):
+    labels = [item['label'] for item in options] or [TEAM_ALL_LABEL]
+    probes = [
+        html.Span(
+            label,
+            className='home-team-sizer-probe',
+            **{'aria-hidden': 'true'},
+        )
+        for label in labels
+    ]
+    control = dmc.Select(
+        id='home-team',
+        data=options,
+        value=value,
+        allowDeselect=False,
+        clearable=False,
+        searchable=False,
+        size='xs',
+        radius='md',
+        comboboxProps={'withinPortal': True},
+        rightSectionWidth=TEAM_CHEVRON,
+        className='home-team-sizer-control',
+        styles={
+            'wrapper': {'width': '100%'},
+            'input': {
+                'width': '100%',
+                'paddingInlineStart': f'{TEAM_INPUT_PAD}px',
+                'paddingInlineEnd': f'{TEAM_INPUT_PAD + TEAM_CHEVRON}px',
+            },
+        },
+    )
+    return html.Div(probes + [control], className='home-team-sizer')
+
+
 def render_home_page(
     records,
     show=SHOW_UPCOMING,
     game_type=None,
+    team=None,
     league=LEAGUE_PLG,
     season_id=None,
     failed=False,
@@ -789,6 +956,8 @@ def render_home_page(
     rows = [] if failed else list(records or [])
     options = game_type_options(rows)
     selected_type = game_type or None
+    team_options, team_visible = team_menu(rows)
+    selected_team = coerce_team(rows, team)
     league_control = dmc.SegmentedControl(
         id='home-league',
         data=LEAGUE_OPTIONS,
@@ -831,7 +1000,7 @@ def render_home_page(
         if not stamp:
             stamp = _last_update_stamp()
         store_data = rows
-        list_body = render_schedule_list(rows, show, game_type)
+        list_body = render_schedule_list(rows, show, game_type, selected_team)
     return dmc.Stack(
         [
             dcc.Store(id='home-schedule-store', data=store_data),
@@ -842,6 +1011,12 @@ def render_home_page(
                         [
                             filter_control('', league_control, wrap_id='home-league-wrap'),
                             filter_control('', season_control, wrap_id='home-season-wrap'),
+                            filter_control(
+                                '',
+                                _team_select(team_options, selected_team),
+                                wrap_id='home-team-wrap',
+                                visible=team_visible,
+                            ),
                             filter_control(
                                 '',
                                 type_control,
@@ -877,12 +1052,16 @@ def _decorate_schedule(df):
     )
     df['statusBucket'] = df['status'].apply(status_bucket)
     df['scoreClickable'] = df['status'].apply(score_is_clickable)
+    for key in ('teamIdHome', 'teamIdAway'):
+        if key not in df.columns:
+            df[key] = None
     return df[[
         'Time', 'Status', 'rawStatus', 'Game Type', 'Venue',
         'Home Team', 'Score', 'Away Team', 'fixtureId',
         'statusBucket', 'scoreClickable',
         'startTimeLocal', 'fixtureType', 'status',
         'teamScoreHome', 'teamScoreAway',
+        'teamIdHome', 'teamIdAway',
     ]]
 
 

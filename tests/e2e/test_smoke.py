@@ -157,6 +157,52 @@ def test_home_easl_finished_row_links_to_its_game(page, e2e_server):
         '90' in page.locator('.home-schedule-list').inner_text()
 
 
+def test_home_team_filter_sits_by_season_and_results_label(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    _wait(page, '#home-team')
+    _wait(page, '#home-show')
+    assert 'Results' in page.locator('#home-show').inner_text()
+    assert 'Finished' not in page.locator('#home-show').inner_text()
+    assert page.locator('#home-team').input_value() == 'All Teams'
+    season_box = page.locator('#home-season').bounding_box()
+    team_box = page.locator('#home-team-wrap').bounding_box()
+    type_box = page.locator('#home-game-type-wrap').bounding_box()
+    assert season_box['x'] + season_box['width'] <= team_box['x'] + 1
+    assert team_box['x'] + team_box['width'] <= type_box['x'] + 1
+    widths = page.evaluate(
+        '''() => {
+            const wrap = document.querySelector('#home-team-wrap .home-team-sizer');
+            const probes = [...wrap.querySelectorAll('.home-team-sizer-probe')];
+            const longest = probes.reduce((best, probe) => (
+                probe.getBoundingClientRect().width > best.getBoundingClientRect().width
+                    ? probe : best
+            ));
+            const select = wrap.querySelector('.home-team-sizer-control');
+            return {
+                probe: longest.getBoundingClientRect().width,
+                select: select.getBoundingClientRect().width,
+            };
+        }'''
+    )
+    assert abs(widths['select'] - widths['probe']) <= 2
+    page.locator('#home-team').click()
+    page.get_by_role('option', name='Taipei Fubon Braves', exact=True).click()
+    page.wait_for_function(
+        "() => document.querySelector('#home-team')?.value === 'Taipei Fubon Braves'",
+        timeout=10000,
+    )
+    clipped = page.evaluate(
+        '''() => {
+            const host = document.querySelector('#home-team');
+            const input = host instanceof HTMLInputElement ? host : host.querySelector('input');
+            return input.scrollWidth > input.clientWidth + 1;
+        }'''
+    )
+    assert clipped is False
+    assert HOME in page.locator('.home-schedule-list').inner_text()
+
+
 def test_home_interval_keeps_the_show_filter(page, e2e_server):
     page.set_viewport_size({'width': 1280, 'height': 900})
     page.goto(e2e_server + '/', wait_until='domcontentloaded')

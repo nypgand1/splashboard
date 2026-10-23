@@ -167,6 +167,7 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertNotIn('home-game-type', watched)
         self.assertNotIn('home-league', watched)
         self.assertNotIn('home-season', watched)
+        self.assertNotIn('home-team', watched)
 
     def test_home_controls_skeleton_the_list_not_the_interval(self):
         from dash._callback import GLOBAL_CALLBACK_LIST
@@ -181,7 +182,7 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertEqual(len(server), 1)
         self.assertEqual(
             [item['id'] for item in clientside[0]['inputs']],
-            ['home-show', 'home-game-type', 'home-league', 'home-season'],
+            ['home-show', 'home-game-type', 'home-league', 'home-season', 'home-team'],
         )
         self.assertNotIn('home-interval', {item['id'] for item in clientside[0]['inputs']})
         self.assertTrue(clientside[0]['prevent_initial_call'])

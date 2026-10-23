@@ -1498,6 +1498,35 @@ body {
     }
 }
 
+.home-team-sizer {
+    display: inline-grid;
+    vertical-align: middle;
+    max-width: 100%;
+}
+
+.home-team-sizer-probe,
+.home-team-sizer-control {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+.home-team-sizer-probe {
+    visibility: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    font-size: var(--mantine-font-size-xs);
+    font-weight: 400;
+    padding-left: 12px;
+    padding-right: 40px;
+}
+
+.home-team-sizer-control {
+    width: 0;
+    min-width: 100%;
+}
+
 a.home-schedule-row {
     display: block;
     color: inherit;
