@@ -56,6 +56,12 @@ def create_navbar():
                         leftSection=icon("tabler:home", width=14, color="#0077b6"),
                         style={"fontWeight": 600, "color": "#1e293b"}
                     ),
+                    dmc.MenuItem(
+                        "Team Stats",
+                        href="/team-stats",
+                        leftSection=icon("tabler:chart-histogram", width=14, color="#0077b6"),
+                        style={"fontWeight": 600, "color": "#1e293b"}
+                    ),
                 ],
                 style={
                     "backgroundColor": "rgba(255, 255, 255, 0.95)",

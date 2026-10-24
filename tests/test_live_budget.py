@@ -452,16 +452,16 @@ class LiveHttpBudgetTests(unittest.TestCase):
                 Communicator.get_synergy(LIVE_PBP, organization_id='org-hold')
         self.assertEqual(len(calls), 1)
 
-    def test_season_list_bypasses_the_http_cache(self):
+    def test_season_list_uses_the_short_http_cache(self):
         seen = []
 
         def get(url, params=None, headers=None, **kwargs):
-            seen.append(kwargs.get('cached'))
+            seen.append(kwargs.get('cached', True))
             return FakeResponse(200, {'data': []})
 
         with self._token(), patch.object(Communicator, 'get', side_effect=get):
             Communicator.get_season_game_list('org', 'season')
-        self.assertEqual(seen, [False])
+        self.assertEqual(seen, [True])
 
     def test_drop_cached_live_urls_keeps_other_fixtures_and_official_urls(self):
         class FakeCache:

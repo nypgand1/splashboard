@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-from concurrent.futures import ThreadPoolExecutor
-
 import pandas as pd
 import numpy as np
 import json
 
 from synergy_inbounder.communicator import Communicator
+from synergy_inbounder import frame_store
+from synergy_inbounder.http_wave import run_wave
 from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.runtime_cache import (
+    cached_fixture_status,
     get_cached_id_table,
     get_cached_season_df,
     should_use_live_endpoints,
@@ -176,28 +177,67 @@ class Parser:
     @staticmethod
     def parse_game_bundle(org_id, game_id):
         live = should_use_live_endpoints(game_id=game_id, organization_id=org_id)
-        with ThreadPoolExecutor(max_workers=7) as pool:
-            f_team = pool.submit(Communicator.get_game_team_stats_synergy, org_id, game_id, live)
-            f_periods = pool.submit(Communicator.get_game_team_stats_periods_synergy, org_id, game_id, live)
-            f_player = pool.submit(Communicator.get_game_player_stats_synergy, org_id, game_id, live)
-            f_player_periods = pool.submit(Parser._load_player_periods, org_id, game_id, live)
-            f_pbp = pool.submit(Communicator.get_game_play_by_play_synergy, org_id, game_id, None, live)
-            f_roster = pool.submit(Communicator.get_fixture_roster_synergy, org_id, game_id)
-            f_ids = pool.submit(Parser.parse_id_tables, org_id)
-            team_json = f_team.result()
-            periods_json = f_periods.result()
-            player_json = f_player.result()
-            player_periods_json = f_player_periods.result()
-            pbp_json = f_pbp.result()
+        status = '' if live else cached_fixture_status(org_id, game_id)
+        frame = None if live else frame_store.peek(org_id, game_id)
+        reused = {}
+
+        def _reuse(piece, attr):
+            if live or not frame_store.piece_fresh(frame, piece):
+                return False
+            reused[attr] = getattr(frame, piece)
+            return True
+
+        def _team():
+            if _reuse('team_df', 'team'):
+                return {'data': []}
+            return Communicator.get_game_team_stats_synergy(
+                org_id, game_id, live, fixture_status=status,
+            )
+
+        def _periods():
+            if _reuse('periods_df', 'periods'):
+                return {'data': []}
+            return Communicator.get_game_team_stats_periods_synergy(
+                org_id, game_id, live, fixture_status=status,
+            )
+
+        def _pbp():
+            if _reuse('playbyplay_df', 'pbp'):
+                return {'data': []}
+            return Communicator.get_game_play_by_play_synergy(
+                org_id, game_id, None, live, fixture_status=status,
+            )
+
+        def _roster():
             try:
-                roster_json = f_roster.result()
+                return Communicator.get_fixture_roster_synergy(
+                    org_id, game_id, fixture_status=status,
+                )
             except Exception:
-                roster_json = {'data': []}
-            id_table = f_ids.result()
+                return {'data': []}
+
+        (
+            team_json, periods_json, player_json, player_periods_json,
+            pbp_json, roster_json, id_table,
+        ) = run_wave([
+            _team,
+            _periods,
+            lambda: Communicator.get_game_player_stats_synergy(
+                org_id, game_id, live, fixture_status=status,
+            ),
+            lambda: Parser._load_player_periods(org_id, game_id, live, status),
+            _pbp,
+            _roster,
+            lambda: Parser.parse_id_tables(org_id),
+        ])
 
         team_stats_df, team_stats_periods_df, player_stats_df, starter_dict = Parser._stats_from_json(
             team_json, periods_json, player_json)
-        playbyplay_df = Parser._pbp_df_from_json(pbp_json)
+        if 'team' in reused:
+            team_stats_df = reused['team']
+        if 'periods' in reused:
+            team_stats_periods_df = reused['periods']
+        playbyplay_df = reused['pbp'] if 'pbp' in reused else Parser._pbp_df_from_json(pbp_json)
         roster = Parser._merge_roster(
             Parser._roster_from_fixture_json(roster_json),
             Parser._roster_from_json(player_json),
@@ -211,15 +251,34 @@ class Parser:
             if any(roster_starters.values()):
                 starter_dict = roster_starters
         player_periods_df = Parser._player_periods_from_json(player_periods_json)
+        if not live:
+            frame_store.store(
+                org_id,
+                game_id,
+                status=status,
+                playbyplay_df=playbyplay_df,
+                team_df=team_stats_df,
+                periods_df=team_stats_periods_df,
+                touch=tuple(
+                    name for name, flag in (
+                        ('playbyplay_df', 'pbp'),
+                        ('team_df', 'team'),
+                        ('periods_df', 'periods'),
+                    )
+                    if flag not in reused
+                ),
+            )
         return (
             team_stats_df, team_stats_periods_df, player_stats_df, starter_dict,
             playbyplay_df, id_table, roster, player_periods_df,
         )
 
     @staticmethod
-    def _load_player_periods(org_id, game_id, live):
+    def _load_player_periods(org_id, game_id, live, fixture_status=None):
         try:
-            return Communicator.get_game_player_stats_periods_synergy(org_id, game_id, live)
+            return Communicator.get_game_player_stats_periods_synergy(
+                org_id, game_id, live, fixture_status=fixture_status,
+            )
         except Exception:
             LOGGER.warning('player period stats unavailable')
             return {'data': []}

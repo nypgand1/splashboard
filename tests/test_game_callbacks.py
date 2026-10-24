@@ -182,7 +182,7 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertEqual(len(server), 1)
         self.assertEqual(
             [item['id'] for item in clientside[0]['inputs']],
-            ['home-show', 'home-game-type', 'home-league', 'home-season', 'home-team'],
+            ['home-league', 'home-season'],
         )
         self.assertNotIn('home-interval', {item['id'] for item in clientside[0]['inputs']})
         self.assertTrue(clientside[0]['prevent_initial_call'])

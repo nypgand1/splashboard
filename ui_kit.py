@@ -102,6 +102,17 @@ def filter_control(label, control, wrap_id=None, visible=True):
     )
 
 
+def filter_pack(pack_id, clusters):
+    """Measured filter rows. ``clusters`` are ``(kind, children)`` for league, team, and type."""
+    nodes = []
+    for kind, children in clusters:
+        nodes.append(dmc.Box(
+            dmc.Box(children, className='filter-cluster-inner'),
+            className='filter-cluster filter-cluster-{0}'.format(kind),
+        ))
+    return dmc.Box(nodes, id=pack_id, className='filter-pack')
+
+
 def matchup_score_parts(status, home_score, away_score):
     display = format_score_display(status, home_score, away_score)
     if display == SCORE_AT:

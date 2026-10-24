@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
+import contextvars
 import threading
 import time
 
 import requests
 import requests_cache
 
+from synergy_inbounder.game_status import normalize_status
 from synergy_inbounder.settings import LOGGER
 from synergy_inbounder.live_budget import BUDGET, SHORT_CACHE_SECONDS, LONG_CACHE_SECONDS, live_route
 from synergy_inbounder.runtime_cache import LIVE_PBP_HTTP_TTL_SECONDS
 from synergy_inbounder.settings import SYNERGY_TOKEN_URL, \
         SYNERGY_SEASON_GAME_LIST_URL, \
+        SYNERGY_SEASON_TEAM_TOTALS_URL, SYNERGY_SEASON_TEAM_PERIODS_URL, \
         SYNERGY_PLAY_BY_PLAY_URL, SYNERGY_PLAY_BY_PLAY_LIVE_URL, \
         SYNERGY_PLAYER_STATS_URL, SYNERGY_PLAYER_STATS_LIVE_URL, \
         SYNERGY_PLAYER_STATS_PERIODS_URL, SYNERGY_PLAYER_STATS_PERIODS_LIVE_URL, \
@@ -47,6 +50,25 @@ requests_cache.install_cache(
 _token_lock = threading.Lock()
 _token_slots = {}
 _active_org = None
+_wave_local = threading.local()
+_cache_hits = contextvars.ContextVar('synergy_cache_hits', default=None)
+
+
+def fixture_body_expire(status, live=False):
+    """CONFIRMED official bodies stay cached for two hours. Everything else stays short."""
+    if live:
+        return None
+    if normalize_status(status) == 'CONFIRMED':
+        return LONG_CACHE_SECONDS
+    return None
+
+
+def _note_cache_hit(response):
+    box = getattr(_wave_local, 'cache_hits', None)
+    if box is None:
+        box = _cache_hits.get()
+    if box is not None:
+        box.append(bool(getattr(response, 'from_cache', False)))
 
 
 def _empty_slot():
@@ -118,12 +140,18 @@ def payload_from_response(response, url=''):
 
 class Communicator:
     @staticmethod
-    def get(url, params=None, headers=dict(), cached=True, **kwargs):
+    def get(url, params=None, headers=dict(), cached=True, expire_after=None, **kwargs):
+        session = getattr(_wave_local, 'session', None)
+        getter = session.get if session is not None else requests.get
+        request_kwargs = dict(kwargs)
+        if cached and expire_after is not None:
+            request_kwargs['expire_after'] = expire_after
         if cached:
-            r = requests.get(url, params, **kwargs)
+            r = getter(url, params, **request_kwargs)
         else:
             with requests_cache.disabled():
-                r = requests.get(url, params, **kwargs)
+                r = getter(url, params, **kwargs)
+        _note_cache_hit(r)
         LOGGER.info('{r} GET {url}'.format(r=r, url=url))
         return r
 
@@ -210,7 +238,7 @@ class Communicator:
         return response
 
     @staticmethod
-    def get_synergy(url, params=dict(), headers=dict(), organization_id=None, cached=True, **kwargs):
+    def get_synergy(url, params=dict(), headers=dict(), organization_id=None, cached=True, expire_after=None, **kwargs):
         org_id = organization_id or SYNERGY_ORGANIZATION_ID
         token, generation = Communicator._current_token(org_id)
         if not token:
@@ -220,7 +248,8 @@ class Communicator:
             if not BUDGET.try_spend(org_id, route):
                 raise SynergyApiError('Live budget exhausted for {url}'.format(url=url))
         r = Communicator.get(
-            url, params=params, headers=headers, auth=BearerAuth(token), cached=cached, **kwargs,
+            url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
+            expire_after=expire_after, **kwargs,
         )
         r = Communicator._note_live_response(org_id, url, r)
 
@@ -228,12 +257,14 @@ class Communicator:
             token, generation = Communicator._refresh_token(org_id, seen_generation=generation)
             if route is None or BUDGET.allow_retry(org_id, route):
                 r = Communicator.get(
-                    url, params=params, headers=headers, auth=BearerAuth(token), cached=cached, **kwargs,
+                    url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
+                    expire_after=expire_after, **kwargs,
                 )
                 r = Communicator._note_live_response(org_id, url, r)
         if r.status_code >= 500 and (route is None or BUDGET.allow_retry(org_id, route)):
             r = Communicator.get(
-                url, params=params, headers=headers, auth=BearerAuth(token), cached=cached, **kwargs,
+                url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
+                expire_after=expire_after, **kwargs,
             )
             r = Communicator._note_live_response(org_id, url, r)
         return r
@@ -246,33 +277,79 @@ class Communicator:
     def get_season_game_list(org_id, season_id):
         url = SYNERGY_SEASON_GAME_LIST_URL.format(organizationId=org_id, seasonId=season_id)
         params = {'limit': 1000, 'sortBy': 'startTimeUTC'}
-        r = Communicator.get_synergy(url, params=params, organization_id=org_id, cached=False)
-        return payload_from_response(r, url=url)
-
-    @staticmethod
-    def get_game_team_stats_synergy(org_id, game_id, live=True):
-        url = Communicator._stats_url(SYNERGY_TEAM_STATS_URL, SYNERGY_TEAM_STATS_LIVE_URL, live)
-        url = url.format(organizationId=org_id, fixtureId=game_id)
-        r = Communicator.get_synergy(url, organization_id=org_id)
-        return payload_from_response(r, url=url)
-
-    @staticmethod
-    def get_game_team_stats_periods_synergy(org_id, game_id, live=True):
-        url = Communicator._stats_url(SYNERGY_TEAM_STATS_PERIODS_URL, SYNERGY_TEAM_STATS_PERIODS_LIVE_URL, live)
-        url = url.format(organizationId=org_id, fixtureId=game_id)
-        r = Communicator.get_synergy(url, organization_id=org_id)
-        return payload_from_response(r, url=url)
- 
-    @staticmethod
-    def get_game_player_stats_synergy(org_id, game_id, live=True):
-        url = Communicator._stats_url(SYNERGY_PLAYER_STATS_URL, SYNERGY_PLAYER_STATS_LIVE_URL, live)
-        url = url.format(organizationId=org_id, fixtureId=game_id)
-        params = {'limit': 1000, 'isPlayer': 'true'}
         r = Communicator.get_synergy(url, params=params, organization_id=org_id)
         return payload_from_response(r, url=url)
 
     @staticmethod
-    def get_game_player_stats_periods_synergy(org_id, game_id, live=True):
+    def _paged_rows(org_id, url):
+        rows = []
+        offset = 0
+        limit = 300
+        while True:
+            params = {'limit': limit, 'offset': offset}
+            r = Communicator.get_synergy(url, params=params, organization_id=org_id)
+            payload = payload_from_response(r, url=url)
+            data = payload.get('data') or []
+            if not isinstance(data, list):
+                break
+            rows.extend(data)
+            meta = payload.get('meta') if isinstance(payload.get('meta'), dict) else {}
+            try:
+                count = int(meta.get('count'))
+            except (TypeError, ValueError):
+                count = None
+            offset += len(data)
+            if not data or len(data) < limit:
+                break
+            if count is not None and offset >= count:
+                break
+            if offset > 20000:
+                break
+        return rows
+
+    @staticmethod
+    def get_season_team_totals(org_id, season_id):
+        url = SYNERGY_SEASON_TEAM_TOTALS_URL.format(organizationId=org_id, seasonId=season_id)
+        return Communicator._paged_rows(org_id, url)
+
+    @staticmethod
+    def get_season_team_periods(org_id, season_id):
+        url = SYNERGY_SEASON_TEAM_PERIODS_URL.format(organizationId=org_id, seasonId=season_id)
+        return Communicator._paged_rows(org_id, url)
+
+    @staticmethod
+    def get_game_team_stats_synergy(org_id, game_id, live=True, fixture_status=None):
+        url = Communicator._stats_url(SYNERGY_TEAM_STATS_URL, SYNERGY_TEAM_STATS_LIVE_URL, live)
+        url = url.format(organizationId=org_id, fixtureId=game_id)
+        r = Communicator.get_synergy(
+            url, organization_id=org_id,
+            expire_after=fixture_body_expire(fixture_status, live),
+        )
+        return payload_from_response(r, url=url)
+
+    @staticmethod
+    def get_game_team_stats_periods_synergy(org_id, game_id, live=True, fixture_status=None):
+        url = Communicator._stats_url(SYNERGY_TEAM_STATS_PERIODS_URL, SYNERGY_TEAM_STATS_PERIODS_LIVE_URL, live)
+        url = url.format(organizationId=org_id, fixtureId=game_id)
+        r = Communicator.get_synergy(
+            url, organization_id=org_id,
+            expire_after=fixture_body_expire(fixture_status, live),
+        )
+        return payload_from_response(r, url=url)
+
+    @staticmethod
+    def get_game_player_stats_synergy(org_id, game_id, live=True, fixture_status=None):
+        url = Communicator._stats_url(SYNERGY_PLAYER_STATS_URL, SYNERGY_PLAYER_STATS_LIVE_URL, live)
+        url = url.format(organizationId=org_id, fixtureId=game_id)
+        params = {'limit': 1000, 'isPlayer': 'true'}
+        r = Communicator.get_synergy(
+            url, params=params, organization_id=org_id,
+            expire_after=fixture_body_expire(fixture_status, live),
+        )
+        return payload_from_response(r, url=url)
+
+    @staticmethod
+    def get_game_player_stats_periods_synergy(org_id, game_id, live=True, fixture_status=None):
         url = Communicator._stats_url(
             SYNERGY_PLAYER_STATS_PERIODS_URL,
             SYNERGY_PLAYER_STATS_PERIODS_LIVE_URL,
@@ -280,17 +357,23 @@ class Communicator:
         )
         url = url.format(organizationId=org_id, fixtureId=game_id)
         params = {'limit': 1000}
-        r = Communicator.get_synergy(url, params=params, organization_id=org_id)
+        r = Communicator.get_synergy(
+            url, params=params, organization_id=org_id,
+            expire_after=fixture_body_expire(fixture_status, live),
+        )
         return payload_from_response(r, url=url)
 
     @staticmethod
-    def get_game_play_by_play_synergy(org_id, game_id, period_id=None, live=True):
+    def get_game_play_by_play_synergy(org_id, game_id, period_id=None, live=True, fixture_status=None):
         url = Communicator._stats_url(SYNERGY_PLAY_BY_PLAY_URL, SYNERGY_PLAY_BY_PLAY_LIVE_URL, live)
         url = url.format(organizationId=org_id, fixtureId=game_id)
         params = {'limit': 2000}
         if period_id:
             params['periodId'] = period_id
-        r = Communicator.get_synergy(url, params=params, organization_id=org_id)
+        r = Communicator.get_synergy(
+            url, params=params, organization_id=org_id,
+            expire_after=fixture_body_expire(fixture_status, live),
+        )
         return payload_from_response(r, url=url)
 
     @staticmethod
@@ -302,10 +385,13 @@ class Communicator:
         return payload_from_response(r, url=url)
 
     @staticmethod
-    def get_fixture_roster_synergy(org_id, game_id):
+    def get_fixture_roster_synergy(org_id, game_id, fixture_status=None):
         url = SYNERGY_FIXTURE_ROSTER_URL.format(organizationId=org_id, fixtureId=game_id)
         params = {'limit': 1000}
-        r = Communicator.get_synergy(url, params=params, organization_id=org_id)
+        r = Communicator.get_synergy(
+            url, params=params, organization_id=org_id,
+            expire_after=fixture_body_expire(fixture_status, live=False),
+        )
         return payload_from_response(r, url=url)
 
     @staticmethod

@@ -224,6 +224,26 @@ class HomeLeagueScheduleTests(unittest.TestCase):
         self.assertEqual(stored['league'], 'EASL')
 
 
+class HomeGameTypeOptionTests(unittest.TestCase):
+    def test_missing_fixture_type_is_not_an_option(self):
+        missing = float('nan')
+        options = home_page.game_type_options([
+            {'fixtureType': missing},
+            {'fixtureType': 'nan'},
+            {'fixtureType': 'None'},
+            {'fixtureType': 'REGULAR'},
+            {'fixtureType': None},
+            'skip',
+        ])
+        self.assertEqual([item['value'] for item in options], ['REGULAR'])
+        self.assertEqual(options[0]['label'], 'Regular')
+        self.assertEqual(
+            home_page._fixture_type_value({'fixtureType': missing, 'Game Type': 'PLAYOFF'}),
+            'PLAYOFF',
+        )
+        self.assertIsNone(home_page._fixture_type_value({'fixtureType': missing}))
+
+
 class PlgGameLookupTests(unittest.TestCase):
     def test_find_game_row_checks_the_later_season(self):
         frames = {

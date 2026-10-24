@@ -85,7 +85,57 @@ def _mark_report_delayed(key):
     return None
 
 
-def get_cached_report(game_id, organization_id=None):
+def peek_finished_report(game_id, organization_id=None):
+    """Return a stored non-live finished report, or None. Does not build one."""
+    if not game_id:
+        return None
+    key = _report_key(game_id, organization_id)
+    with _report_lock:
+        entry = _report_cache.get(key)
+    if not entry or is_live_play_status(entry.get('status')):
+        return None
+    if not is_finished_status(entry.get('status')):
+        return None
+    return entry.get('report')
+
+
+def _cached_fixture_match(organization_id, game_id):
+    wanted = str(game_id or '')
+    if not wanted:
+        return None, None
+    with _meta_lock:
+        items = list(_season_cache.items())
+    for (org, season_id), entry in items:
+        if org != organization_id:
+            continue
+        frame = entry.get('value') if isinstance(entry, dict) else None
+        if frame is None or getattr(frame, 'empty', True) or 'fixtureId' not in getattr(frame, 'columns', []):
+            continue
+        matched = frame[frame['fixtureId'].astype(str) == wanted]
+        if not matched.empty:
+            return season_id, matched.iloc[0]
+    return None, None
+
+
+def cached_fixture_status(organization_id, game_id):
+    """Status from the process season cache. A miss does not fetch."""
+    _season_id, row = _cached_fixture_match(organization_id, game_id)
+    if row is None:
+        return ''
+    return normalize_status(row.get('status'))
+
+
+def cached_regulation_minutes(organization_id, game_id):
+    """Season-id minutes when that season list is already cached, else 48."""
+    from synergy_inbounder.settings import regulation_minutes
+    season_id, row = _cached_fixture_match(organization_id, game_id)
+    if row is None:
+        return 48
+    minutes = regulation_minutes(season_id)
+    return minutes if minutes else 48
+
+
+def get_cached_report(game_id, organization_id=None, pin=None):
     factory = getattr(get_cached_report, 'factory', None)
     if callable(factory):
         return factory(game_id)
@@ -93,6 +143,9 @@ def get_cached_report(game_id, organization_id=None):
         raise ValueError('game_id is required')
     from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
     org = organization_id or SYNERGY_ORGANIZATION_ID
+    if pin == 'open':
+        from synergy_inbounder.frame_store import pin_open
+        pin_open(org, game_id)
     key = _report_key(game_id, organization_id)
     now = time.monotonic()
 
@@ -392,6 +445,9 @@ def prefetch_latest_games(season_df, max_games=2, organization_id=None):
     target_ids = latest_finished_fixture_ids(season_df, max_games)
     if not target_ids:
         return
+    from synergy_inbounder.frame_store import pin_home
+    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
+    pin_home(organization_id or SYNERGY_ORGANIZATION_ID, target_ids)
 
     def _worker():
         for gid in target_ids:
@@ -414,4 +470,11 @@ def clear_runtime_caches():
         _id_table_cache.clear()
         _id_inflight.clear()
     BUDGET.clear()
+    from synergy_inbounder.frame_store import clear as clear_frames
+    clear_frames()
+    try:
+        from synergy_reporter.team_season import clear_team_stats_cache
+        clear_team_stats_cache()
+    except Exception:
+        pass
 

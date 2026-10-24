@@ -362,6 +362,16 @@ def _game_long_dnp(row):
     )
 
 
+def _regulation_base(minutes):
+    try:
+        base = float(minutes)
+    except (TypeError, ValueError):
+        return 48.0
+    if base <= 0:
+        return 48.0
+    return base
+
+
 def _chip_spec(value):
     if value == 'h1':
         return (1, 2), True
@@ -383,6 +393,8 @@ class PostGameReport():
             self.roster,
             self.player_stats_periods_df,
         ) = Parser.parse_game_bundle(org, game_id)
+        from synergy_inbounder.runtime_cache import cached_regulation_minutes
+        self.regulation_minutes = cached_regulation_minutes(org, game_id)
         self._play_by_play_view = None
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None
@@ -421,22 +433,27 @@ class PostGameReport():
         qt_tout_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return qt_tout_df
 
-    def get_team_advance_stats_df(self, source=None, period_ids=None):
+    def get_team_advance_stats_df(self, source=None, period_ids=None, share_mean=True, poss_by_entity=None):
         stats = (self.team_stats_df if source is None else source).copy()
         t_adv_df = pd.DataFrame()
         t_adv_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
-        stats['poss'] = self._possession_totals(stats, period_ids)
+        if poss_by_entity is None:
+            stats['poss'] = self._possession_totals(stats, period_ids)
+        else:
+            stats['poss'] = stats['entityId'].map(lambda entity_id: float(poss_by_entity.get(entity_id, 0)))
         stats['duration'] = pd.to_timedelta(stats['minutes'].fillna('PT0S').astype(str).str.replace('PT', '', regex=False) \
                                                                                     .str.replace('M', ' min ', regex=False) \
                                                                                     .str.replace('S', 'sec', regex=False)).dt.total_seconds()/5
-        # 48-minute pace. A slice uses that slice's possessions and minutes.
+        base = _regulation_base(getattr(self, 'regulation_minutes', None))
+
         def _pace(row):
             duration = row['duration']
             if pd.isnull(duration) or duration <= 0 or pd.isnull(row['poss']):
                 return None
-            return 48 * 60 * row['poss'] / duration
+            return base * 60 * row['poss'] / duration
         t_adv_df['Pace'] = stats.apply(_pace, axis=1)
-        t_adv_df['Pace'] = t_adv_df['Pace'].mean()
+        if share_mean:
+            t_adv_df['Pace'] = t_adv_df['Pace'].mean()
         t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{x:0.1f}" if pd.notnull(x) else '')
 
         def _rate(numer, denom, digits, scale=1):
@@ -460,11 +477,14 @@ class PostGameReport():
         t_adv_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return t_adv_df
 
-    def get_team_advanced_df(self, source=None, period_ids=None):
+    def get_team_advanced_df(self, source=None, period_ids=None, poss_by_entity=None):
         stats = (self.team_stats_df if source is None else source).copy()
         frame = pd.DataFrame()
         frame['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
-        stats['poss'] = self._possession_totals(stats, period_ids)
+        if poss_by_entity is None:
+            stats['poss'] = self._possession_totals(stats, period_ids)
+        else:
+            stats['poss'] = stats['entityId'].map(lambda entity_id: float(poss_by_entity.get(entity_id, 0)))
         frame['PPP'] = stats.apply(lambda x: _rate_text(x.get('points'), x.get('poss'), 2), axis=1)
         frame['AS/TO'] = stats.apply(lambda x: _rate_text(x.get('assists'), x.get('turnovers'), 2), axis=1)
         frame['AST%'] = stats.apply(

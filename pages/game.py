@@ -20,6 +20,12 @@ from synergy_inbounder.runtime_cache import (
     report_refresh_state,
     warmup_game_report,
 )
+
+
+def _open_report(*args, **kwargs):
+    """Game page reads and pins the open fixture frame."""
+    kwargs['pin'] = 'open'
+    return get_cached_report(*args, **kwargs)
 from synergy_inbounder.game_status import (
     is_finished_status,
     is_live_play_status,
@@ -607,7 +613,7 @@ def update_bs_store(n, game_id, league='plg'):
     if org is None:
         return _error_store(game_id=game_id)
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
         return _error_store(game_id=game_id)
@@ -746,7 +752,7 @@ def update_pbp_store(n, game_id, league='plg'):
     if org is None:
         return _error_store()
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
     except Exception as exc:
         print(f"Error loading play-by-play: {exc}")
         return _error_store()
@@ -765,7 +771,7 @@ def update_lineup_store(n, game_id, league='plg'):
     if org is None:
         return _error_store()
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
         if (
             _is_game_load(n, _triggered_id())
             and is_finished_status(get_cached_game_status(game_id, org))
@@ -793,7 +799,7 @@ def update_matchup_store(n, game_id, match_info_store, league='plg'):
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
         return json.dumps(report.get_matchup_payload(
             home_team_id=info.get('home_team_id'),
             away_team_id=info.get('away_team_id'),
@@ -816,7 +822,7 @@ def update_rotation_store(n, game_id, match_info_store, league='plg'):
     if org is None:
         return _error_store()
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
         info = safe_loads(match_info_store)
         return json.dumps(report.get_rotation_payload(
             home_team_id=info.get('home_team_id'),
@@ -2660,7 +2666,7 @@ def _report_rotation_figure_json(game_id, match_info):
     if not game_id:
         return json.dumps({'_ui': 'empty'})
     try:
-        report = get_cached_report(game_id, _report_org(match_info))
+        report = _open_report(game_id, _report_org(match_info))
         payload = report.get_rotation_payload(
             home_team_id=(match_info or {}).get('home_team_id'),
             away_team_id=(match_info or {}).get('away_team_id'),
@@ -2680,7 +2686,7 @@ def _report_shot_chart_json(game_id, match_info):
         return json.dumps({'_ui': 'empty'})
     info = match_info or {}
     try:
-        report = get_cached_report(game_id, _report_org(info))
+        report = _open_report(game_id, _report_org(info))
         payload = report_shot_chart_payload(
             report.get_play_by_play_df(),
             info.get('away_team_id'),
@@ -3156,7 +3162,7 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
-            report = get_cached_report(game_id, _organization(league))
+            report = _open_report(game_id, _organization(league))
             custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
                 return render_lineup_children(

@@ -1664,3 +1664,34 @@ a.home-schedule-row {
         margin: 0;
     }
 }
+
+.filter-pack {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.filter-cluster {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.filter-cluster-inner {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.filter-pack[data-mode="split"] > .filter-cluster-type,
+.filter-pack[data-mode="stack"] > .filter-cluster-team,
+.filter-pack[data-mode="stack"] > .filter-cluster-type {
+    flex-basis: 100%;
+}

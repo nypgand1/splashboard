@@ -17,6 +17,11 @@ SYNERGY_TOKEN_BASE = 'https://token.connect.sportradar.com/v1'
 SYNERGY_API_BASE = 'https://api.dc.connect.sportradar.com/v1'
 SYNERGY_TOKEN_URL = SYNERGY_TOKEN_BASE + '/oauth2/rest/token'
 SYNERGY_SEASON_GAME_LIST_URL = SYNERGY_API_BASE + '/basketball/o/{organizationId}/seasons/{seasonId}/fixtures'
+SYNERGY_SEASON_TEAM_TOTALS_URL = (
+    SYNERGY_API_BASE
+    + '/basketball/o/{organizationId}/seasons/{seasonId}/statistics/for/entity/in/fixtures'
+)
+SYNERGY_SEASON_TEAM_PERIODS_URL = SYNERGY_SEASON_TEAM_TOTALS_URL + '/periods'
 SYNERGY_PLAY_BY_PLAY_URL = SYNERGY_API_BASE + '/basketball/o/{organizationId}/fixtures/{fixtureId}/playbyplay'
 SYNERGY_PLAY_BY_PLAY_LIVE_URL = SYNERGY_PLAY_BY_PLAY_URL + '/live'
 SYNERGY_TEAM_STATS_URL = SYNERGY_API_BASE + '/basketball/o/{organizationId}/statistics/for/entity/in/fixtures/{fixtureId}'
@@ -94,6 +99,26 @@ def season_ids_for_organization(organization_id):
     if organization_id == SYNERGY_EASL_ORGANIZATION_ID:
         return easl_season_ids()
     return plg_season_ids()
+
+
+def regulation_minutes(season_id):
+    """Regulation length for one season id. Unknown ids return None."""
+    if season_id in dict(SYNERGY_SEASONS).values():
+        return 48
+    if season_id in dict(EASL_SEASONS).values():
+        return 40
+    return None
+
+
+def selectable_seasons(league):
+    """Newest-first season rows that have a regulation length."""
+    key = str(league or '').strip().lower()
+    rows = EASL_SEASONS if key == 'easl' else SYNERGY_SEASONS
+    return tuple(
+        (label, season_id)
+        for label, season_id in rows
+        if regulation_minutes(season_id) is not None
+    )
 
 
 def organization_for_league(league):
