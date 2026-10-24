@@ -4,6 +4,7 @@
    ========================================================================== */
 
 :root {
+    --font-sans: -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif;
     --bg: #f8fafc;
     --navbar-bg: rgba(255, 255, 255, 0.9);
     --navbar-border: #00b4d8;
@@ -24,7 +25,7 @@
 body {
     background-color: #dbe1e8 !important;
     color: var(--text-main) !important;
-    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif !important;
+    font-family: var(--font-sans) !important;
     margin: 0;
     padding: 0;
 }
@@ -138,15 +139,20 @@ body {
         --app-shell-header-height: 72px !important;
         width: 100% !important;
         margin: 0 !important;
-        border-radius: 0 !important;
-        border: none !important;
-        box-shadow: none !important;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15);
+        background-color: transparent;
         max-width: 100% !important;
         min-height: 100vh;
     }
     .app-navbar,
     .app-shell .mantine-AppShell-header {
         height: 72px !important;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
     }
     .app-navbar-bar {
         display: grid;
@@ -183,16 +189,10 @@ body {
         align-self: center;
     }
     .app-main-content {
-        border-bottom-left-radius: 0;
-        border-bottom-right-radius: 0;
-    }
-    .app-navbar {
-        border-radius: 0 !important;
-        border-left: none !important;
-        border-right: none !important;
-    }
-    .app-main-content {
+        border-bottom-left-radius: 10px;
+        border-bottom-right-radius: 10px;
         padding: 12px !important;
+        min-height: calc(100vh - 72px);
     }
 
     /* Tabs single-row horizontal scroll */
@@ -1166,23 +1166,56 @@ body {
     position: sticky;
     left: 0;
     z-index: 3;
-    background-color: var(--thead-bg);
+    background-color: #f8fafc;
 }
 
 .braves-clean-table th {
-    background-color: var(--thead-bg);
-    color: var(--thead-text);
+    text-align: center;
+    vertical-align: middle;
     font-weight: 700;
-    font-size: 11px;
-    border-bottom: 2px solid var(--navbar-border);
+    color: #0f172a;
+    background-color: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    white-space: nowrap;
+}
+
+.braves-clean-table th.braves-th-span {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.braves-clean-table th.braves-th-span-tight {
     padding: 6px 8px;
+    font-size: 12px;
+}
+
+.braves-clean-table th.braves-th-group {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.braves-clean-table th.braves-th-sub {
+    padding: 4px 6px;
+    font-size: 11px;
+    color: #475569;
+}
+
+.braves-clean-table th.braves-th-single {
+    padding: 7px 10px;
+    font-size: 13px;
 }
 
 .braves-clean-table td {
-    padding: 5px 8px;
-    font-size: 12px;
-    color: var(--text-main);
+    text-align: center;
+    padding: 7px 10px;
+    font-size: 13px;
+    color: #1e293b;
+    white-space: nowrap;
     border-bottom: 1px solid var(--border);
+}
+
+.braves-clean-row {
+    background-color: #ffffff;
 }
 
 .braves-clean-row:hover {
@@ -1233,7 +1266,7 @@ body {
     --ag-foreground-color: #1e293b !important;
     --ag-header-foreground-color: #0f172a !important;
     --ag-font-size: 13px !important;
-    --ag-font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif !important;
+    --ag-font-family: var(--font-sans) !important;
     border-radius: 10px !important;
     overflow: hidden !important;
     border: 1px solid #e2e8f0 !important;
@@ -1465,6 +1498,35 @@ body {
     }
 }
 
+.home-team-sizer {
+    display: inline-grid;
+    vertical-align: middle;
+    max-width: 100%;
+}
+
+.home-team-sizer-probe,
+.home-team-sizer-control {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+.home-team-sizer-probe {
+    visibility: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    font-size: var(--mantine-font-size-xs);
+    font-weight: 400;
+    padding-left: 12px;
+    padding-right: 40px;
+}
+
+.home-team-sizer-control {
+    width: 0;
+    min-width: 100%;
+}
+
 a.home-schedule-row {
     display: block;
     color: inherit;
@@ -1526,74 +1588,6 @@ a.home-schedule-row {
 
 .home-schedule-row-static {
     cursor: default;
-}
-
-.schedule-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 3px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    line-height: 1.2;
-}
-
-.schedule-badge-unplayed,
-.schedule-badge-pending {
-    background: #e0f2fe !important;
-    border: 1px solid #00b4d8 !important;
-    color: #0284c7 !important;
-    box-shadow: 0 1px 4px rgba(0, 180, 216, 0.15) !important;
-}
-
-.schedule-badge-live {
-    background: #fee2e2 !important;
-    border: 1px solid #ef4444 !important;
-    color: #dc2626 !important;
-    box-shadow: 0 1px 4px rgba(239, 68, 68, 0.2) !important;
-}
-
-.schedule-badge-finished {
-    background: #f1f5f9 !important;
-    border: 1px solid #cbd5e1 !important;
-    color: #475569 !important;
-}
-
-.schedule-badge-void {
-    background: #e2e8f0 !important;
-    border: 1px solid #94a3b8 !important;
-    color: #334155 !important;
-}
-
-.schedule-score-link {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 6px;
-    font-weight: 700;
-    font-size: 13px;
-    color: #0077b6 !important;
-    background: #e0f2fe;
-    border: 1px solid #bae6fd;
-    text-decoration: none;
-    transition: all 0.15s ease;
-}
-
-.schedule-score-link:hover {
-    background: #0077b6;
-    color: #ffffff !important;
-    border-color: #0077b6;
-    box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25);
-}
-
-.schedule-score-plain {
-    display: inline-block;
-    padding: 2px 10px;
-    font-weight: 600;
-    font-size: 13px;
-    color: #64748b;
 }
 
 @media print {

@@ -17,9 +17,9 @@ COUNT_INK = 11
 SEAM_LINE = 11
 SUBPLOT_TITLE_FONT = 14
 RUN_SCORE_SHIFT = 2
-# Home run ink is the 2px shift plus the 14px subplot-title pass. The home
-# title is that same 14px, one 11px count above the panel. One extra 14px
-# line keeps the run number off the team name.
+# The lower seam stays 55px. The first 14px is a reserved run slot, wider
+# than the painted 11px glyph. Then one clear 14px line, the 14px home
+# title, and the 11px count. The 2px shift is included.
 LOWER_SEAM_INK = (
     RUN_SCORE_SHIFT
     + SUBPLOT_TITLE_FONT
@@ -996,6 +996,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
             (home or {}).get('team_name') or 'Home',
         ),
     )
+    _paint_team_titles(fig)
     total_height = _open_lower_seam(fig, base_height)
 
 
@@ -1318,7 +1319,6 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
         hovermode='closest',
         uirevision=uirevision if uirevision is not None else f'{view_end - view_start:.3f}',
     )
-    fig.update_annotations(font=dict(size=SUBPLOT_TITLE_FONT, color='#1e293b'))
 
     def layout_axis(ref):
         if ref == 'y':
@@ -1400,7 +1400,7 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     mirror_categories('yaxis6', 'y3', 'x3', home_labels)
     _add_kill_annotations(fig)
     _add_stop_counts(fig, kills, periods)
-    _raise_away_title(fig)
+    _raise_bottom_title(fig)
     return fig
 
 
@@ -1419,37 +1419,37 @@ def _open_lower_seam(fig, base_height):
     def span_px(domain):
         return (float(domain[1]) - float(domain[0])) * plot_h
 
-    home = fig.layout.yaxis.domain
+    top = fig.layout.yaxis.domain
     margin = fig.layout.yaxis2.domain
-    away = fig.layout.yaxis3.domain
-    home_px = span_px(home)
+    bottom = fig.layout.yaxis3.domain
+    top_px = span_px(top)
     margin_px = span_px(margin)
-    away_px = span_px(away)
-    upper_px = (float(home[0]) - float(margin[1])) * plot_h
+    bottom_px = span_px(bottom)
+    upper_px = (float(top[0]) - float(margin[1])) * plot_h
     lower_px = upper_px + shortfall
 
     cursor = 1.0
-    home_top = cursor
-    cursor -= home_px / new_plot_h
-    home_bottom = cursor
+    top_hi = cursor
+    cursor -= top_px / new_plot_h
+    top_lo = cursor
     cursor -= upper_px / new_plot_h
     margin_top = cursor
     cursor -= margin_px / new_plot_h
     margin_bottom = cursor
     cursor -= lower_px / new_plot_h
-    away_top = cursor
-    cursor -= away_px / new_plot_h
-    away_bottom = 0.0 if abs(cursor) < 1e-6 else cursor
+    bottom_hi = cursor
+    cursor -= bottom_px / new_plot_h
+    bottom_lo = 0.0 if abs(cursor) < 1e-6 else cursor
 
-    fig.layout.yaxis.domain = (home_bottom, home_top)
+    fig.layout.yaxis.domain = (top_lo, top_hi)
     fig.layout.yaxis2.domain = (margin_bottom, margin_top)
-    fig.layout.yaxis3.domain = (away_bottom, away_top)
+    fig.layout.yaxis3.domain = (bottom_lo, bottom_hi)
     return base_height + shortfall
 
 
-def _raise_away_title(fig):
+def _raise_bottom_title(fig):
     """Shift the bottom panel's title up by one count line."""
-    away_top = float(fig.layout.yaxis3.domain[1])
+    panel_top = float(fig.layout.yaxis3.domain[1])
     titles = [
         ann for ann in fig.layout.annotations or []
         if getattr(ann, 'xref', None) == 'paper'
@@ -1461,9 +1461,9 @@ def _raise_away_title(fig):
     ]
     if len(titles) < 2:
         return
-    away = min(titles, key=lambda ann: float(ann.y))
-    away.y = away_top
-    away.yshift = STOP_COUNT_FONT
+    bottom = min(titles, key=lambda ann: float(ann.y))
+    bottom.y = panel_top
+    bottom.yshift = STOP_COUNT_FONT
 
 
 def _add_kill_annotations(fig):
@@ -1480,14 +1480,6 @@ def _add_kill_annotations(fig):
                 showarrow=False,
                 xshift=shift,
             )
-
-
-def _is_stop_count(ann):
-    return (
-        getattr(ann, 'yref', None) == 'paper'
-        and getattr(ann, 'xref', None) == 'x2'
-        and str(ann.text or '').isdigit()
-    )
 
 
 def _add_stop_counts(fig, kills, periods):
@@ -1509,14 +1501,19 @@ def _add_stop_counts(fig, kills, periods):
         )
 
 
-def _paint_kill_annotations(fig):
+def _paint_team_titles(fig):
+    """Team names keep 14px slate. Other annotations keep the font they were given."""
     for ann in fig.layout.annotations or []:
-        if ann.text == KILL_ROW:
-            ann.font.color = KILL_COLOR
-            ann.font.size = 12
-        elif _is_stop_count(ann):
-            ann.font.color = KILL_COLOR
-            ann.font.size = STOP_COUNT_FONT
+        if (
+            getattr(ann, 'xref', None) == 'paper'
+            and getattr(ann, 'yref', None) == 'paper'
+            and getattr(ann, 'yanchor', None) == 'bottom'
+            and ann.text
+            and ann.text != KILL_ROW
+            and not str(ann.text).isdigit()
+        ):
+            ann.font.size = SUBPLOT_TITLE_FONT
+            ann.font.color = '#1e293b'
 
 
 def report_rotation_figure(payload):
@@ -1530,10 +1527,6 @@ def report_rotation_figure(payload):
         font=dict(size=12, color='#334155'),
         margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
     )
-    fig.update_annotations(font=dict(size=12, color='#1e293b'))
-    _paint_kill_annotations(fig)
-    _raise_away_title(fig)
-    fig.update_yaxes(tickfont=dict(size=12), row=2, col=1)
-    fig.layout.yaxis5.tickfont.size = 12
+    _raise_bottom_title(fig)
     return fig
 

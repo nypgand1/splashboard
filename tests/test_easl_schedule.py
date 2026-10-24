@@ -88,28 +88,28 @@ class HomeLeagueScheduleTests(unittest.TestCase):
 
     def test_switching_league_remembers_each_season_and_clears_game_type(self):
         stored = self._filters()
-        stored['show'] = 'finished'
+        stored['show'] = 'results'
         stored['game_type'] = 'PLAYOFF'
         stored['seasons']['PLG'] = dict(SYNERGY_SEASONS)['2024-25']
         plg_season_control = stored['seasons']['PLG']
 
         data, scope = home_page.apply_home_filters(
-            'finished', 'PLAYOFF', 'EASL', plg_season_control, stored, 'home-league',
+            'results', 'PLAYOFF', 'EASL', plg_season_control, stored, 'home-league',
         )
-        self.assertEqual(data['show'], 'finished')
+        self.assertEqual(data['show'], 'results')
         self.assertIsNone(data['game_type'])
         self.assertEqual(data['league'], 'EASL')
         self.assertEqual(data['seasons']['PLG'], dict(SYNERGY_SEASONS)['2024-25'])
         self.assertEqual(scope, {'league': 'EASL', 'season_id': EASL_SEASON_ID})
 
         data, scope = home_page.apply_home_filters(
-            'finished', None, 'EASL', dict(EASL_SEASONS)['2025-26'], data, 'home-season',
+            'results', None, 'EASL', dict(EASL_SEASONS)['2025-26'], data, 'home-season',
         )
         self.assertEqual(data['seasons']['EASL'], dict(EASL_SEASONS)['2025-26'])
         self.assertEqual(scope['season_id'], dict(EASL_SEASONS)['2025-26'])
 
         data, scope = home_page.apply_home_filters(
-            'finished', None, 'PLG', dict(EASL_SEASONS)['2025-26'], data, 'home-league',
+            'results', None, 'PLG', dict(EASL_SEASONS)['2025-26'], data, 'home-league',
         )
         self.assertEqual(scope, {
             'league': 'PLG',

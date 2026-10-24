@@ -167,6 +167,7 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertNotIn('home-game-type', watched)
         self.assertNotIn('home-league', watched)
         self.assertNotIn('home-season', watched)
+        self.assertNotIn('home-team', watched)
 
     def test_home_controls_skeleton_the_list_not_the_interval(self):
         from dash._callback import GLOBAL_CALLBACK_LIST
@@ -181,7 +182,7 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertEqual(len(server), 1)
         self.assertEqual(
             [item['id'] for item in clientside[0]['inputs']],
-            ['home-show', 'home-game-type', 'home-league', 'home-season'],
+            ['home-show', 'home-game-type', 'home-league', 'home-season', 'home-team'],
         )
         self.assertNotIn('home-interval', {item['id'] for item in clientside[0]['inputs']})
         self.assertTrue(clientside[0]['prevent_initial_call'])
@@ -817,6 +818,11 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('border-radius: 10px', narrow)
         phone = css.split('@media (max-width: 768px)', 1)[1].split('@media', 1)[0]
         self.assertIn('flex-wrap: nowrap', phone)
+        self.assertIn('border-radius: 10px', phone)
+        self.assertIn('border: 1px solid var(--border)', phone)
+        self.assertIn('box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15)', phone)
+        self.assertIn('margin: 0 !important', phone)
+        self.assertNotIn('border-radius: 0', phone)
 
 
 def _shot_frame():

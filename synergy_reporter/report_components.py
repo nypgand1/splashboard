@@ -5,6 +5,7 @@ import pandas as pd
 from dash import Patch, dcc, html, no_update
 import dash_mantine_components as dmc
 
+from asset_url import font_fetch_url
 from ui_kit import icon as dmc_icon
 
 from synergy_reporter.csv_table import CSV_IMPORT_LABEL, CSV_PLAY_TYPE_LABEL
@@ -583,6 +584,7 @@ def render_report_workspace(
         html.Div(default_json, id="report-default-layout-json", hidden=True),
         html.Div(game_id or '', id="report-game-id", hidden=True),
         html.Div(pdf_filename(match_info), id="report-pdf-filename", hidden=True),
+        html.Div(font_fetch_url(), id="report-font-url", hidden=True),
         html.Div(table_json, id="report-table-data", hidden=True),
         html.Div(rotation_json or json.dumps({'_ui': 'empty'}), id="report-rotation-figure", hidden=True),
         html.Div(shot_chart_json or json.dumps({'_ui': 'empty'}), id="report-shot-chart", hidden=True),

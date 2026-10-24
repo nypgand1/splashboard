@@ -63,6 +63,6 @@ fly deploy
 
 Set secrets before the first deploy that no longer bakes credentials into the image. Later `fly deploy` runs keep the existing secrets.
 
-Dash links each file in `assets/` with `?m=` set to a content hash (`asset_url.py`), not the file mtime. The Paketo buildpack freezes mtimes at 1980-01-01, so a mtime query never changes and a phone keeps the previous CSS and JS.
+Dash links each file in `assets/` with `?m=` set to a content hash (`asset_url.py`), not the file mtime. The Paketo buildpack freezes mtimes at 1980-01-01, so a mtime query never changes and a phone keeps the previous CSS and JS. The Report font fetch reads that same hash from `#report-font-url`. The name stored inside the PDF stays `NotoSansTC-Regular.ttf`.
 
 Product behavior: `docs/spec.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.

@@ -8,22 +8,10 @@ from navbar import create_navbar
 dash._dash_renderer._set_react_version('18.2.0')
 
 MANTINE_THEME = {
-    "primaryColor": "cyan",
+    "primaryColor": "bravesBlue",
     "fontFamily": '-apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif',
     "defaultRadius": "md",
     "colors": {
-        "cyan": [
-            "#e0f7fa",
-            "#b2ebf2",
-            "#80deea",
-            "#4dd0e1",
-            "#26c6da",
-            "#00b4d8",
-            "#0096c7",
-            "#0077b6",
-            "#023e8a",
-            "#03045e",
-        ],
         "bravesBlue": [
             "#e8f4f8",
             "#cce9f2",

@@ -309,7 +309,7 @@ def court_markup(zones):
     body = raw[:at] + '<g id="shot-zones">' + "".join(fills) + rim_line + "</g>" + raw[at:]
     label_group = (
         '<g id="shot-labels" fill="#0f172a" '
-        'font-family="-apple-system, PingFang TC, Noto Sans TC, Segoe UI, sans-serif" '
+        'font-family="-apple-system, \'PingFang TC\', \'Noto Sans TC\', \'Segoe UI\', Roboto, sans-serif" '
         'font-weight="700" text-anchor="middle">'
         + "".join(labels)
         + "</g>"

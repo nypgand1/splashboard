@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import app
-from asset_url import asset_token
+from asset_url import asset_token, font_fetch_url
 
 
 class AssetTokenTests(unittest.TestCase):
@@ -20,6 +20,13 @@ class AssetTokenTests(unittest.TestCase):
             self.assertNotIn('.', first)
             path.write_bytes(b'body{color:red}')
             self.assertNotEqual(asset_token(path), first)
+
+    def test_font_fetch_url_uses_the_content_hash(self):
+        root = Path(__file__).resolve().parents[1]
+        token = asset_token(root / 'assets' / 'NotoSansTC-Regular.ttf')
+        stamped = font_fetch_url()
+        self.assertEqual(stamped, f'/assets/NotoSansTC-Regular.ttf?m={token}')
+        self.assertEqual(font_fetch_url(), stamped)
 
 
 class AssetIndexTests(unittest.TestCase):
