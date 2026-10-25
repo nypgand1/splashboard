@@ -541,8 +541,39 @@
         return { color: '#64748b', fontWeight: '400' };
     }
 
+    function winningIndexes(values, lower) {
+        var present = [];
+        values.forEach(function (value, index) {
+            if (value === null || value === undefined || isNaN(value)) {
+                return;
+            }
+            present.push({ index: index, value: value });
+        });
+        if (present.length < 2) {
+            return [];
+        }
+        var first = present[0].value;
+        var same = present.every(function (item) { return item.value === first; });
+        if (same) {
+            return [];
+        }
+        var best = first;
+        present.forEach(function (item) {
+            if (lower ? item.value < best : item.value > best) {
+                best = item.value;
+            }
+        });
+        var found = [];
+        present.forEach(function (item) {
+            if (item.value === best) {
+                found.push(item.index);
+            }
+        });
+        return found;
+    }
+
     function winnerIndex(rows, columns, tableKey) {
-        if (!rows || rows.length !== 2) {
+        if (!rows || !rows.length) {
             return {};
         }
         if (tableKey !== 't_df' && tableKey !== 't_adv_df' && tableKey !== 'adv_df' && tableKey !== 'k_df' && tableKey !== 'score_group') {
@@ -553,13 +584,17 @@
             if (col === 'Team' || col === 'Min' || col === '3P-R' || col === '3Pr') {
                 return;
             }
-            var a = numVal(rows[0][col]);
-            var b = numVal(rows[1][col]);
-            if (a === null || b === null || a === b) {
+            var values = rows.map(function (row) {
+                return numVal(formatCell(col, row[col]));
+            });
+            var indexes = winningIndexes(values, !!LOWER_BETTER[col]);
+            if (!indexes.length) {
                 return;
             }
-            var lower = !!LOWER_BETTER[col];
-            map[col] = lower ? (a < b ? 0 : 1) : (a > b ? 0 : 1);
+            map[col] = {};
+            indexes.forEach(function (index) {
+                map[col][index] = true;
+            });
         });
         return map;
     }
@@ -604,7 +639,7 @@
                 var presentKeys = KEY_STATS.filter(function (k) { return columns.indexOf(k) !== -1; });
                 presentKeys.forEach(function (k) { used[k] = 1; });
                 used.__key = 1;
-                top.push({ text: 'Key Stats', span: presentKeys.length });
+                top.push({ text: 'Key Stats', span: presentKeys.length, group: true, cols: presentKeys });
                 presentKeys.forEach(function (k) { sub.push({ label: k, col: k }); });
                 return;
             }
@@ -612,7 +647,7 @@
             if (group) {
                 var present = group.keys.filter(function (k) { return columns.indexOf(k) !== -1; });
                 present.forEach(function (k) { used[k] = 1; });
-                top.push({ text: group.name, span: present.length });
+                top.push({ text: group.name, span: present.length, group: true, cols: present });
                 present.forEach(function (k) {
                     sub.push({ label: group.subs[group.keys.indexOf(k)] || k, col: k });
                 });
@@ -621,7 +656,7 @@
             if (ff.indexOf(col) !== -1 && !used['__ff']) {
                 used['__ff'] = 1;
                 ff.forEach(function (k) { used[k] = 1; });
-                top.push({ text: 'FOUR FACTORS', span: ff.length });
+                top.push({ text: 'FOUR FACTORS', span: ff.length, group: true, cols: ff.slice() });
                 ff.forEach(function (k) { sub.push({ label: k, col: k }); });
                 return;
             }
@@ -629,7 +664,27 @@
                 return;
             }
             used[col] = 1;
-            top.push({ text: headerLabel(col), span: 1, rowSpan: 2, col: col });
+            top.push({ text: headerLabel(col), span: 1, rowSpan: 2, col: col, cols: [col] });
+        });
+        top.forEach(function (cell, index) {
+            if (index + 1 >= top.length) {
+                return;
+            }
+            var next = top[index + 1];
+            if (!cell.group && !next.group) {
+                return;
+            }
+            cell.edge = true;
+            var cols = cell.cols || [];
+            var last = cols[cols.length - 1];
+            if (!last) {
+                return;
+            }
+            sub.forEach(function (item) {
+                if (item.col === last) {
+                    item.edge = true;
+                }
+            });
         });
         return { top: top, sub: sub };
     }
@@ -1444,6 +1499,19 @@
         var rows = parsed.rows;
         var winners = winnerIndex(rows, columns, tableKey);
         var grouped = groupedHeader(columns, tableKey);
+        var edgeCols = {};
+        if (grouped) {
+            grouped.top.forEach(function (cell) {
+                if (!cell.edge) {
+                    return;
+                }
+                var cols = cell.cols || [];
+                var last = cols[cols.length - 1];
+                if (last) {
+                    edgeCols[last] = true;
+                }
+            });
+        }
         var table = document.createElement('table');
         table.className = isLineupTable(tableKey)
             ? 'text-nowrap report-js-table report-lineup-table'
@@ -1463,6 +1531,9 @@
                 if (cell.col) {
                     th.setAttribute('data-col', cell.col);
                 }
+                if (cell.edge) {
+                    th.classList.add('braves-group-end');
+                }
                 tr1.appendChild(th);
             });
             thead.appendChild(tr1);
@@ -1473,6 +1544,9 @@
                     th.textContent = item.label;
                     if (item.col) {
                         th.setAttribute('data-col', item.col);
+                    }
+                    if (item.edge) {
+                        th.classList.add('braves-group-end');
                     }
                     tr2.appendChild(th);
                 });
@@ -1511,9 +1585,12 @@
                     td.style.color = st.color;
                     td.style.fontWeight = st.fontWeight;
                 }
-                if (winners[col] === rIdx) {
+                if (winners[col] && winners[col][rIdx]) {
                     td.style.color = '#0077b6';
                     td.style.fontWeight = '700';
+                }
+                if (edgeCols[col]) {
+                    td.classList.add('braves-group-end');
                 }
                 if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
                     td.style.borderLeft = '3.5px solid ' + teamStripeColor(row, rIdx);
@@ -3508,6 +3585,10 @@
         pdf.setDrawColor(border[0], border[1], border[2]);
         pdf.setLineWidth(0.12);
         pdf.rect(box.x, box.y, box.w, box.h, 'S');
+        if (cell.classList && cell.classList.contains('braves-group-end')) {
+            pdf.setDrawColor(203, 213, 225);
+            pdf.line(box.x + box.w, box.y, box.x + box.w, box.y + box.h);
+        }
         var text = (cell.innerText || '').replace(/\s+/g, ' ').trim();
         if (!text) {
             return;
@@ -4746,6 +4827,8 @@
     window.splashboardReport = {
         skipFourFactorsGroup: skipFourFactorsGroup,
         groupedHeader: groupedHeader,
+        winningIndexes: winningIndexes,
+        winnerIndex: winnerIndex,
         paperScale: paperScale,
         boxOutsideClip: boxOutsideClip,
         clipBoxIsUsable: clipBoxIsUsable,

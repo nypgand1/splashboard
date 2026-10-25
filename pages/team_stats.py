@@ -111,19 +111,68 @@ def _stamp(text):
     return dmc.Text(text or 'Last Update: —', size='sm', c='dimmed', mb=8, className='no-print')
 
 
-def _th(label, kind, span=None, cols=None):
+def _th(label, kind, span=None, cols=None, edge=False):
     table_props = {}
     if span:
         table_props['rowSpan'] = span
     if cols:
         table_props['colSpan'] = cols
-    props = {'className': kind}
+    class_name = kind + (' braves-group-end' if edge else '')
+    props = {'className': class_name}
     if table_props:
         props['tableProps'] = table_props
     return dmc.TableTh(label, **props)
 
 
-def _span_labels(columns, names):
+def _segments(card_id, columns):
+    present = set(columns)
+    if card_id == 'advanced':
+        return [('single', (column,)) for column in columns]
+    segments = []
+    if card_id == 'team':
+        for name in ('Team', 'GP', 'Min'):
+            if name in present:
+                segments.append(('single', (name,)))
+        for _title, members, _leaves in _SHOT_GROUPS:
+            cols = tuple(column for column in members if column in present)
+            if cols:
+                segments.append(('group', cols))
+        for column in _COUNT_TAILS:
+            if column in present:
+                segments.append(('single', (column,)))
+        return segments
+    if card_id == 'key':
+        for name in ('Team', 'GP'):
+            if name in present:
+                segments.append(('single', (name,)))
+        for _name, pairs in _KEY_GROUPS:
+            cols = tuple(column for column, _label in pairs if column in present)
+            if cols:
+                segments.append(('group', cols))
+        if 'BP' in present:
+            segments.append(('single', ('BP',)))
+        return segments
+    for name in ('Team', 'GP', 'Pace'):
+        if name in present:
+            segments.append(('single', (name,)))
+    factors = tuple(column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present)
+    if factors:
+        segments.append(('group', factors))
+    return segments
+
+
+def _edge_columns(card_id, columns):
+    segments = _segments(card_id, columns)
+    ends = set()
+    for index, (kind, cols) in enumerate(segments):
+        if index + 1 >= len(segments) or not cols:
+            continue
+        if kind == 'group' or segments[index + 1][0] == 'group':
+            ends.add(cols[-1])
+    return ends
+
+
+def _span_labels(columns, names, edges):
     present = set(columns)
     nodes = []
     for name in names:
@@ -135,12 +184,13 @@ def _span_labels(columns, names):
             label = 'GP'
         else:
             label = name.upper()
-        nodes.append(_th(label, 'braves-th-span', span=2))
+        nodes.append(_th(label, 'braves-th-span', span=2, edge=name in edges))
     return nodes
 
 
 def _header_rows(card_id, columns):
     present = set(columns)
+    edges = _edge_columns(card_id, columns)
     if card_id == 'advanced':
         labels = []
         for column in columns:
@@ -150,35 +200,58 @@ def _header_rows(card_id, columns):
                 labels.append('GP')
             else:
                 labels.append(column)
-        return [dmc.TableTr([_th(label, 'braves-th-single') for label in labels])]
+        return [dmc.TableTr([
+            _th(label, 'braves-th-single') for label in labels
+        ])]
 
     top = []
     sub = []
     if card_id == 'team':
-        top.extend(_span_labels(columns, ('Team', 'GP', 'Min')))
+        top.extend(_span_labels(columns, ('Team', 'GP', 'Min'), edges))
         for title, members, leaves in _SHOT_GROUPS:
-            if any(column in present for column in members):
-                top.append(_th(title, 'braves-th-group', cols=len(leaves)))
-                sub.extend(_th(leaf, 'braves-th-sub') for leaf in leaves)
+            if not any(column in present for column in members):
+                continue
+            top.append(_th(
+                title, 'braves-th-group', cols=len(leaves), edge=members[-1] in edges,
+            ))
+            sub.extend(
+                _th(leaf, 'braves-th-sub', edge=column in edges)
+                for column, leaf in zip(members, leaves)
+            )
         for column in _COUNT_TAILS:
             if column in present:
-                top.append(_th(_TAIL_LABEL.get(column, column), 'braves-th-span-tight', span=2))
+                top.append(_th(
+                    _TAIL_LABEL.get(column, column),
+                    'braves-th-span-tight',
+                    span=2,
+                    edge=column in edges,
+                ))
     elif card_id == 'key':
-        top.extend(_span_labels(columns, ('Team', 'GP')))
+        top.extend(_span_labels(columns, ('Team', 'GP'), edges))
         for name, pairs in _KEY_GROUPS:
             found = [(column, label) for column, label in pairs if column in present]
             if not found:
                 continue
-            top.append(_th(name, 'braves-th-group', cols=len(found)))
-            sub.extend(_th(label, 'braves-th-sub') for _column, label in found)
+            top.append(_th(
+                name, 'braves-th-group', cols=len(found), edge=found[-1][0] in edges,
+            ))
+            sub.extend(
+                _th(label, 'braves-th-sub', edge=column in edges)
+                for column, label in found
+            )
         if 'BP' in present:
-            top.append(_th('BP', 'braves-th-span', span=2))
+            top.append(_th('BP', 'braves-th-span', span=2, edge='BP' in edges))
     else:
-        top.extend(_span_labels(columns, ('Team', 'GP', 'Pace')))
+        top.extend(_span_labels(columns, ('Team', 'GP', 'Pace'), edges))
         factors = [column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present]
         if factors:
-            top.append(_th('FOUR FACTORS', 'braves-th-group', cols=len(factors)))
-            sub.extend(_th(column, 'braves-th-sub') for column in factors)
+            top.append(_th(
+                'FOUR FACTORS', 'braves-th-group', cols=len(factors),
+                edge=factors[-1] in edges,
+            ))
+            sub.extend(
+                _th(column, 'braves-th-sub', edge=column in edges) for column in factors
+            )
     rows = [dmc.TableTr(top)]
     if sub:
         rows.append(dmc.TableTr(sub))
@@ -186,19 +259,41 @@ def _header_rows(card_id, columns):
 
 
 def _body_rows(card):
+    columns = card.get('columns') or []
+    edges = _edge_columns(card.get('id'), columns)
+    records = []
+    for index, record in enumerate(card.get('rows') or []):
+        records.append(record)
+        opp_rows = card.get('opp_rows') or []
+        if index < len(opp_rows):
+            records.append(opp_rows[index])
     rows = []
-    for record in card.get('rows') or []:
+    for record in records:
+        opp = bool(isinstance(record, dict) and record.get('opp'))
         cells = []
-        for column in card.get('columns') or []:
+        for column in columns:
             cell = record.get(column) if isinstance(record, dict) else None
             text = ''
             style = None
             if isinstance(cell, dict):
                 text = '' if cell.get('text') is None else str(cell.get('text'))
-                if cell.get('winner'):
+                if opp and cell.get('opp_best'):
+                    style = {'color': '#e63946', 'fontWeight': 700}
+                elif cell.get('winner'):
                     style = {'color': '#0077b6', 'fontWeight': 700}
-            cells.append(dmc.TableTd(text, style=style))
-        rows.append(dmc.TableTr(cells, className='braves-clean-row'))
+            classes = []
+            if column in edges:
+                classes.append('braves-group-end')
+            if opp and column == 'Team':
+                classes.append('braves-opp-label')
+            kwargs = {}
+            if style:
+                kwargs['style'] = style
+            if classes:
+                kwargs['className'] = ' '.join(classes)
+            cells.append(dmc.TableTd(text, **kwargs))
+        class_name = 'braves-clean-row braves-opp-row' if opp else 'braves-clean-row'
+        rows.append(dmc.TableTr(cells, className=class_name))
     return rows
 
 
@@ -335,18 +430,32 @@ def layout():
             ),
             dmc.Group(
                 [
-                    dmc.SegmentedControl(
-                        id='ts-period',
-                        data=[{'label': 'All', 'value': 'all'}],
-                        value='all',
-                        radius='md',
-                        size='xs',
+                    html.Div(
+                        dmc.SegmentedControl(
+                            id='ts-period',
+                            data=[{'label': 'All', 'value': 'all'}],
+                            value='all',
+                            radius='md',
+                            size='xs',
+                        ),
+                        id='ts-period-wrap',
+                        style={'display': 'none'},
+                    ),
+                    dmc.Switch(
+                        id='ts-show-opp',
+                        label='Show Opp',
+                        checked=False,
+                        size='sm',
+                        color='gray',
+                        ms='auto',
                     ),
                 ],
                 id='ts-period-bar',
+                justify='flex-start',
+                align='center',
                 wrap='wrap',
                 gap='sm',
-                style={'display': 'none'},
+                w='100%',
             ),
             html.Div(_loading_body(), id='ts-body'),
         ],
@@ -355,6 +464,16 @@ def layout():
 
 
 _LOADING_BODY = json.dumps(_jsonable(_loading_body()))
+
+clientside_callback(
+    """
+    function(checked) {
+        return checked ? 'ts-show-opp' : '';
+    }
+    """,
+    Output('ts-body', 'className'),
+    Input('ts-show-opp', 'checked'),
+)
 
 clientside_callback(
     """
@@ -504,7 +623,7 @@ def _view_outputs():
         Output('ts-game-type-wrap', 'style', allow_duplicate=True),
         Output('ts-period', 'data', allow_duplicate=True),
         Output('ts-period', 'value', allow_duplicate=True),
-        Output('ts-period-bar', 'style', allow_duplicate=True),
+        Output('ts-period-wrap', 'style', allow_duplicate=True),
         Output('ts-applied', 'data', allow_duplicate=True),
     )
 

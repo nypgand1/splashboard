@@ -15,6 +15,7 @@ from synergy_inbounder.game_status import is_finished_status
 from synergy_inbounder.http_wave import run_wave
 from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
 from synergy_inbounder.names import TEAM_TBD, display_name
+from synergy_reporter.column_winners import winning_indexes
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import possession_counts
 from synergy_inbounder.runtime_cache import peek_finished_report, taipei_now_label
@@ -359,7 +360,11 @@ def _pace_and_advanced(entity_id, summed, possessions, id_table, minutes):
 
 
 def _cell(text):
-    return {'text': '' if text is None else str(text), 'winner': False}
+    return {
+        'text': '' if text is None else str(text),
+        'winner': False,
+        'opp_best': False,
+    }
 
 
 def _parse_stat(text):
@@ -376,25 +381,109 @@ def _parse_stat(text):
         return None
 
 
-def _paint_winners(rows, columns):
-    if len(rows) < 2:
-        return
+def _paint_winners(rows, columns, flag='winner'):
     for column in columns:
         if column in _UNCOLORED:
             continue
-        numbers = []
-        for row in rows:
-            number = _parse_stat(row[column]['text'])
-            if number is None:
-                numbers = None
-                break
-            numbers.append(number)
-        if not numbers:
+        values = [_parse_stat(row[column]['text']) for row in rows]
+        lower = column in _LOWER_IS_BETTER
+        for index in winning_indexes(values, lower):
+            rows[index][column][flag] = True
+
+
+def _other_entities(frame, fixture_id, entity_id):
+    columns = getattr(frame, 'columns', [])
+    if frame is None or len(frame) == 0 or 'fixtureId' not in columns or 'entityId' not in columns:
+        return []
+    fixtures = frame['fixtureId'].astype(str)
+    subset = frame.loc[fixtures == str(fixture_id)]
+    found = []
+    seen = set()
+    own = str(entity_id)
+    for entity in subset['entityId'].tolist():
+        key = str(entity)
+        if key == own or key in seen:
             continue
-        best = min(numbers) if column in _LOWER_IS_BETTER else max(numbers)
-        if numbers.count(best) != 1:
-            continue
-        rows[numbers.index(best)][column]['winner'] = True
+        seen.add(key)
+        found.append(entity)
+    return found
+
+
+def _opponent_inputs(entity_id, game_ids, totals, periods, pbp_by_fixture, period):
+    pieces = []
+    possessions = 0.0
+    leaves = {key: 0 for key in _LEAF_KEYS}
+    source = totals if period in (None, '', 'all') else periods
+    for fixture_id in game_ids:
+        for other in _other_entities(source, fixture_id, entity_id):
+            matched = _slice_rows(totals, periods, fixture_id, other, period)
+            if matched is None or len(matched) == 0:
+                continue
+            pieces.append(matched)
+            possessions += _possessions(
+                other, [fixture_id], totals, periods, pbp_by_fixture, period,
+            )
+            one = _leaves(other, [fixture_id], pbp_by_fixture, period)
+            for key in _LEAF_KEYS:
+                leaves[key] += one.get(key, 0)
+    return _combine(pieces, entity_id), possessions, leaves
+
+
+def _stat_rows(label, games, summed, leaves, pace, advanced, opp=False):
+    team = {
+        'Team': _cell('Opp' if opp else label),
+        'GP': _cell('' if opp else str(games)),
+        'Min': _cell('' if opp else _mean_minutes(summed.get('minutes'), games)),
+        '2M': _cell(_mean(summed.get('pointsTwoMade'), games)),
+        '2A': _cell(_mean(summed.get('pointsTwoAttempted'), games)),
+        '2FG%': _cell(shot_pct_display(summed.get('pointsTwoMade'), summed.get('pointsTwoAttempted'))),
+        '3M': _cell(_mean(summed.get('pointsThreeMade'), games)),
+        '3A': _cell(_mean(summed.get('pointsThreeAttempted'), games)),
+        '3FG%': _cell(shot_pct_display(summed.get('pointsThreeMade'), summed.get('pointsThreeAttempted'))),
+        'FTM': _cell(_mean(summed.get('freeThrowsMade'), games)),
+        'FTA': _cell(_mean(summed.get('freeThrowsAttempted'), games)),
+        'FT%': _cell(shot_pct_display(summed.get('freeThrowsMade'), summed.get('freeThrowsAttempted'))),
+        'OR': _cell(_mean(summed.get('reboundsOffensive'), games)),
+        'DR': _cell(_mean(summed.get('reboundsDefensive'), games)),
+        'REB': _cell(_mean(summed.get('rebounds'), games)),
+        'AST': _cell(_mean(summed.get('assists'), games)),
+        'TO': _cell(_mean(summed.get('turnovers'), games)),
+        'ST': _cell(_mean(summed.get('steals'), games)),
+        'BS': _cell(_mean(summed.get('blocks'), games)),
+        'PF': _cell(_mean(summed.get('foulsTotal'), games)),
+        'FD': _cell(_mean(summed.get('foulsDrawn'), games)),
+        'PTS': _cell(_mean(summed.get('points'), games)),
+    }
+    key = {
+        'Team': _cell('Opp' if opp else label),
+        'GP': _cell('' if opp else str(games)),
+    }
+    for column, field in _KEY_API:
+        key[column] = _cell(_mean(summed.get(field), games))
+    for leaf in _LEAF_KEYS:
+        key[leaf] = _cell(_mean(leaves.get(leaf, 0), games))
+    pace_row = {
+        'Team': _cell('Opp' if opp else label),
+        'GP': _cell('' if opp else str(games)),
+        'Pace': _cell(pace.get('Pace')),
+        'eFG%': _cell(pace.get('eFG%')),
+        'TO%': _cell(pace.get('TO%')),
+        'ORB%': _cell(pace.get('ORB%')),
+        'FT-R': _cell(pace.get('FT-R')),
+    }
+    advanced_row = {
+        'Team': _cell('Opp' if opp else label),
+        'GP': _cell('' if opp else str(games)),
+        'PPP': _cell(advanced.get('PPP')),
+        'AS/TO': _cell(advanced.get('AS/TO')),
+        'AST%': _cell(advanced.get('AST%')),
+        '3P-R': _cell(advanced.get('3P-R')),
+        'TS%': _cell(advanced.get('TS%')),
+    }
+    if opp:
+        for row in (team, key, pace_row, advanced_row):
+            row['opp'] = True
+    return team, key, pace_row, advanced_row
 
 
 def build_team_cards(fixtures, totals, periods, pbp_by_fixture, id_table, minutes, game_type, period):
@@ -425,6 +514,10 @@ def build_team_cards(fixtures, totals, periods, pbp_by_fixture, id_table, minute
     key_rows = []
     pace_rows = []
     advanced_rows = []
+    opp_team_rows = []
+    opp_key_rows = []
+    opp_pace_rows = []
+    opp_advanced_rows = []
     for entity in named:
         game_ids = _game_ids_for_team(entity, fixture_ids, totals, periods, selected_period)
         games = len(game_ids)
@@ -442,61 +535,34 @@ def build_team_cards(fixtures, totals, periods, pbp_by_fixture, id_table, minute
         )
         leaves = _leaves(entity, game_ids, pbp_by_fixture, selected_period)
         pace, advanced = _pace_and_advanced(entity, summed, possessions, id_table, minutes)
-        team_rows.append({
-            'Team': _cell(label),
-            'GP': _cell(str(games)),
-            'Min': _cell(_mean_minutes(summed.get('minutes'), games)),
-            '2M': _cell(_mean(summed.get('pointsTwoMade'), games)),
-            '2A': _cell(_mean(summed.get('pointsTwoAttempted'), games)),
-            '2FG%': _cell(shot_pct_display(summed.get('pointsTwoMade'), summed.get('pointsTwoAttempted'))),
-            '3M': _cell(_mean(summed.get('pointsThreeMade'), games)),
-            '3A': _cell(_mean(summed.get('pointsThreeAttempted'), games)),
-            '3FG%': _cell(shot_pct_display(summed.get('pointsThreeMade'), summed.get('pointsThreeAttempted'))),
-            'FTM': _cell(_mean(summed.get('freeThrowsMade'), games)),
-            'FTA': _cell(_mean(summed.get('freeThrowsAttempted'), games)),
-            'FT%': _cell(shot_pct_display(summed.get('freeThrowsMade'), summed.get('freeThrowsAttempted'))),
-            'OR': _cell(_mean(summed.get('reboundsOffensive'), games)),
-            'DR': _cell(_mean(summed.get('reboundsDefensive'), games)),
-            'REB': _cell(_mean(summed.get('rebounds'), games)),
-            'AST': _cell(_mean(summed.get('assists'), games)),
-            'TO': _cell(_mean(summed.get('turnovers'), games)),
-            'ST': _cell(_mean(summed.get('steals'), games)),
-            'BS': _cell(_mean(summed.get('blocks'), games)),
-            'PF': _cell(_mean(summed.get('foulsTotal'), games)),
-            'FD': _cell(_mean(summed.get('foulsDrawn'), games)),
-            'PTS': _cell(_mean(summed.get('points'), games)),
-        })
-        key = {
-            'Team': _cell(label),
-            'GP': _cell(str(games)),
-        }
-        for column, field in _KEY_API:
-            key[column] = _cell(_mean(summed.get(field), games))
-        for leaf in _LEAF_KEYS:
-            key[leaf] = _cell(_mean(leaves.get(leaf, 0), games))
+        team, key, pace_row, advanced_row = _stat_rows(
+            label, games, summed, leaves, pace, advanced,
+        )
+        team_rows.append(team)
         key_rows.append(key)
-        pace_rows.append({
-            'Team': _cell(label),
-            'GP': _cell(str(games)),
-            'Pace': _cell(pace.get('Pace')),
-            'eFG%': _cell(pace.get('eFG%')),
-            'TO%': _cell(pace.get('TO%')),
-            'ORB%': _cell(pace.get('ORB%')),
-            'FT-R': _cell(pace.get('FT-R')),
-        })
-        advanced_rows.append({
-            'Team': _cell(label),
-            'GP': _cell(str(games)),
-            'PPP': _cell(advanced.get('PPP')),
-            'AS/TO': _cell(advanced.get('AS/TO')),
-            'AST%': _cell(advanced.get('AST%')),
-            '3P-R': _cell(advanced.get('3P-R')),
-            'TS%': _cell(advanced.get('TS%')),
-        })
+        pace_rows.append(pace_row)
+        advanced_rows.append(advanced_row)
+        opp_summed, opp_poss, opp_leaves = _opponent_inputs(
+            entity, game_ids, totals, periods, pbp_by_fixture, selected_period,
+        )
+        opp_pace, opp_advanced = _pace_and_advanced(
+            entity, opp_summed, opp_poss, id_table, minutes,
+        )
+        opp_team, opp_key, opp_pace, opp_advanced = _stat_rows(
+            label, games, opp_summed, opp_leaves, opp_pace, opp_advanced, opp=True,
+        )
+        opp_team_rows.append(opp_team)
+        opp_key_rows.append(opp_key)
+        opp_pace_rows.append(opp_pace)
+        opp_advanced_rows.append(opp_advanced)
     _paint_winners(team_rows, _TEAM_COLUMNS)
     _paint_winners(key_rows, _KEY_COLUMNS)
     _paint_winners(pace_rows, _PACE_COLUMNS)
     _paint_winners(advanced_rows, _ADVANCED_COLUMNS)
+    _paint_winners(opp_team_rows, _TEAM_COLUMNS, 'opp_best')
+    _paint_winners(opp_key_rows, _KEY_COLUMNS, 'opp_best')
+    _paint_winners(opp_pace_rows, _PACE_COLUMNS, 'opp_best')
+    _paint_winners(opp_advanced_rows, _ADVANCED_COLUMNS, 'opp_best')
     visible = bool(team_rows)
     return {
         'game_types': options,
@@ -507,10 +573,22 @@ def build_team_cards(fixtures, totals, periods, pbp_by_fixture, id_table, minute
         'period_visible': visible and bool(chips),
         'empty': not visible,
         'cards': None if not visible else {
-            'pace': {'id': 'pace', 'title': PACE_CARD_TITLE, 'columns': list(_PACE_COLUMNS), 'rows': pace_rows},
-            'advanced': {'id': 'advanced', 'title': ADVANCED_CARD_TITLE, 'columns': list(_ADVANCED_COLUMNS), 'rows': advanced_rows},
-            'key': {'id': 'key', 'title': KEY_CARD_TITLE, 'columns': list(_KEY_COLUMNS), 'rows': key_rows},
-            'team': {'id': 'team', 'title': None, 'columns': list(_TEAM_COLUMNS), 'rows': team_rows},
+            'pace': {
+                'id': 'pace', 'title': PACE_CARD_TITLE, 'columns': list(_PACE_COLUMNS),
+                'rows': pace_rows, 'opp_rows': opp_pace_rows,
+            },
+            'advanced': {
+                'id': 'advanced', 'title': ADVANCED_CARD_TITLE, 'columns': list(_ADVANCED_COLUMNS),
+                'rows': advanced_rows, 'opp_rows': opp_advanced_rows,
+            },
+            'key': {
+                'id': 'key', 'title': KEY_CARD_TITLE, 'columns': list(_KEY_COLUMNS),
+                'rows': key_rows, 'opp_rows': opp_key_rows,
+            },
+            'team': {
+                'id': 'team', 'title': None, 'columns': list(_TEAM_COLUMNS),
+                'rows': team_rows, 'opp_rows': opp_team_rows,
+            },
         },
     }
 

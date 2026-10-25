@@ -1030,6 +1030,10 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.report-js-table .braves-group-end {
+    border-right-color: #cbd5e1;
+}
+
 .report-js-table thead tr:nth-child(2) th {
     padding-left: 0;
     padding-right: 0;
@@ -1222,6 +1226,29 @@ body {
     background-color: var(--row-hover) !important;
 }
 
+.braves-clean-table .braves-group-end {
+    border-right: 1px solid #cbd5e1;
+}
+
+.braves-clean-table tbody tr.braves-opp-row td {
+    background-color: #f1f5f9;
+}
+
+.braves-clean-table tbody tr.braves-opp-row td.braves-opp-label {
+    text-align: right;
+    color: #0f172a;
+    font-weight: 400;
+}
+
+#ts-body:not(.ts-show-opp) tr.braves-opp-row {
+    display: none;
+}
+
+.braves-clean-table tbody tr.braves-clean-row:hover td:first-child,
+.braves-clean-table tbody tr.braves-opp-row:hover td {
+    background-color: var(--row-hover) !important;
+}
+
 /* ==========================================================================
    AG-Grid Light Theme Customizations
    ========================================================================== */
@@ -1327,6 +1354,12 @@ body {
 .ag-theme-alpine.braves-clean-ag-grid .ag-header-align-right .ag-header-cell-label,
 .ag-theme-alpine.braves-clean-ag-grid .ag-right-aligned-header .ag-header-cell-label {
     justify-content: flex-end !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-header-group-cell.braves-group-end,
+.ag-theme-alpine.braves-clean-ag-grid .ag-header-cell.braves-group-end,
+.ag-theme-alpine.braves-clean-ag-grid .ag-cell.braves-group-end {
+    border-right: 1px solid #cbd5e1 !important;
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-header-group-cell {

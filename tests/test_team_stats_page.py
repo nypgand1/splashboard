@@ -83,6 +83,17 @@ class TeamStatsCallbackTests(unittest.TestCase):
         self.assertIn('ts-applied.data', download[0]['output'])
         self.assertNotIn('ts-job.data', download[0]['output'])
         self.assertTrue(download[0]['prevent_initial_call'])
+        self.assertIn('ts-period-wrap.style', render[0]['output'])
+        self.assertNotIn('ts-period-bar.style', render[0]['output'])
+        self.assertNotIn('ts-show-opp', {item['id'] for item in render[0]['inputs']})
+        self.assertNotIn('ts-show-opp', {item['id'] for item in download[0]['state']})
+
+        show = _callbacks('ts-body.className')
+        self.assertEqual(len(show), 1)
+        self.assertTrue(show[0].get('clientside_function'))
+        self.assertEqual(_pairs(show[0]['inputs']), [('ts-show-opp', 'checked')])
+        self.assertNotIn('ts-league', {item['id'] for item in show[0]['inputs']})
+        self.assertNotIn('ts-period', {item['id'] for item in show[0]['inputs']})
 
 
 def _payload(season_id='s', game_type='REGULAR', period='all'):
@@ -245,3 +256,134 @@ class TeamStatsRenderTests(unittest.TestCase):
         })
         self.assertIs(result[11], no_update)
         self.assertNotIn('secret', str(result[0]))
+
+
+def _walk(node):
+    yield node
+    children = getattr(node, 'children', None)
+    if isinstance(children, (list, tuple)):
+        for child in children:
+            yield from _walk(child)
+    elif children is not None and not isinstance(children, (str, int, float, dict)):
+        yield from _walk(children)
+
+
+class TeamStatsShowOppTests(unittest.TestCase):
+    def test_switch_stays_outside_the_body(self):
+        tree = team_stats_page.layout()
+        body = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-body')
+        self.assertNotIn('ts-show-opp', {getattr(node, 'id', None) for node in _walk(body)})
+        switch = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-show-opp')
+        self.assertIsInstance(switch, dmc.Switch)
+        self.assertEqual(switch.label, 'Show Opp')
+        self.assertEqual(switch.size, 'sm')
+        self.assertEqual(switch.color, 'gray')
+        self.assertFalse(bool(switch.checked))
+        self.assertEqual(switch.ms, 'auto')
+        bar = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-period-bar')
+        self.assertIsInstance(bar, dmc.Group)
+        self.assertIsNone(getattr(bar, 'style', None) or None)
+        child_ids = [getattr(child, 'id', None) for child in bar.children]
+        self.assertEqual(child_ids, ['ts-period-wrap', 'ts-show-opp'])
+        wrap = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-period-wrap')
+        self.assertEqual(wrap.style, {'display': 'none'})
+
+    def test_opp_row_uses_red_and_group_edges_stop_before_the_rim(self):
+        cell = lambda text, winner=False, opp_best=False: {
+            'text': text, 'winner': winner, 'opp_best': opp_best,
+        }
+
+        def team_row(name, pts, winner=False):
+            return {
+                'Team': cell(name),
+                'GP': cell('1'),
+                'Min': cell('10:00'),
+                '2M': cell('1.0'),
+                '2A': cell('2.0'),
+                '2FG%': cell('.500'),
+                'PTS': cell(pts, winner=winner),
+                'TO': cell('1.0'),
+            }
+
+        def opp_row(pts, opp_best=False):
+            row = team_row('Opp', pts)
+            row['opp'] = True
+            row['Team'] = cell('Opp')
+            row['GP'] = cell('')
+            row['Min'] = cell('')
+            row['PTS'] = cell(pts, opp_best=opp_best)
+            return row
+
+        paper = team_stats_page._paper({
+            'id': 'team',
+            'columns': ['Team', 'GP', 'Min', '2M', '2A', '2FG%', 'PTS', 'TO'],
+            'rows': [team_row('Aces', '20.0', winner=True), team_row('Braves', '10.0')],
+            'opp_rows': [opp_row('10.0'), opp_row('20.0', opp_best=True)],
+        })
+        table = next(node for node in _walk(paper) if isinstance(node, dmc.Table))
+        body = table.children[1]
+        classes = [row.className for row in body.children]
+        self.assertEqual(classes, [
+            'braves-clean-row',
+            'braves-clean-row braves-opp-row',
+            'braves-clean-row',
+            'braves-clean-row braves-opp-row',
+        ])
+        aces_pts = next(td for td in body.children[0].children if td.children == '20.0')
+        self.assertEqual(aces_pts.style.get('color'), '#0077b6')
+        opp_pts = next(td for td in body.children[3].children if td.children == '20.0')
+        self.assertEqual(opp_pts.style.get('color'), '#e63946')
+        self.assertEqual(opp_pts.style.get('fontWeight'), 700)
+        hidden_pts = next(td for td in body.children[1].children if td.children == '10.0')
+        self.assertFalse(getattr(hidden_pts, 'style', None))
+        opp_label = body.children[1].children[0]
+        self.assertEqual(opp_label.children, 'Opp')
+        self.assertIn('braves-opp-label', opp_label.className.split())
+        self.assertEqual(body.children[1].children[1].children, '')
+        self.assertEqual(body.children[1].children[2].children, '')
+        headers = [th for th in _walk(table.children[0]) if isinstance(th, dmc.TableTh)]
+        edged = {
+            th.children: 'braves-group-end' in (th.className or '').split()
+            for th in headers
+        }
+        self.assertFalse(edged['TEAM'])
+        self.assertFalse(edged['GP'])
+        self.assertTrue(edged['MIN'])
+        self.assertTrue(edged['2PT'])
+        self.assertFalse(edged['PT'])
+        self.assertFalse(edged['TO'])
+        subs = [th for th in headers if th.children in ('M', 'A', '%')]
+        self.assertEqual(
+            ['braves-group-end' in (th.className or '').split() for th in subs],
+            [False, False, True],
+        )
+        pace = team_stats_page._paper({
+            'id': 'pace',
+            'columns': ['Team', 'GP', 'Pace', 'eFG%', 'TO%', 'ORB%', 'FT-R'],
+            'rows': [{
+                'Team': cell('Aces'), 'GP': cell('1'), 'Pace': cell('70.0'),
+                'eFG%': cell('50.0%'), 'TO%': cell('12.0%'),
+                'ORB%': cell('20.0%'), 'FT-R': cell('10.0%'),
+            }],
+            'opp_rows': [],
+        })
+        pace_headers = [
+            th for th in _walk(pace) if isinstance(th, dmc.TableTh)
+        ]
+        pace_edge = {
+            th.children: 'braves-group-end' in (th.className or '').split()
+            for th in pace_headers
+        }
+        self.assertTrue(pace_edge['PACE'])
+        self.assertFalse(pace_edge['FOUR FACTORS'])
+        self.assertFalse(pace_edge['FT-R'])
+        advanced = team_stats_page._paper({
+            'id': 'advanced',
+            'columns': ['Team', 'GP', 'PPP'],
+            'rows': [{'Team': cell('Aces'), 'GP': cell('1'), 'PPP': cell('1.10')}],
+            'opp_rows': [],
+        })
+        self.assertFalse(any(
+            'braves-group-end' in ((th.className or '').split())
+            for th in _walk(advanced) if isinstance(th, dmc.TableTh)
+        ))

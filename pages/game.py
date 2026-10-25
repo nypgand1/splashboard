@@ -31,6 +31,7 @@ from synergy_inbounder.game_status import (
     is_live_play_status,
     status_bucket,
 )
+from synergy_reporter.column_winners import winning_indexes
 from synergy_reporter.report_components import (
     apply_page_cmd,
     lineup_tables_for_size,
@@ -965,38 +966,66 @@ def _th(label, kind, span=None, cols=None):
     return dmc.TableTh(label, **props)
 
 
+def _append_class(node, name):
+    current = getattr(node, 'className', None) or ''
+    parts = str(current).split()
+    if name not in parts:
+        parts.append(name)
+    node.className = ' '.join(parts)
+
+
+def _boundary_columns(segments):
+    ends = set()
+    for index, (kind, cols) in enumerate(segments):
+        if index + 1 >= len(segments) or not cols:
+            continue
+        if kind == 'group' or segments[index + 1][0] == 'group':
+            ends.add(cols[-1])
+    return ends
+
+
+def _mark_header_edges(top_row, sub_row, segments):
+    edges = _boundary_columns(segments)
+    sub_index = 0
+    for (kind, cols), th in zip(segments, top_row):
+        if cols and cols[-1] in edges:
+            _append_class(th, 'braves-group-end')
+        if kind == 'group':
+            count = len(cols)
+            if count and cols[-1] in edges and sub_index + count - 1 < len(sub_row):
+                _append_class(sub_row[sub_index + count - 1], 'braves-group-end')
+            sub_index += count
+    return edges
+
+
 def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
 
-    # Precalculate winning values for each column across rows (team summary tables have 2 rows: Home vs Away)
+    # Column-best marks. A blank cell stays out. Timeouts are not compared.
     is_timeouts_card = bool(title and 'timeout' in title.lower())
     col_winners = {}
-    if is_team_summary and len(df) == 2 and not is_timeouts_card:
+    if is_team_summary and len(df) and not is_timeouts_card:
         is_fouls_card = bool(title and 'foul' in title.lower())
         for col in df.columns:
-            if col in ('Team', 'Min'):
+            if col in ('Team', 'Min', '3Pr', '3P-R'):
                 continue
-            val0 = _parse_numeric_stat(df.iloc[0][col])
-            val1 = _parse_numeric_stat(df.iloc[1][col])
-            if val0 is not None and val1 is not None and val0 != val1:
-                # Lower is better for Fouls, TO, TO%, PF. 3P-R is a mix, not a result.
-                if col in ('3Pr', '3P-R'):
-                    continue
-                if is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TO%'):
-                    col_winners[col] = 0 if val0 < val1 else 1
-                else:
-                    col_winners[col] = 0 if val0 > val1 else 1
+            values = [_parse_numeric_stat(df.iloc[index][col]) for index in range(len(df))]
+            lower = is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TO%')
+            col_winners[col] = set(winning_indexes(values, lower))
 
     has_grouped_cols = any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%'))
     has_key_stats_grouped = any(c in df.columns for c in _KEY_STAT_LEAVES)
     
+    edge_columns = set()
     if has_grouped_cols:
         top_row = []
         sub_row = []
+        segments = []
         for col in ('Team', 'Min'):
             if col in df.columns:
                 top_row.append(_th(col.upper(), 'braves-th-span', span=2))
+                segments.append(('single', (col,)))
 
         for title_text, members, leaves in (
             ('2PT', ('2M', '2A', '2FG%'), ('M', 'A', '%')),
@@ -1007,36 +1036,49 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
             if any(col in df.columns for col in members):
                 top_row.append(_th(title_text, 'braves-th-group', cols=3))
                 sub_row.extend(_th(leaf, 'braves-th-sub') for leaf in leaves)
+                segments.append(('group', members))
 
         for col in ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
                 top_row.append(_th(_stat_header(col), 'braves-th-span-tight', span=2))
+                segments.append(('single', (col,)))
+        edge_columns = _mark_header_edges(top_row, sub_row, segments)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif has_key_stats_grouped:
         top_row = []
         sub_row = []
+        segments = []
         if 'Team' in df.columns:
             top_row.append(_th('TEAM', 'braves-th-span', span=2))
+            segments.append(('single', ('Team',)))
         for name, pairs in _KEY_STAT_GROUPS:
             present = [(column, label) for column, label in pairs if column in df.columns]
             if not present:
                 continue
             top_row.append(_th(name, 'braves-th-group', cols=len(present)))
             sub_row.extend(_th(label, 'braves-th-sub') for _column, label in present)
+            segments.append(('group', tuple(column for column, _label in present)))
         if 'BP' in df.columns:
             top_row.append(_th('BP', 'braves-th-span', span=2))
+            segments.append(('single', ('BP',)))
+        edge_columns = _mark_header_edges(top_row, sub_row, segments)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('eFG%', 'TO%', 'ORB%', 'FT-R')):
         top_row = []
         sub_row = []
+        segments = []
         if 'Team' in df.columns:
             top_row.append(_th('TEAM', 'braves-th-span', span=2))
+            segments.append(('single', ('Team',)))
         if 'Pace' in df.columns:
             top_row.append(_th('PACE', 'braves-th-span', span=2))
+            segments.append(('single', ('Pace',)))
         ff_cols = [c for c in ('eFG%', 'TO%', 'ORB%', 'FT-R') if c in df.columns]
         if ff_cols:
             top_row.append(_th('FOUR FACTORS', 'braves-th-group', cols=len(ff_cols)))
             sub_row.extend(_th(fc, 'braves-th-sub') for fc in ff_cols)
+            segments.append(('group', tuple(ff_cols)))
+        edge_columns = _mark_header_edges(top_row, sub_row, segments)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('PPP', 'AS/TO', 'AST%', '3P-R', 'TS%')):
         labels = ['TEAM'] if 'Team' in df.columns else []
@@ -1068,16 +1110,19 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
             else:
                 val_str = str(val)
 
-            # Determine bolding and color: Only winning row in column is bold blue (team name itself is regular or semi-bold)
-            is_winner = col_winners.get(col) == row_idx
+            is_winner = row_idx in col_winners.get(col, ())
             cell_style = {}
             if is_winner:
                 cell_style['color'] = '#0077b6'
                 cell_style['fontWeight'] = 700
             if c_idx == 0 and team_stripe_style:
                 cell_style.update(team_stripe_style)
-
-            cells.append(dmc.TableTd(val_str, style=cell_style or None))
+            classes = ['braves-group-end'] if col in edge_columns else []
+            cells.append(dmc.TableTd(
+                val_str,
+                style=cell_style or None,
+                className=' '.join(classes) or None,
+            ))
 
         rows.append(dmc.TableTr(cells, className="braves-clean-row"))
 
@@ -1409,7 +1454,31 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             })
 
     _apply_click_sort_columns(column_defs)
+    _mark_ag_group_edges(column_defs)
     return _stamp_designed_widths(column_defs)
+
+
+def _append_def_class(defn, key, name):
+    current = defn.get(key) or ''
+    parts = str(current).split()
+    if name not in parts:
+        parts.append(name)
+    defn[key] = ' '.join(parts)
+
+
+def _mark_ag_group_edges(column_defs):
+    for index, defn in enumerate(column_defs):
+        if index + 1 >= len(column_defs):
+            continue
+        children = defn.get('children')
+        next_is_group = bool(column_defs[index + 1].get('children'))
+        if children:
+            _append_def_class(defn, 'headerClass', 'braves-group-end')
+            _append_def_class(children[-1], 'headerClass', 'braves-group-end')
+            _append_def_class(children[-1], 'cellClass', 'braves-group-end')
+        elif next_is_group:
+            _append_def_class(defn, 'headerClass', 'braves-group-end')
+            _append_def_class(defn, 'cellClass', 'braves-group-end')
 
 
 def _display_cell(value):

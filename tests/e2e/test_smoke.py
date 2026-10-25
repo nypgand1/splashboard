@@ -729,6 +729,48 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
+    page.locator('#pane-bs th.braves-group-end').first.wait_for(state='attached', timeout=10000)
+    edge_color = page.locator('#pane-bs th.braves-group-end').first.evaluate(
+        'el => getComputedStyle(el).borderRightColor'
+    )
+    assert edge_color == 'rgb(203, 213, 225)'
+    marks = page.evaluate(
+        '''() => {
+            const api = window.splashboardReport;
+            const header = api.groupedHeader(
+                ['Team', 'Min', '2M', '2A', '2FG%', 'AST', 'PTS'],
+                't_df'
+            );
+            return {
+                tie: api.winningIndexes([20, 20, 20], false),
+                shared: api.winningIndexes([20, 18, 20], false),
+                blankTie: api.winningIndexes([null, 20, 20], false),
+                one: api.winningIndexes([null, 20, null], false),
+                low: api.winningIndexes([4, 1, 1], true),
+                edges: header.top.map((cell) => !!cell.edge),
+                subEdge: header.sub.map((cell) => cell.col + ':' + !!cell.edge),
+                zeros: api.winnerIndex(
+                    [{Team: 'A', PTS: 0}, {Team: 'B', PTS: 0}, {Team: 'C', PTS: 5}],
+                    ['Team', 'PTS'],
+                    't_df'
+                ),
+                shownZero: api.winnerIndex(
+                    [{Team: 'A', '2FG%': '.000'}, {Team: 'B', '2FG%': '.500'}],
+                    ['Team', '2FG%'],
+                    't_df'
+                )
+            };
+        }'''
+    )
+    assert marks['tie'] == []
+    assert marks['shared'] == [0, 2]
+    assert marks['blankTie'] == []
+    assert marks['one'] == []
+    assert marks['low'] == [1, 2]
+    assert marks['edges'] == [False, True, True, False, False]
+    assert marks['subEdge'] == ['2M:false', '2A:false', '2FG%:true']
+    assert marks['zeros'] == {}
+    assert marks['shownZero']['2FG%']['1'] is True
     _reveal_loading(page, 'wrap-bs')
     control = page.locator('#bs-period-control')
     control.wait_for(state='visible', timeout=20000)

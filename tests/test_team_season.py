@@ -116,6 +116,18 @@ def _winner(cards, card, team, column):
     raise AssertionError(team)
 
 
+def _opp_cell(cards, card, index, column):
+    return cards[card]['opp_rows'][index][column]
+
+
+def _opp_text(cards, card, index, column):
+    return _opp_cell(cards, card, index, column)['text']
+
+
+def _opp_best(cards, card, index, column):
+    return _opp_cell(cards, card, index, column)['opp_best']
+
+
 class RegulationMinuteTests(unittest.TestCase):
     def test_minutes_follow_the_season_id(self):
         for _label, season_id in SYNERGY_SEASONS:
@@ -234,6 +246,30 @@ class TeamCardTests(unittest.TestCase):
         self.assertTrue(_winner(built['cards'], 'team', 'Aces', 'TO'))
         self.assertFalse(_winner(built['cards'], 'team', 'Aces', 'GP'))
         self.assertFalse(_winner(built['cards'], 'team', 'Aces', 'Min'))
+        team = built['cards']['team']
+        self.assertEqual(len(team['opp_rows']), len(team['rows']))
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Team'), 'Opp')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'GP'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Min'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 1, 'GP'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 1, 'Min'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'PTS'), '54.5')
+        self.assertEqual(_opp_text(built['cards'], 'team', 1, 'PTS'), '30.0')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'TO'), '4.0')
+        self.assertEqual(_opp_text(built['cards'], 'team', 1, 'TO'), '2.0')
+        self.assertTrue(_opp_best(built['cards'], 'team', 0, 'PTS'))
+        self.assertFalse(_opp_best(built['cards'], 'team', 1, 'PTS'))
+        self.assertFalse(_opp_best(built['cards'], 'team', 0, 'TO'))
+        self.assertTrue(_opp_best(built['cards'], 'team', 1, 'TO'))
+        self.assertFalse(team['rows'][0]['PTS']['opp_best'])
+        self.assertTrue(team['opp_rows'][0]['opp'])
+        for key in ('pace', 'advanced', 'key', 'team'):
+            card = built['cards'][key]
+            self.assertEqual(len(card['opp_rows']), len(card['rows']))
+            self.assertEqual(
+                [row['Team']['text'] for row in card['opp_rows']],
+                ['Opp', 'Opp'],
+            )
 
     def test_shot_percentage_uses_season_makes_over_attempts(self):
         built = self._cards()
@@ -248,6 +284,9 @@ class TeamCardTests(unittest.TestCase):
         self.assertEqual(_text(built['cards'], 'team', 'Aces', 'PTS'), '15.0')
         self.assertEqual(_text(quarter['cards'], 'team', 'Aces', 'PTS'), '4.5')
         self.assertEqual(_text(quarter['cards'], 'team', 'Aces', 'GP'), '2')
+        self.assertEqual(_opp_text(quarter['cards'], 'team', 0, 'PTS'), '2.0')
+        self.assertEqual(_opp_text(quarter['cards'], 'team', 0, 'GP'), '')
+        self.assertEqual(_opp_text(quarter['cards'], 'team', 1, 'PTS'), '8.0')
 
     def test_half_recomputes_the_rate_from_both_periods(self):
         built = self._cards(period='h1')
@@ -262,6 +301,12 @@ class TeamCardTests(unittest.TestCase):
         self.assertEqual(names, ['Aces'])
         self.assertEqual(_text(built['cards'], 'team', 'Aces', 'GP'), '1')
         self.assertEqual(_text(built['cards'], 'team', 'Aces', 'PTS'), '3.0')
+        self.assertFalse(_winner(built['cards'], 'team', 'Aces', 'PTS'))
+        self.assertEqual(len(built['cards']['team']['opp_rows']), 1)
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'GP'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Min'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'PTS'), '0.0')
+        self.assertFalse(_opp_best(built['cards'], 'team', 0, 'PTS'))
 
     def test_each_team_keeps_its_own_pace(self):
         pbp = {
@@ -312,6 +357,12 @@ class TeamCardTests(unittest.TestCase):
         built = self._cards(game_type='PLAYOFF')
         self.assertEqual(_text(built['cards'], 'team', 'Aces', 'GP'), '1')
         self.assertEqual(_text(built['cards'], 'team', 'Aces', 'PTS'), '7.0')
+        self.assertFalse(_winner(built['cards'], 'team', 'Aces', 'PTS'))
+        self.assertEqual(len(built['cards']['team']['opp_rows']), 1)
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'GP'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Min'), '')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'PTS'), '0.0')
+        self.assertFalse(_opp_best(built['cards'], 'team', 0, 'PTS'))
         regular = self._cards()
         self.assertFalse(_winner(regular['cards'], 'advanced', 'Aces', '3P-R'))
         self.assertFalse(_winner(regular['cards'], 'advanced', 'Braves', '3P-R'))
@@ -332,6 +383,78 @@ class TeamCardTests(unittest.TestCase):
         )
         self.assertFalse(_winner(built['cards'], 'team', 'Aces', 'PTS'))
         self.assertFalse(_winner(built['cards'], 'team', 'Braves', 'TO'))
+        self.assertFalse(_opp_best(built['cards'], 'team', 0, 'PTS'))
+        self.assertFalse(_opp_best(built['cards'], 'team', 1, 'TO'))
+
+    def test_shared_best_is_colored_and_a_blank_sits_out(self):
+        shared = build_team_cards(
+            [
+                _fixture('g1', 'REGULAR', 'FINISHED'),
+                _fixture('g2', 'REGULAR', 'FINISHED'),
+            ],
+            pd.DataFrame([
+                _total('g1', 'a', points=20),
+                _total('g1', 'b', points=20),
+                _total('g2', 'a', points=20),
+                _total('g2', 'c', points=18),
+            ]),
+            pd.DataFrame(),
+            {},
+            {'a': 'Aces', 'b': 'Braves', 'c': 'Clippers'},
+            48,
+            'REGULAR',
+            'all',
+        )
+        self.assertTrue(_winner(shared['cards'], 'team', 'Aces', 'PTS'))
+        self.assertTrue(_winner(shared['cards'], 'team', 'Braves', 'PTS'))
+        self.assertFalse(_winner(shared['cards'], 'team', 'Clippers', 'PTS'))
+        blank_tie = build_team_cards(
+            [
+                _fixture('g1', 'REGULAR', 'FINISHED'),
+                _fixture('g2', 'REGULAR', 'FINISHED'),
+            ],
+            pd.DataFrame([
+                _total('g1', 'a', pointsTwoMade=0, pointsTwoAttempted=0),
+                _total('g1', 'b', pointsTwoMade=0, pointsTwoAttempted=2),
+                _total('g2', 'a', pointsTwoMade=0, pointsTwoAttempted=0),
+                _total('g2', 'c', pointsTwoMade=0, pointsTwoAttempted=4),
+            ]),
+            pd.DataFrame(),
+            {},
+            {'a': 'Aces', 'b': 'Braves', 'c': 'Clippers'},
+            48,
+            'REGULAR',
+            'all',
+        )
+        self.assertEqual(_text(blank_tie['cards'], 'team', 'Aces', '2FG%'), '')
+        self.assertEqual(_text(blank_tie['cards'], 'team', 'Braves', '2FG%'), '.000')
+        self.assertEqual(_text(blank_tie['cards'], 'team', 'Clippers', '2FG%'), '.000')
+        self.assertFalse(_winner(blank_tie['cards'], 'team', 'Aces', '2FG%'))
+        self.assertFalse(_winner(blank_tie['cards'], 'team', 'Braves', '2FG%'))
+        self.assertFalse(_winner(blank_tie['cards'], 'team', 'Clippers', '2FG%'))
+        partial = build_team_cards(
+            [
+                _fixture('g1', 'REGULAR', 'FINISHED'),
+                _fixture('g2', 'REGULAR', 'FINISHED'),
+            ],
+            pd.DataFrame([
+                _total('g1', 'a', pointsTwoMade=0, pointsTwoAttempted=0),
+                _total('g1', 'b', pointsTwoMade=1, pointsTwoAttempted=2),
+                _total('g2', 'a', pointsTwoMade=0, pointsTwoAttempted=0),
+                _total('g2', 'c', pointsTwoMade=1, pointsTwoAttempted=4),
+            ]),
+            pd.DataFrame(),
+            {},
+            {'a': 'Aces', 'b': 'Braves', 'c': 'Clippers'},
+            48,
+            'REGULAR',
+            'all',
+        )
+        self.assertEqual(_text(partial['cards'], 'team', 'Braves', '2FG%'), '.500')
+        self.assertEqual(_text(partial['cards'], 'team', 'Clippers', '2FG%'), '.250')
+        self.assertFalse(_winner(partial['cards'], 'team', 'Aces', '2FG%'))
+        self.assertTrue(_winner(partial['cards'], 'team', 'Braves', '2FG%'))
+        self.assertFalse(_winner(partial['cards'], 'team', 'Clippers', '2FG%'))
 
     def test_empty_type_has_the_switch_copy_inputs(self):
         built = build_team_cards([], pd.DataFrame(), pd.DataFrame(), {}, {}, 48, None, 'all')
@@ -347,6 +470,19 @@ class TeamCardTests(unittest.TestCase):
             ['all', '1', '2', 'h1', '11'],
         )
         self.assertNotIn('h2', [item['value'] for item in chips])
+
+
+class ColumnWinnerTests(unittest.TestCase):
+    def test_shared_best_and_blanks(self):
+        from synergy_reporter.column_winners import winning_indexes
+        self.assertEqual(winning_indexes([20, 20, 20]), [])
+        self.assertEqual(winning_indexes([20, 18, 20]), [0, 2])
+        self.assertEqual(winning_indexes([None, 20, 20]), [])
+        self.assertEqual(winning_indexes([None, 20, 18]), [1])
+        self.assertEqual(winning_indexes([None, 20, None]), [])
+        self.assertEqual(winning_indexes([20]), [])
+        self.assertEqual(winning_indexes([4, 1, 1], lower=True), [1, 2])
+        self.assertEqual(winning_indexes([None, 0.0, 1.0]), [2])
 
 
 class PaceBaseTests(unittest.TestCase):
