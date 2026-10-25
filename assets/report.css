@@ -1030,7 +1030,7 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
-.report-js-table .braves-group-end {
+.report-js-table td.braves-group-end {
     border-right-color: #cbd5e1;
 }
 
@@ -1173,6 +1173,18 @@ body {
     background-color: #f8fafc;
 }
 
+.braves-clean-table thead th.is-header-stuck {
+    position: relative;
+    z-index: 4;
+    background-color: #f8fafc;
+}
+
+.braves-clean-table thead tr:first-child > th:first-child.is-header-stuck {
+    position: sticky;
+    left: 0;
+    z-index: 6;
+}
+
 .braves-clean-table th {
     text-align: center;
     vertical-align: middle;
@@ -1226,7 +1238,7 @@ body {
     background-color: var(--row-hover) !important;
 }
 
-.braves-clean-table .braves-group-end {
+.braves-clean-table td.braves-group-end {
     border-right: 1px solid #cbd5e1;
 }
 
@@ -1356,10 +1368,13 @@ body {
     justify-content: flex-end !important;
 }
 
-.ag-theme-alpine.braves-clean-ag-grid .ag-header-group-cell.braves-group-end,
-.ag-theme-alpine.braves-clean-ag-grid .ag-header-cell.braves-group-end,
 .ag-theme-alpine.braves-clean-ag-grid .ag-cell.braves-group-end {
     border-right: 1px solid #cbd5e1 !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-header.is-header-stuck {
+    z-index: 5 !important;
+    background-color: #f8fafc !important;
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-header-group-cell {
@@ -1628,6 +1643,11 @@ a.home-schedule-row {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
         color-adjust: exact !important;
+    }
+    .braves-clean-table thead th,
+    .report-js-table thead th,
+    .ag-theme-alpine.braves-clean-ag-grid .ag-header {
+        transform: none !important;
     }
     html, body {
         background: #ffffff !important;

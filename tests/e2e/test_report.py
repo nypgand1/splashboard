@@ -481,6 +481,40 @@ def test_report_toolbar_matches_paper_and_icon_size(page, e2e_server):
     assert 34 <= geom['ih'] <= 40
 
 
+def test_report_table_header_scrolls_with_the_paper(page, e2e_server):
+    _open_report(page, e2e_server)
+    page.set_viewport_size({'width': 1280, 'height': 640})
+    _hydrate_report_page(page, 3)
+    page.locator('#report-paper-page-4 .report-js-table thead th').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    stuck = page.evaluate(
+        '''async () => {
+            const stick = window.splashboardTableStick;
+            const table = document.querySelector('#report-paper-page-4 .report-js-table');
+            const th = table && table.querySelector('thead th');
+            const toolbar = document.getElementById('report-toolbar');
+            if (!stick || !th || !toolbar) return { missing: true };
+            const barBottom = toolbar.getBoundingClientRect().bottom;
+            const thDoc = th.getBoundingClientRect().top + window.scrollY;
+            window.scrollTo(0, Math.max(0, thDoc - barBottom + 80));
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            stick.refresh();
+            return {
+                missing: false,
+                top: th.getBoundingClientRect().top,
+                bar: toolbar.getBoundingClientRect().bottom,
+                shift: th.getAttribute('data-stick-shift'),
+                any: document.querySelectorAll('.report-js-table [data-stick-shift]').length,
+            };
+        }'''
+    )
+    assert not stuck.get('missing')
+    assert stuck['any'] == 0
+    assert not stuck['shift']
+    assert stuck['top'] < stuck['bar'] - 8
+
+
 def test_report_thead_has_no_brand_rule(page, e2e_server):
     _open_report(page, e2e_server)
     border = page.evaluate(

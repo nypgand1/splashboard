@@ -1423,10 +1423,13 @@ class PbpAlignmentTests(unittest.TestCase):
         tree = game_page.render_pbp_children(df.to_json(orient='split'))
         grids = find_type(tree, dag.AgGrid)
         self.assertEqual(len(grids), 1)
+        self.assertTrue(grids[0].dashGridOptions.get('suppressMovableColumns'))
+        self.assertTrue(grids[0].defaultColDef.get('suppressMovable'))
         for cdef in grids[0].columnDefs:
             self.assertEqual(cdef['headerClass'], 'ag-header-align-center')
             self.assertEqual(cdef['cellClass'], 'ag-cell-align-center')
             self.assertEqual(cdef['cellStyle']['textAlign'], 'center')
+            self.assertTrue(cdef.get('suppressMovable'))
 
 
 class PlayerGridSortTests(unittest.TestCase):
@@ -1446,6 +1449,8 @@ class PlayerGridSortTests(unittest.TestCase):
             'PTS': 2,
         }])
         grid = find_type(game_page._ag_grid_from_df(df), dag.AgGrid)[0]
+        self.assertTrue(grid.dashGridOptions.get('suppressMovableColumns'))
+        self.assertNotIn('pinned', next(col for col in grid.columnDefs if col.get('field') == 'S'))
 
         def field(name, cols=None):
             for col in cols if cols is not None else grid.columnDefs:

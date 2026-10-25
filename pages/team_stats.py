@@ -117,7 +117,7 @@ def _th(label, kind, span=None, cols=None, edge=False):
         table_props['rowSpan'] = span
     if cols:
         table_props['colSpan'] = cols
-    class_name = kind + (' braves-group-end' if edge else '')
+    class_name = kind
     props = {'className': class_name}
     if table_props:
         props['tableProps'] = table_props
@@ -165,7 +165,11 @@ def _edge_columns(card_id, columns):
     segments = _segments(card_id, columns)
     ends = set()
     for index, (kind, cols) in enumerate(segments):
-        if index + 1 >= len(segments) or not cols:
+        if not cols:
+            continue
+        if index + 1 >= len(segments):
+            if kind == 'group':
+                ends.add(cols[-1])
             continue
         if kind == 'group' or segments[index + 1][0] == 'group':
             ends.add(cols[-1])

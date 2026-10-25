@@ -1491,9 +1491,12 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         thead_block = css.split('.report-js-table thead th')[1].split('}')[0]
         self.assertIn('1px solid', thead_block)
         self.assertNotIn('2px solid var(--navbar-border)', thead_block)
-        self.assertIn('.braves-clean-table .braves-group-end', css)
-        self.assertIn('.report-js-table .braves-group-end', css)
+        self.assertIn('.braves-clean-table td.braves-group-end', css)
+        self.assertIn('.report-js-table td.braves-group-end', css)
         self.assertIn('.ag-cell.braves-group-end', css)
+        self.assertNotIn('.ag-header-cell.braves-group-end', css)
+        self.assertIn('.is-header-stuck', css)
+        self.assertNotIn('.report-js-table thead th.is-header-stuck', css)
         self.assertIn('border-right: 1px solid #cbd5e1', css)
         self.assertIn('#ts-body:not(.ts-show-opp) tr.braves-opp-row', css)
         self.assertIn('tr.braves-opp-row td', css)
@@ -1516,6 +1519,13 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         bleed_block = css[bleed_at:css.find('}', bleed_at)]
         self.assertIn('margin-left: -18px', bleed_block)
         self.assertIn('margin-right: -18px', bleed_block)
+        stick_path = os.path.join(os.path.dirname(css_path), 'table_header_stick.js')
+        with open(stick_path, 'r') as handle:
+            stick = handle.read()
+        refresh = stick.split('function refresh()', 1)[1].split('function schedule()', 1)[0]
+        self.assertIn("querySelectorAll('.braves-clean-table')", refresh)
+        self.assertNotIn('report-js-table', refresh)
+        self.assertIn("querySelectorAll('.braves-clean-ag-grid')", refresh)
 
     def test_home_page_column_alignments(self):
         import os
@@ -1536,9 +1546,11 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         ]
         cdefs = _build_stats_column_defs(cols)
         
-        # Check leading pinned columns: #, Player, S (all center)
+        # Pinned left: # and Player. S scrolls with the stats.
         self.assertEqual(cdefs[0]['field'], '#')
         self.assertEqual(cdefs[0]['pinned'], 'left')
+        self.assertIn('? 2 : 1', cdefs[0]['colSpan']['function'])
+        self.assertTrue(cdefs[0]['suppressMovable'])
         self.assertEqual(cdefs[0]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[0]['cellClass'], 'ag-cell-align-center')
 
@@ -1553,16 +1565,17 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertIn('!ka || !kb', cdefs[1]['comparator']['function'])
 
         self.assertEqual(cdefs[2]['field'], 'S')
-        self.assertEqual(cdefs[2]['pinned'], 'left')
+        self.assertNotIn('pinned', cdefs[2])
         self.assertEqual(cdefs[2]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[2]['cellClass'], 'ag-cell-align-center')
+        self.assertTrue(cdefs[2]['suppressMovable'])
         
         # Check Min & +/- are center-aligned
         self.assertEqual(cdefs[3]['field'], 'Min')
         self.assertEqual(cdefs[3]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[3]['cellClass'], 'ag-cell-align-center')
         self.assertEqual(cdefs[4]['field'], '+/-')
-        self.assertEqual(cdefs[4]['headerClass'], 'ag-header-align-center braves-group-end')
+        self.assertEqual(cdefs[4]['headerClass'], 'ag-header-align-center')
         self.assertEqual(cdefs[4]['cellClass'], 'ag-cell-align-center braves-group-end')
 
         # Check groups: 2PT, 3PT, FT, REB
@@ -1575,11 +1588,13 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(child_fields_2pt, ['2M', '2A', '2FG%'])
         for group_name in ('2PT', '3PT', 'FT', 'REB'):
             group = next(c for c in cdefs if c.get('headerName') == group_name)
-            self.assertEqual(group['headerClass'], 'ag-header-group-center braves-group-end')
+            self.assertEqual(group['headerClass'], 'ag-header-group-center')
+            self.assertTrue(group['suppressMovable'])
             for index, ch in enumerate(group['children']):
                 self.assertTrue(ch['sortable'])
+                self.assertTrue(ch['suppressMovable'])
                 edge = ' braves-group-end' if index == len(group['children']) - 1 else ''
-                self.assertEqual(ch['headerClass'], 'ag-header-align-center' + edge)
+                self.assertEqual(ch['headerClass'], 'ag-header-align-center')
                 self.assertEqual(ch['cellClass'], 'ag-cell-align-center' + edge)
 
         # Check REB children: O, D, T
@@ -1635,15 +1650,18 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         for cdef in cdefs:
             if 'field' in cdef:
                 edge = ' braves-group-end' if cdef['field'] in edged_fields else ''
-                self.assertEqual(cdef['headerClass'], 'ag-header-align-center' + edge)
+                self.assertEqual(cdef['headerClass'], 'ag-header-align-center')
                 self.assertEqual(cdef['cellClass'], 'ag-cell-align-center' + edge)
+                self.assertTrue(cdef['suppressMovable'])
             children = cdef.get('children') or []
             if children:
-                self.assertEqual(cdef['headerClass'], 'ag-header-group-center braves-group-end')
+                self.assertEqual(cdef['headerClass'], 'ag-header-group-center')
+                self.assertTrue(cdef['suppressMovable'])
             for index, ch in enumerate(children):
                 edge = ' braves-group-end' if index == len(children) - 1 else ''
-                self.assertEqual(ch['headerClass'], 'ag-header-align-center' + edge)
+                self.assertEqual(ch['headerClass'], 'ag-header-align-center')
                 self.assertEqual(ch['cellClass'], 'ag-cell-align-center' + edge)
+                self.assertTrue(ch['suppressMovable'])
         group_headers = [c.get('headerName') for c in cdefs if 'children' in c]
         self.assertEqual(group_headers, ['2PT', '3PT', 'FT', 'REB', 'Key Stats'])
         key_stats = next(c for c in cdefs if c.get('headerName') == 'Key Stats')
@@ -1761,33 +1779,27 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
                     tokens = (node.className or '').split()
                     self.assertTrue(tokens)
                     self.assertIn(tokens[0], header_kinds)
-                    self.assertTrue(all(token == 'braves-group-end' for token in tokens[1:]))
+                    self.assertEqual(tokens, [tokens[0]])
                     self.assertFalse(getattr(node, 'style', None))
                 if isinstance(node, dmc.TableTd):
                     self.assertFalse((node.style or {}).get('textAlign'))
 
         assert_header_tokens(dmc_tbl)
-        top_edge = {
-            th.children: 'braves-group-end' in (th.className or '').split()
-            for th in top_row.children
-        }
-        self.assertFalse(top_edge['TEAM'])
-        self.assertTrue(top_edge['MIN'])
-        self.assertTrue(top_edge['2PT'])
-        self.assertTrue(top_edge['3PT'])
-        self.assertTrue(top_edge['FT'])
-        self.assertTrue(top_edge['REB'])
-        self.assertFalse(top_edge['AS'])
-        self.assertFalse(top_edge['PT'])
-        sub_edge = [
+        self.assertFalse(any(
             'braves-group-end' in (th.className or '').split()
-            for th in sub_row.children
+            for th in list(top_row.children) + list(sub_row.children)
+        ))
+        body_edge = [
+            'braves-group-end' in (td.className or '').split()
+            for td in dmc_tbl.children[1].children[0].children
         ]
-        self.assertEqual(sub_edge, [
+        self.assertEqual(body_edge, [
+            False, True,
             False, False, True,
             False, False, True,
             False, False, True,
             False, False, True,
+            False, False, False, False, False, False, False,
         ])
 
         pace = pd.DataFrame([{
@@ -1804,17 +1816,15 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(pace_top, ['TEAM', 'PACE', 'FOUR FACTORS'])
         self.assertEqual(pace_sub, ['eFG%', 'TO%', 'ORB%', 'FT-R'])
         assert_header_tokens(pace_tbl)
-        pace_edge = {
-            th.children: 'braves-group-end' in (th.className or '').split()
-            for th in pace_tbl.children[0].children[0].children
-        }
-        self.assertFalse(pace_edge['TEAM'])
-        self.assertTrue(pace_edge['PACE'])
-        self.assertFalse(pace_edge['FOUR FACTORS'])
         self.assertFalse(any(
             'braves-group-end' in (th.className or '').split()
-            for th in pace_tbl.children[0].children[1].children
+            for th in walk(pace_tbl) if isinstance(th, dmc.TableTh)
         ))
+        pace_body = [
+            'braves-group-end' in (td.className or '').split()
+            for td in pace_tbl.children[1].children[0].children
+        ]
+        self.assertEqual(pace_body, [False, True, False, False, False, True])
         advanced = pd.DataFrame([{
             'Team': 'Braves', 'PPP': '1.15', 'AS/TO': '1.50', 'AST%': '62.5%', '3P-R': '40.0%', 'TS%': '55.0%',
         }, {
@@ -1859,20 +1869,21 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         ])
         self.assertEqual(key_sub, ['M', 'A', 'PT', '2M', '2A', '3M', '3A', 'PT', '2M', '2A', '3M', '3A', 'PT', '2M', '2A', '3M', '3A', 'PT'])
         assert_header_tokens(key_tbl)
-        key_edge = [
+        self.assertFalse(any(
             'braves-group-end' in (th.className or '').split()
-            for th in key_tbl.children[0].children[0].children
+            for th in walk(key_tbl) if isinstance(th, dmc.TableTh)
+        ))
+        key_body = [
+            'braves-group-end' in (td.className or '').split()
+            for td in key_tbl.children[1].children[0].children
         ]
-        self.assertEqual(key_edge, [True, True, True, True, True, False])
-        key_sub_edge = [
-            'braves-group-end' in (th.className or '').split()
-            for th in key_tbl.children[0].children[1].children
-        ]
-        self.assertEqual(key_sub_edge, [
+        self.assertEqual(key_body, [
+            True,
             False, False, True,
             False, False, False, False, True,
             False, False, False, False, True,
             False, False, False, False, True,
+            False,
         ])
 
     def test_dmc_table_winner_color_and_team_stripe(self):

@@ -142,12 +142,14 @@ def _bs_player_block(index, dot_color):
                         'sortable': True,
                         'filter': False,
                         'resizable': True,
+                        'suppressMovable': True,
                         'cellClassRules': {'ag-sorted-col-bg': 'params.column.isSortActive()'},
                         'cellDataType': False,
                     },
                     dashGridOptions={
                         'domLayout': 'autoHeight',
                         'suppressHorizontalScroll': False,
+                        'suppressMovableColumns': True,
                         'enableBrowserTooltips': True,
                         'tooltipShowDelay': 200,
                     },
@@ -977,7 +979,11 @@ def _append_class(node, name):
 def _boundary_columns(segments):
     ends = set()
     for index, (kind, cols) in enumerate(segments):
-        if index + 1 >= len(segments) or not cols:
+        if not cols:
+            continue
+        if index + 1 >= len(segments):
+            if kind == 'group':
+                ends.add(cols[-1])
             continue
         if kind == 'group' or segments[index + 1][0] == 'group':
             ends.add(cols[-1])
@@ -985,17 +991,7 @@ def _boundary_columns(segments):
 
 
 def _mark_header_edges(top_row, sub_row, segments):
-    edges = _boundary_columns(segments)
-    sub_index = 0
-    for (kind, cols), th in zip(segments, top_row):
-        if cols and cols[-1] in edges:
-            _append_class(th, 'braves-group-end')
-        if kind == 'group':
-            count = len(cols)
-            if count and cols[-1] in edges and sub_index + count - 1 < len(sub_row):
-                _append_class(sub_row[sub_index + count - 1], 'braves-group-end')
-            sub_index += count
-    return edges
+    return _boundary_columns(segments)
 
 
 def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
@@ -1237,7 +1233,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
             "valueFormatter": {"function": "params.value != null ? params.value : ''"},
-            "colSpan": {"function": "params.data && (params.data['#'] === 'TEAM / COACHES' || params.data['#'] === 'TOTAL') ? 3 : 1"},
+            "colSpan": {"function": "params.data && (params.data['#'] === 'TEAM / COACHES' || params.data['#'] === 'TOTAL') ? 2 : 1"},
         })
 
     first_col = next((c for c in ('Player', 'Lineup', 'Lineups', 'Team') if c in col_set), None)
@@ -1281,7 +1277,6 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         column_defs.append({
             "field": "S",
             "headerName": "S",
-            "pinned": "left",
             "sortable": True,
             "minWidth": 34,
             "width": 36,
@@ -1455,6 +1450,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
 
     _apply_click_sort_columns(column_defs)
     _mark_ag_group_edges(column_defs)
+    _lock_column_move(column_defs)
     return _stamp_designed_widths(column_defs)
 
 
@@ -1466,18 +1462,21 @@ def _append_def_class(defn, key, name):
     defn[key] = ' '.join(parts)
 
 
+def _lock_column_move(column_defs):
+    for defn in column_defs:
+        defn['suppressMovable'] = True
+        for child in defn.get('children') or []:
+            child['suppressMovable'] = True
+
+
 def _mark_ag_group_edges(column_defs):
+    last = len(column_defs) - 1
     for index, defn in enumerate(column_defs):
-        if index + 1 >= len(column_defs):
-            continue
         children = defn.get('children')
-        next_is_group = bool(column_defs[index + 1].get('children'))
+        next_is_group = index < last and bool(column_defs[index + 1].get('children'))
         if children:
-            _append_def_class(defn, 'headerClass', 'braves-group-end')
-            _append_def_class(children[-1], 'headerClass', 'braves-group-end')
             _append_def_class(children[-1], 'cellClass', 'braves-group-end')
         elif next_is_group:
-            _append_def_class(defn, 'headerClass', 'braves-group-end')
             _append_def_class(defn, 'cellClass', 'braves-group-end')
 
 
@@ -1731,11 +1730,13 @@ def _matchup_grid():
             'sortable': True,
             'filter': False,
             'resizable': True,
+            'suppressMovable': True,
             'cellDataType': False,
         },
         dashGridOptions={
             'domLayout': 'autoHeight',
             'suppressHorizontalScroll': False,
+            'suppressMovableColumns': True,
             'postSortRows': _LINEUP_POST_SORT,
         },
         eventListeners=_LINEUP_FIT_EVENTS,
@@ -1865,6 +1866,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                     'whiteSpace': 'normal',
                     'lineHeight': '1.3',
                 }
+            col_def['suppressMovable'] = True
             _apply_click_sort(col_def)
             column_defs.append(col_def)
         _stamp_designed_widths(column_defs)
@@ -1872,6 +1874,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     dash_options = {
         "domLayout": "autoHeight",
         "suppressHorizontalScroll": False,
+        "suppressMovableColumns": True,
     }
     lineup_events = None
     if any('lineup' in str(col).lower() for col in df.columns):
@@ -1916,7 +1919,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
         dag.AgGrid(
             rowData=row_records if row_records is not None else df.to_dict('records'),
             columnDefs=column_defs,
-            defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
+            defaultColDef={"sortable": True, "filter": False, "resizable": True, "suppressMovable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
             dashGridOptions=dash_options,
             className=grid_class,
             style={'width': '100%'},
@@ -2037,6 +2040,7 @@ def _player_grid_options(pinned_rows):
     return {
         'domLayout': 'autoHeight',
         'suppressHorizontalScroll': False,
+        'suppressMovableColumns': True,
         'pinnedBottomRowData': pinned_rows or [],
         'enableBrowserTooltips': True,
         'tooltipShowDelay': 200,
@@ -2661,6 +2665,7 @@ def render_pbp_children(pbp_store, game_id=None, organization_id=None):
             "headerClass": "ag-header-align-center",
             "cellClass": "ag-cell-align-center",
             "cellStyle": {"textAlign": "center"},
+            "suppressMovable": True,
         }
         if column == 'Player':
             col_def['comparator'] = _PLAYER_NAME_COMPARATOR
@@ -2668,8 +2673,8 @@ def render_pbp_children(pbp_store, game_id=None, organization_id=None):
     grid = dag.AgGrid(
         rowData=pbp_df.to_dict('records'),
         columnDefs=column_defs,
-        defaultColDef={"sortable": True, "filter": True, "resizable": True},
-        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
+        defaultColDef={"sortable": True, "filter": True, "resizable": True, "suppressMovable": True},
+        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight", "suppressMovableColumns": True},
         columnSize="autoSize",
         className="ag-theme-alpine braves-clean-ag-grid",
         style={'width': '100%'}

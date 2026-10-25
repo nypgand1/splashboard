@@ -667,12 +667,16 @@
             top.push({ text: headerLabel(col), span: 1, rowSpan: 2, col: col, cols: [col] });
         });
         top.forEach(function (cell, index) {
-            if (index + 1 >= top.length) {
-                return;
-            }
-            var next = top[index + 1];
-            if (!cell.group && !next.group) {
-                return;
+            var atRim = index + 1 >= top.length;
+            if (atRim) {
+                if (!cell.group) {
+                    return;
+                }
+            } else {
+                var next = top[index + 1];
+                if (!cell.group && !next.group) {
+                    return;
+                }
             }
             cell.edge = true;
             var cols = cell.cols || [];
@@ -1531,9 +1535,6 @@
                 if (cell.col) {
                     th.setAttribute('data-col', cell.col);
                 }
-                if (cell.edge) {
-                    th.classList.add('braves-group-end');
-                }
                 tr1.appendChild(th);
             });
             thead.appendChild(tr1);
@@ -1544,9 +1545,6 @@
                     th.textContent = item.label;
                     if (item.col) {
                         th.setAttribute('data-col', item.col);
-                    }
-                    if (item.edge) {
-                        th.classList.add('braves-group-end');
                     }
                     tr2.appendChild(th);
                 });
@@ -4451,6 +4449,9 @@
             window.print();
             return Promise.resolve();
         }
+        if (window.splashboardTableStick) {
+            window.splashboardTableStick.pause();
+        }
         var savedScroll = capturePdfScroll();
         setPdfBusy(true);
         return ensureReportLibs().then(function () {
@@ -4493,6 +4494,9 @@
         }).then(function () {
             restorePdfScroll(savedScroll);
             setPdfBusy(false);
+            if (window.splashboardTableStick) {
+                window.splashboardTableStick.resume();
+            }
         });
     }
 

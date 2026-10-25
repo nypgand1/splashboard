@@ -729,8 +729,9 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
     _wait(page, '.game-info-banner')
     _select_tab(page, 'Box Score')
     page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
-    page.locator('#pane-bs th.braves-group-end').first.wait_for(state='attached', timeout=10000)
-    edge_color = page.locator('#pane-bs th.braves-group-end').first.evaluate(
+    page.locator('#pane-bs td.braves-group-end').first.wait_for(state='attached', timeout=10000)
+    assert page.locator('#pane-bs th.braves-group-end').count() == 0
+    edge_color = page.locator('#pane-bs td.braves-group-end').first.evaluate(
         'el => getComputedStyle(el).borderRightColor'
     )
     assert edge_color == 'rgb(203, 213, 225)'
@@ -749,6 +750,14 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
                 low: api.winningIndexes([4, 1, 1], true),
                 edges: header.top.map((cell) => !!cell.edge),
                 subEdge: header.sub.map((cell) => cell.col + ':' + !!cell.edge),
+                paceEdges: api.groupedHeader(
+                    ['Team', 'Pace', 'eFG%', 'TO%', 'ORB%', 'FT-R'],
+                    't_adv_df'
+                ).top.map((cell) => !!cell.edge),
+                paceSub: api.groupedHeader(
+                    ['Team', 'Pace', 'eFG%', 'TO%', 'ORB%', 'FT-R'],
+                    't_adv_df'
+                ).sub.map((cell) => cell.col + ':' + !!cell.edge),
                 zeros: api.winnerIndex(
                     [{Team: 'A', PTS: 0}, {Team: 'B', PTS: 0}, {Team: 'C', PTS: 5}],
                     ['Team', 'PTS'],
@@ -769,6 +778,8 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
     assert marks['low'] == [1, 2]
     assert marks['edges'] == [False, True, True, False, False]
     assert marks['subEdge'] == ['2M:false', '2A:false', '2FG%:true']
+    assert marks['paceEdges'] == [False, True, True]
+    assert marks['paceSub'] == ['eFG%:false', 'TO%:false', 'ORB%:false', 'FT-R:true']
     assert marks['zeros'] == {}
     assert marks['shownZero']['2FG%']['1'] is True
     _reveal_loading(page, 'wrap-bs')
@@ -787,6 +798,48 @@ def test_box_score_period_chip_filters_team_box(page, e2e_server):
     assert control.is_visible()
     control.get_by_text('All', exact=True).click()
     page.locator('#pane-bs').get_by_text('88', exact=True).first.wait_for(timeout=10000)
+
+
+def test_headers_stick_and_starter_column_is_not_pinned(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 640})
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Box Score')
+    page.locator('#bs-team-scroll th').first.wait_for(state='attached', timeout=20000)
+    page.locator('#bs-player-grid-0 .ag-header').wait_for(timeout=20000)
+    stuck = page.evaluate(
+        '''async () => {
+            const stick = window.splashboardTableStick;
+            const team = document.querySelector('#bs-team-scroll th');
+            const table = team.closest('table');
+            const teamY = team.getBoundingClientRect().top + window.scrollY;
+            window.scrollTo(0, teamY + 20);
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            stick.refresh();
+            const teamTop = team.getBoundingClientRect().top;
+            const tableTop = table.getBoundingClientRect().top;
+            const grid = document.querySelector('#bs-player-grid-0');
+            const header = grid.querySelector('.ag-header');
+            const gridY = header.getBoundingClientRect().top + window.scrollY;
+            window.scrollTo(0, gridY + 80);
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            stick.refresh();
+            return {
+                teamTop,
+                tableTop,
+                gridTop: header.getBoundingClientRect().top,
+                gridBoxTop: grid.getBoundingClientRect().top,
+                pinnedS: !!grid.querySelector('.ag-pinned-left-header [col-id="S"]'),
+                headerS: !!grid.querySelector('.ag-header-cell[col-id="S"]'),
+            };
+        }'''
+    )
+    assert stuck['tableTop'] < 0
+    assert abs(stuck['teamTop']) <= 2
+    assert stuck['gridBoxTop'] < 0
+    assert abs(stuck['gridTop']) <= 2
+    assert stuck['pinnedS'] is False
+    assert stuck['headerS'] is True
 
 
 def test_box_score_period_keeps_mounted_tables(page, e2e_server):
