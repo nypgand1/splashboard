@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from synergy_inbounder.possessions import annotate_possessions, possession_counts
+from synergy_inbounder.possessions import annotate_possessions, lineup_credit_moves, possession_counts
 from synergy_inbounder.pre_processing_func import process_lineup_pbp, process_lineup_stats
 
 
@@ -99,6 +99,51 @@ class PossessionWalkTests(unittest.TestCase):
     def test_empty_frame_has_no_counts(self):
         self.assertEqual(possession_counts(pd.DataFrame()), {})
 
+    def test_used_trip_without_a_rebound_counts_when_the_other_team_starts(self):
+        rows = [
+            _row(eventType='2pt', success=0, entityId='home', sequence=1),
+            _row(eventType='block', entityId='away', success=None, sequence=2),
+            _row(eventType='3pt', success=1, entityId='away', sequence=3),
+        ]
+        df = annotate_possessions(pd.DataFrame(rows))
+        self.assertEqual(possession_counts(df), {'home': 1, 'away': 1})
+        home_end = df[(df['poss_end']) & (df['poss_team_id'] == 'home')]
+        self.assertEqual(len(home_end), 1)
+        self.assertEqual(home_end.iloc[0]['eventType'], '2pt')
+
+    def test_late_earlier_free_throw_stays_in_the_closed_trip(self):
+        rows = [
+            _row(eventType='foul', subType='personal', entityId='away', success=None, sequence=1),
+            _row(eventType='freeThrow', subType='2Of2', success=1, entityId='home', sequence=2),
+            _row(eventType='freeThrow', subType='1Of2', success=1, entityId='home', sequence=3),
+            _row(eventType='2pt', success=1, entityId='away', sequence=4),
+        ]
+        df = annotate_possessions(pd.DataFrame(rows))
+        self.assertEqual(possession_counts(df), {'home': 1, 'away': 1})
+        self.assertEqual(df.iloc[1]['poss_id'], df.iloc[2]['poss_id'])
+        self.assertTrue(bool(df.iloc[1]['poss_end']))
+        self.assertFalse(bool(df.iloc[2]['poss_end']))
+        poss_moves, ft_moves = lineup_credit_moves(df)
+        self.assertEqual(poss_moves, [(1, 0)])
+        self.assertEqual(sorted(ft_moves), [(1, 0), (2, 0)])
+
+    def test_a_later_last_free_throw_starts_another_trip(self):
+        counts = _counts([
+            _row(eventType='freeThrow', subType='2Of2', success=1, sequence=1),
+            _row(eventType='freeThrow', subType='2Of2', success=1, sequence=2),
+        ])
+        self.assertEqual(counts, {'home': 2})
+
+    def test_missed_last_free_throw_keeps_the_next_free_throw_in_the_open_trip(self):
+        df = annotate_possessions(pd.DataFrame([
+            _row(eventType='freeThrow', subType='2Of2', success=0, sequence=1),
+            _row(eventType='freeThrow', subType='1Of2', success=1, sequence=2),
+            _row(eventType='period', subType='end', entityId=None, success=None, sequence=3, clock='PT0M0S'),
+        ]))
+        self.assertEqual(possession_counts(df), {'home': 1})
+        self.assertEqual(df.iloc[0]['poss_id'], df.iloc[1]['poss_id'])
+        self.assertFalse(bool(df.iloc[1]['poss_end']))
+
 
 class LineupPossessionCreditTests(unittest.TestCase):
     def test_poss_is_credited_to_the_lineup_on_the_end_row(self):
@@ -119,6 +164,126 @@ class LineupPossessionCreditTests(unittest.TestCase):
         self.assertEqual(ended.iloc[0]['POSS'], 1)
         self.assertIn('p6', ended.iloc[0][home])
         self.assertNotIn('p1', ended.iloc[0][home])
+
+    def _stats(self, rows):
+        home = 'home'
+        away = 'away'
+        df = pd.DataFrame(rows)
+        process_lineup_pbp(df, {
+            home: ['p1', 'p2', 'p3', 'p4', 'p5'],
+            away: ['d1', 'd2', 'd3', 'd4', 'd5'],
+        })
+        stats = process_lineup_stats(df)[home]
+        pre = stats[stats[home].apply(lambda players: 'p5' in players and 'p6' not in players)]
+        post = stats[stats[home].apply(lambda players: 'p6' in players and 'p5' not in players)]
+        return pre, post
+
+    def test_and_one_without_a_sub_keeps_the_free_throw_on_that_lineup(self):
+        home = 'home'
+        away = 'away'
+        rows = [
+            _row(eventType='period', subType='start', entityId=home, clock='PT12M0S', sequence=1),
+            _row(eventType='2pt', success=1, entityId=home, personId='p1', clock='PT10M0S', sequence=2),
+            _row(eventType='foul', subType='personal', entityId=away, personId='d1', clock='PT10M0S', sequence=3),
+            _row(eventType='foul', subType='drawn', entityId=home, personId='p1', clock='PT10M0S', sequence=4),
+            _row(eventType='freeThrow', subType='1Of1', success=1, entityId=home, personId='p1', clock='PT10M0S', sequence=5),
+            _row(eventType='period', subType='end', entityId=None, clock='PT9M0S', sequence=6),
+        ]
+        df = pd.DataFrame(rows)
+        process_lineup_pbp(df, {home: ['p1', 'p2', 'p3', 'p4', 'p5'], away: ['d1', 'd2', 'd3', 'd4', 'd5']})
+        stats = process_lineup_stats(df)[home]
+        self.assertEqual(len(stats), 1)
+        row = stats.iloc[0]
+        self.assertEqual(row['POSS'], 1)
+        self.assertEqual(row['PTS'], 3)
+        self.assertEqual(row['1M'], 1)
+        self.assertEqual(row['1A'], 1)
+
+    def test_and_one_after_a_sub_keeps_the_possession_with_the_foul_lineup(self):
+        home = 'home'
+        away = 'away'
+        rows = [
+            _row(eventType='period', subType='start', entityId=home, clock='PT12M0S', sequence=1),
+            _row(eventType='2pt', success=0, entityId=home, personId='p1', clock='PT11M0S', sequence=2),
+            _row(eventType='rebound', subType='offensive', entityId=home, success=None, clock='PT11M0S', sequence=3),
+            _row(eventType='2pt', success=0, entityId=home, personId='p1', clock='PT10M40S', sequence=4),
+            _row(eventType='rebound', subType='offensive', entityId=home, success=None, clock='PT10M40S', sequence=5),
+            _row(eventType='2pt', success=1, entityId=home, personId='p2', clock='PT10M20S', sequence=6),
+            _row(eventType='3pt', success=1, entityId=home, personId='p1', clock='PT09M40S', sequence=7),
+            _row(eventType='2pt', success=0, entityId=home, personId='p1', clock='PT09M0S', sequence=8),
+            _row(eventType='rebound', subType='offensive', entityId=home, success=None, clock='PT09M0S', sequence=9),
+            _row(eventType='2pt', success=1, entityId=home, personId='p2', clock='PT08M40S', sequence=10),
+            _row(eventType='foul', subType='personal', entityId=away, personId='d1', clock='PT08M40S', sequence=11),
+            _row(eventType='foul', subType='drawn', entityId=home, personId='p2', clock='PT08M40S', sequence=12),
+            _row(eventType='substitution', subType='out', entityId=home, personId='p5', clock='PT08M20S', sequence=13),
+            _row(eventType='substitution', subType='in', entityId=home, personId='p6', clock='PT08M20S', sequence=14),
+            _row(eventType='freeThrow', subType='1Of1', success=1, entityId=home, personId='p2', clock='PT08M0S', sequence=15),
+            _row(eventType='period', subType='end', entityId=None, clock='PT07M0S', sequence=16),
+        ]
+        pre, post = self._stats(rows)
+        self.assertEqual(len(pre), 1)
+        self.assertEqual(len(post), 1)
+        self.assertEqual(pre.iloc[0]['POSS'], 3)
+        self.assertEqual(pre.iloc[0]['PTS'], 8)
+        self.assertEqual(pre.iloc[0]['2A'] + pre.iloc[0]['3A'], 6)
+        self.assertEqual(pre.iloc[0]['1M'], 1)
+        self.assertEqual(pre.iloc[0]['1A'], 1)
+        self.assertEqual(pre.iloc[0]['OR'], 3)
+        self.assertEqual(post.iloc[0]['POSS'], 0)
+        self.assertEqual(post.iloc[0]['PTS'], 0)
+        self.assertEqual(post.iloc[0]['1M'], 0)
+        self.assertEqual(post.iloc[0]['1A'], 0)
+
+    def test_missed_last_free_throw_keeps_the_possession_and_leaves_the_extra_shot(self):
+        home = 'home'
+        away = 'away'
+        rows = [
+            _row(eventType='period', subType='start', entityId=home, clock='PT12M0S', sequence=1),
+            _row(eventType='foul', subType='personal', entityId=away, personId='d1', clock='PT11M0S', sequence=2),
+            _row(eventType='foul', subType='drawn', entityId=home, personId='p1', clock='PT11M0S', sequence=3),
+            _row(eventType='freeThrow', subType='1Of2', success=1, entityId=home, personId='p1', clock='PT11M0S', sequence=4),
+            _row(eventType='substitution', subType='out', entityId=home, personId='p5', clock='PT10M30S', sequence=5),
+            _row(eventType='substitution', subType='in', entityId=home, personId='p6', clock='PT10M30S', sequence=6),
+            _row(eventType='freeThrow', subType='2Of2', success=0, entityId=home, personId='p1', clock='PT10M0S', sequence=7),
+            _row(eventType='rebound', subType='offensive', entityId=home, success=None, clock='PT09M40S', sequence=8),
+            _row(eventType='2pt', success=0, entityId=home, personId='p6', clock='PT09M20S', sequence=9),
+            _row(eventType='rebound', subType='defensive', entityId=away, success=None, clock='PT09M0S', sequence=10),
+            _row(eventType='period', subType='end', entityId=None, clock='PT08M0S', sequence=11),
+        ]
+        pre, post = self._stats(rows)
+        self.assertEqual(pre.iloc[0]['POSS'], 1)
+        self.assertEqual(pre.iloc[0]['PTS'], 1)
+        self.assertEqual(pre.iloc[0]['1M'], 1)
+        self.assertEqual(pre.iloc[0]['1A'], 2)
+        self.assertEqual(pre.iloc[0]['2A'], 0)
+        self.assertEqual(post.iloc[0]['POSS'], 0)
+        self.assertEqual(post.iloc[0]['PTS'], 0)
+        self.assertEqual(post.iloc[0]['1A'], 0)
+        self.assertEqual(post.iloc[0]['2A'], 1)
+        self.assertEqual(post.iloc[0]['OR'], 1)
+
+    def test_missed_last_free_throw_then_a_defensive_rebound_gives_the_new_five_nothing(self):
+        home = 'home'
+        away = 'away'
+        rows = [
+            _row(eventType='period', subType='start', entityId=home, clock='PT12M0S', sequence=1),
+            _row(eventType='foul', subType='personal', entityId=away, personId='d1', clock='PT11M0S', sequence=2),
+            _row(eventType='foul', subType='drawn', entityId=home, personId='p1', clock='PT11M0S', sequence=3),
+            _row(eventType='substitution', subType='out', entityId=home, personId='p5', clock='PT10M30S', sequence=4),
+            _row(eventType='substitution', subType='in', entityId=home, personId='p6', clock='PT10M30S', sequence=5),
+            _row(eventType='freeThrow', subType='2Of2', success=0, entityId=home, personId='p1', clock='PT10M0S', sequence=6),
+            _row(eventType='rebound', subType='defensive', entityId=away, success=None, clock='PT09M0S', sequence=7),
+            _row(eventType='period', subType='end', entityId=None, clock='PT08M0S', sequence=8),
+        ]
+        pre, post = self._stats(rows)
+        self.assertEqual(pre.iloc[0]['POSS'], 1)
+        self.assertEqual(pre.iloc[0]['PTS'], 0)
+        self.assertEqual(pre.iloc[0]['1M'], 0)
+        self.assertEqual(pre.iloc[0]['1A'], 1)
+        self.assertEqual(post.iloc[0]['POSS'], 0)
+        self.assertEqual(post.iloc[0]['PTS'], 0)
+        self.assertEqual(post.iloc[0]['1A'], 0)
+        self.assertEqual(post.iloc[0]['2A'], 0)
 
 
 class PossessionColumnTests(unittest.TestCase):

@@ -146,6 +146,51 @@ class MatchupAggregateTests(unittest.TestCase):
         durations = sorted(pair['duration'] for pair in payload['pairs'])
         self.assertEqual(durations, [30, 30])
 
+    def test_and_one_free_throw_credits_the_foul_pair(self):
+        five_a = ['h1', 'h2', 'h3', 'h4', 'h5']
+        five_b = ['h6', 'h2', 'h3', 'h4', 'h5']
+        away = list(AWAY_IDS)
+        frame = pd.DataFrame([
+            _row(1, 'PT10M00S', '2pt', entity=HOME, success=1, subtype='layup', home=five_a, away=away),
+            _row(1, 'PT10M00S', 'foul', entity=AWAY, subtype='personal', home=five_a, away=away),
+            _row(1, 'PT09M30S', 'foul', entity=HOME, subtype='drawn', home=five_a, away=away),
+            _row(1, 'PT09M00S', 'freeThrow', entity=HOME, success=1, subtype='1Of1', home=five_b, away=away),
+            _row(1, 'PT08M00S', 'period', subtype='end', home=five_b, away=away),
+        ])
+        names = _names()
+        names['h6'] = 'Tsai'
+        payload = build_matchup_payload(frame, HOME, AWAY, names, _shirts())
+        pairs = {pair['id'].split('|')[0]: pair for pair in payload['pairs']}
+        foul_pair = pairs['h1,h2,h3,h4,h5']
+        ft_pair = pairs['h2,h3,h4,h5,h6']
+        self.assertEqual(foul_pair['home']['PTS'], 3)
+        self.assertEqual(foul_pair['home']['POSS'], 1)
+        self.assertEqual(foul_pair['home']['1A'], 1)
+        self.assertEqual(foul_pair['home']['1M'], 1)
+        self.assertEqual(foul_pair['home']['2M'], 1)
+        self.assertEqual(ft_pair['home']['PTS'], 0)
+        self.assertEqual(ft_pair['home']['POSS'], 0)
+        self.assertEqual(ft_pair['home']['1A'], 0)
+        self.assertGreater(foul_pair['duration'], 0)
+        self.assertGreater(ft_pair['duration'], 0)
+
+    def test_free_throw_credit_is_skipped_when_the_foul_row_is_short(self):
+        short = ['h1', 'h2', 'h3', 'h4']
+        five = list(HOME_IDS)
+        away = list(AWAY_IDS)
+        frame = pd.DataFrame([
+            _row(1, 'PT10M00S', '2pt', entity=HOME, success=1, home=short, away=away),
+            _row(1, 'PT09M30S', 'foul', entity=AWAY, subtype='personal', home=short, away=away),
+            _row(1, 'PT09M00S', 'freeThrow', entity=HOME, success=1, subtype='1Of1', home=five, away=away),
+            _row(1, 'PT08M00S', 'period', subtype='end', home=five, away=away),
+        ])
+        payload = build_matchup_payload(frame, HOME, AWAY, _names(), _shirts())
+        self.assertEqual(len(payload['pairs']), 1)
+        pair = payload['pairs'][0]
+        self.assertEqual(pair['home']['PTS'], 0)
+        self.assertEqual(pair['home']['POSS'], 0)
+        self.assertEqual(pair['home']['1A'], 0)
+
     def test_zero_overlap_is_omitted(self):
         frame = pd.DataFrame([
             _row(1, 'PT10M00S', '2pt', entity=HOME, success=1),

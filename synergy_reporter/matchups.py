@@ -3,7 +3,7 @@
 import pandas as pd
 
 from synergy_inbounder.names import lineup_token, person_name, shared_short_labels
-from synergy_inbounder.possessions import annotate_possessions
+from synergy_inbounder.possessions import annotate_possessions, lineup_credit_moves
 from synergy_inbounder.pre_processing_func import _option_on
 from synergy_reporter.post_game_report import lineup_ppp_display, shot_pct_display
 
@@ -202,36 +202,52 @@ def build_matchup_payload(df, home_id, away_id, id_table=None, shirts=None, team
     annotated = annotate_possessions(work)
     poss_end = [bool(value) for value in annotated['poss_end'].tolist()]
     poss_team = list(annotated['poss_team_id'])
+    poss_moves, ft_moves = lineup_credit_moves(annotated)
+    ft_dst = {int(source): int(destination) for source, destination in ft_moves}
+    poss_dst = {int(source): int(destination) for source, destination in poss_moves}
     seconds = _durations(work)
     home_key = str(home_id)
     away_key = str(away_id)
     grouped = {}
+    records = work.to_dict('records')
+    fives = [(_five(row.get(home_col)), _five(row.get(away_col))) for row in records]
 
-    for index, row in enumerate(work.to_dict('records')):
-        home_ids = _five(row.get(home_col))
-        away_ids = _five(row.get(away_col))
+    def _bucket(index):
+        home_ids, away_ids = fives[index]
         if home_ids is None or away_ids is None:
-            continue
+            return None
         key = (home_ids, away_ids)
         bucket = grouped.get(key)
         if bucket is None:
             bucket = {'home': _empty_side(), 'away': _empty_side(), 'duration': 0.0}
             grouped[key] = bucket
-        bucket['duration'] += seconds[index]
-        entity = row.get('entityId')
-        side = None
-        if not _missing(entity):
-            if str(entity) == home_key:
-                side = bucket['home']
-            elif str(entity) == away_key:
-                side = bucket['away']
-        _add_event(side, row)
-        if poss_end[index] and not _missing(poss_team[index]):
-            team = str(poss_team[index])
-            if team == home_key:
-                bucket['home']['POSS'] += 1
-            elif team == away_key:
-                bucket['away']['POSS'] += 1
+        return bucket
+
+    def _side(bucket, entity):
+        if bucket is None or _missing(entity):
+            return None
+        if str(entity) == home_key:
+            return bucket['home']
+        if str(entity) == away_key:
+            return bucket['away']
+        return None
+
+    for index, row in enumerate(records):
+        bucket = _bucket(index)
+        if bucket is not None:
+            bucket['duration'] += seconds[index]
+            if index not in ft_dst:
+                _add_event(_side(bucket, row.get('entityId')), row)
+            if poss_end[index] and index not in poss_dst and not _missing(poss_team[index]):
+                offense = _side(bucket, poss_team[index])
+                if offense is not None:
+                    offense['POSS'] += 1
+        if index in ft_dst:
+            _add_event(_side(_bucket(ft_dst[index]), row.get('entityId')), row)
+        if poss_end[index] and index in poss_dst and not _missing(poss_team[index]):
+            offense = _side(_bucket(poss_dst[index]), poss_team[index])
+            if offense is not None:
+                offense['POSS'] += 1
 
     pairs = []
     for (home_ids, away_ids), bucket in grouped.items():
