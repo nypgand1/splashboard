@@ -1,0 +1,932 @@
+# -*- coding: utf-8 -*-
+import json
+
+from dash import (
+    Input,
+    Output,
+    State,
+    callback,
+    clientside_callback,
+    ctx,
+    dcc,
+    html,
+    no_update,
+    register_page,
+)
+from dash.exceptions import PreventUpdate
+from dash.development.base_component import Component
+import dash_mantine_components as dmc
+
+from synergy_inbounder.settings import (
+    EASL_SEASON_ID,
+    SYNERGY_SEASON_ID,
+    selectable_seasons,
+)
+from synergy_reporter.team_season import (
+    OPPONENT_ALL,
+    OPPONENT_ALL_LABEL,
+    SITE_ALL,
+    SITE_OPTIONS,
+    STADIUM_ALL,
+    STADIUM_ALL_LABEL,
+    team_stats_payload,
+    type_needs_download,
+)
+from ui_kit import (
+    ERROR_GAME,
+    empty_state,
+    error_alert,
+    filter_control,
+    icon,
+)
+
+register_page(
+    __name__,
+    name='Splashboard TFB | Team Stats',
+    top_nav=True,
+    path='/team-stats',
+)
+
+LEAGUE_OPTIONS = [
+    {'label': 'PLG', 'value': 'PLG'},
+    {'label': 'EASL', 'value': 'EASL'},
+]
+_KEY_GROUPS = (
+    ('Points in the Paint', (('PIPM', 'M'), ('PIPA', 'A'), ('PIP', 'PT'))),
+    ('Second Chance Points', (
+        ('SCP2M', '2M'), ('SCP2A', '2A'), ('SCP3M', '3M'), ('SCP3A', '3A'), ('SCP', 'PT'),
+    )),
+    ('Fast Break Points', (
+        ('FBP2M', '2M'), ('FBP2A', '2A'), ('FBP3M', '3M'), ('FBP3A', '3A'), ('FBP', 'PT'),
+    )),
+    ('Points off Turnovers', (
+        ('POT2M', '2M'), ('POT2A', '2A'), ('POT3M', '3M'), ('POT3A', '3A'), ('POT', 'PT'),
+    )),
+)
+_SHOT_GROUPS = (
+    ('2PT', ('2M', '2A', '2FG%'), ('M', 'A', '%')),
+    ('3PT', ('3M', '3A', '3FG%'), ('M', 'A', '%')),
+    ('FT', ('FTM', 'FTA', 'FT%'), ('M', 'A', '%')),
+    ('REB', ('OR', 'DR', 'REB'), ('O', 'D', 'T')),
+)
+_COUNT_TAILS = ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS')
+_TAIL_LABEL = {'AST': 'AS', 'PTS': 'PT'}
+
+
+def _cluster(kind, children, cluster_id=None, style=None):
+    props = {
+        'className': 'filter-cluster filter-cluster-{0}'.format(kind),
+    }
+    if cluster_id:
+        props['id'] = cluster_id
+    if style:
+        props['style'] = style
+    return dmc.Box(
+        dmc.Box(children, className='filter-cluster-inner'),
+        **props,
+    )
+
+
+def _sized_select(select_id, probe_id, label, data, value):
+    return html.Div(
+        [
+            html.Div(
+                html.Span(
+                    label,
+                    className='home-team-sizer-probe',
+                    **{'aria-hidden': 'true'},
+                ),
+                id=probe_id,
+                className='ts-sizer-probes',
+            ),
+            dmc.Select(
+                id=select_id,
+                data=data,
+                value=value,
+                allowDeselect=False,
+                clearable=False,
+                searchable=False,
+                size='xs',
+                radius='md',
+                comboboxProps={'withinPortal': True},
+                rightSectionWidth=28,
+                className='home-team-sizer-control',
+                styles={
+                    'wrapper': {'width': '100%'},
+                    'input': {
+                        'width': '100%',
+                        'paddingInlineStart': '12px',
+                        'paddingInlineEnd': '40px',
+                    },
+                },
+            ),
+        ],
+        className='home-team-sizer',
+    )
+
+
+def _default_season(league):
+    if str(league or '').strip().upper() == 'EASL':
+        return EASL_SEASON_ID
+    return SYNERGY_SEASON_ID
+
+
+def _season_data(league):
+    return [
+        {'label': label, 'value': season_id}
+        for label, season_id in selectable_seasons(league)
+    ]
+
+
+def _jsonable(node):
+    if isinstance(node, Component):
+        spec = node.to_plotly_json()
+        spec['props'] = {
+            key: _jsonable(value) for key, value in spec['props'].items()
+        }
+        return spec
+    if isinstance(node, (list, tuple)):
+        return [_jsonable(item) for item in node]
+    if isinstance(node, dict):
+        return {key: _jsonable(value) for key, value in node.items()}
+    return node
+
+
+def _loading_body():
+    return dmc.Stack(
+        [
+            dmc.SimpleGrid(
+                cols={'base': 1, 'lg': 2},
+                spacing='12px',
+                children=[dmc.Skeleton(height=160, radius='md') for _ in range(2)],
+            ),
+            dmc.Skeleton(height=180, radius='md'),
+            dmc.Skeleton(height=220, radius='md'),
+        ],
+        gap='sm',
+    )
+
+
+def _stamp(text):
+    return dmc.Text(text or 'Last Update: —', size='sm', c='dimmed', mb=8, className='no-print')
+
+
+def _th(label, kind, span=None, cols=None, edge=False):
+    table_props = {}
+    if span:
+        table_props['rowSpan'] = span
+    if cols:
+        table_props['colSpan'] = cols
+    class_name = kind
+    props = {'className': class_name}
+    if table_props:
+        props['tableProps'] = table_props
+    return dmc.TableTh(label, **props)
+
+
+def _segments(card_id, columns):
+    present = set(columns)
+    if card_id == 'advanced':
+        return [('single', (column,)) for column in columns]
+    segments = []
+    if card_id == 'team':
+        for name in ('Team', 'GP', 'Min'):
+            if name in present:
+                segments.append(('single', (name,)))
+        for _title, members, _leaves in _SHOT_GROUPS:
+            cols = tuple(column for column in members if column in present)
+            if cols:
+                segments.append(('group', cols))
+        for column in _COUNT_TAILS:
+            if column in present:
+                segments.append(('single', (column,)))
+        return segments
+    if card_id == 'key':
+        for name in ('Team', 'GP'):
+            if name in present:
+                segments.append(('single', (name,)))
+        for _name, pairs in _KEY_GROUPS:
+            cols = tuple(column for column, _label in pairs if column in present)
+            if cols:
+                segments.append(('group', cols))
+        if 'BP' in present:
+            segments.append(('single', ('BP',)))
+        return segments
+    for name in ('Team', 'GP', 'Pace'):
+        if name in present:
+            segments.append(('single', (name,)))
+    factors = tuple(column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present)
+    if factors:
+        segments.append(('group', factors))
+    return segments
+
+
+def _edge_columns(card_id, columns):
+    segments = _segments(card_id, columns)
+    ends = set()
+    for index, (kind, cols) in enumerate(segments):
+        if not cols:
+            continue
+        if index + 1 >= len(segments):
+            if kind == 'group':
+                ends.add(cols[-1])
+            continue
+        if kind == 'group' or segments[index + 1][0] == 'group':
+            ends.add(cols[-1])
+    return ends
+
+
+def _span_labels(columns, names, edges):
+    present = set(columns)
+    nodes = []
+    for name in names:
+        if name not in present:
+            continue
+        if name == 'Team':
+            label = 'TEAM'
+        elif name == 'GP':
+            label = 'GP'
+        else:
+            label = name.upper()
+        nodes.append(_th(label, 'braves-th-span', span=2, edge=name in edges))
+    return nodes
+
+
+def _header_rows(card_id, columns):
+    present = set(columns)
+    edges = _edge_columns(card_id, columns)
+    if card_id == 'advanced':
+        labels = []
+        for column in columns:
+            if column == 'Team':
+                labels.append('TEAM')
+            elif column == 'GP':
+                labels.append('GP')
+            else:
+                labels.append(column)
+        return [dmc.TableTr([
+            _th(label, 'braves-th-single') for label in labels
+        ])]
+
+    top = []
+    sub = []
+    if card_id == 'team':
+        top.extend(_span_labels(columns, ('Team', 'GP', 'Min'), edges))
+        for title, members, leaves in _SHOT_GROUPS:
+            if not any(column in present for column in members):
+                continue
+            top.append(_th(
+                title, 'braves-th-group', cols=len(leaves), edge=members[-1] in edges,
+            ))
+            sub.extend(
+                _th(leaf, 'braves-th-sub', edge=column in edges)
+                for column, leaf in zip(members, leaves)
+            )
+        for column in _COUNT_TAILS:
+            if column in present:
+                top.append(_th(
+                    _TAIL_LABEL.get(column, column),
+                    'braves-th-span-tight',
+                    span=2,
+                    edge=column in edges,
+                ))
+    elif card_id == 'key':
+        top.extend(_span_labels(columns, ('Team', 'GP'), edges))
+        for name, pairs in _KEY_GROUPS:
+            found = [(column, label) for column, label in pairs if column in present]
+            if not found:
+                continue
+            top.append(_th(
+                name, 'braves-th-group', cols=len(found), edge=found[-1][0] in edges,
+            ))
+            sub.extend(
+                _th(label, 'braves-th-sub', edge=column in edges)
+                for column, label in found
+            )
+        if 'BP' in present:
+            top.append(_th('BP', 'braves-th-span', span=2, edge='BP' in edges))
+    else:
+        top.extend(_span_labels(columns, ('Team', 'GP', 'Pace'), edges))
+        factors = [column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present]
+        if factors:
+            top.append(_th(
+                'FOUR FACTORS', 'braves-th-group', cols=len(factors),
+                edge=factors[-1] in edges,
+            ))
+            sub.extend(
+                _th(column, 'braves-th-sub', edge=column in edges) for column in factors
+            )
+    rows = [dmc.TableTr(top)]
+    if sub:
+        rows.append(dmc.TableTr(sub))
+    return rows
+
+
+def _body_rows(card):
+    columns = card.get('columns') or []
+    edges = _edge_columns(card.get('id'), columns)
+    records = []
+    for index, record in enumerate(card.get('rows') or []):
+        records.append(record)
+        opp_rows = card.get('opp_rows') or []
+        if index < len(opp_rows):
+            records.append(opp_rows[index])
+    rows = []
+    for record in records:
+        opp = bool(isinstance(record, dict) and record.get('opp'))
+        cells = []
+        for column in columns:
+            cell = record.get(column) if isinstance(record, dict) else None
+            text = ''
+            style = None
+            if isinstance(cell, dict):
+                text = '' if cell.get('text') is None else str(cell.get('text'))
+                if opp and cell.get('opp_best'):
+                    style = {'color': '#e63946', 'fontWeight': 700}
+                elif cell.get('winner'):
+                    style = {'color': '#0077b6', 'fontWeight': 700}
+            classes = []
+            if column in edges:
+                classes.append('braves-group-end')
+            if opp and column == 'Team':
+                classes.append('braves-opp-label')
+            kwargs = {}
+            if style:
+                kwargs['style'] = style
+            if classes:
+                kwargs['className'] = ' '.join(classes)
+            cells.append(dmc.TableTd(text, **kwargs))
+        class_name = 'braves-clean-row braves-opp-row' if opp else 'braves-clean-row'
+        rows.append(dmc.TableTr(cells, className=class_name))
+    return rows
+
+
+def _paper(card):
+    table = dmc.Table(
+        [
+            dmc.TableThead(_header_rows(card.get('id'), card.get('columns') or [])),
+            dmc.TableTbody(_body_rows(card)),
+        ],
+        withTableBorder=False,
+        withColumnBorders=False,
+        className='braves-clean-table',
+        style={'width': '100%'},
+    )
+    children = [dmc.Box(table, className='braves-table-scroll')]
+    title = card.get('title')
+    if title:
+        children.insert(0, dmc.Text(
+            str(title).upper(),
+            size='xs',
+            fw=700,
+            c='dimmed',
+            mb=6,
+            style={'letterSpacing': '0.05em'},
+        ))
+    return dmc.Paper(
+        children,
+        withBorder=True,
+        radius='md',
+        p='sm',
+        shadow='xs',
+        className='braves-card-wrapper',
+    )
+
+
+def _cards_view(cards):
+    return dmc.Stack(
+        [
+            dmc.SimpleGrid(
+                cols={'base': 1, 'lg': 2},
+                spacing='12px',
+                children=[_paper(cards['pace']), _paper(cards['advanced'])],
+            ),
+            _paper(cards['key']),
+            _paper(cards['team']),
+        ],
+        gap='sm',
+    )
+
+
+def _view(payload):
+    if not payload or not payload.get('ok'):
+        return error_alert((payload or {}).get('message') or ERROR_GAME)
+    if payload.get('empty') or not payload.get('cards'):
+        return empty_state(payload.get('message') or '', payload.get('next_step') or '')
+    return _cards_view(payload['cards'])
+
+
+def layout():
+    league = 'PLG'
+    season_id = _default_season(league)
+    league_control = dmc.SegmentedControl(
+        id='ts-league',
+        data=LEAGUE_OPTIONS,
+        value=league,
+        radius='md',
+        size='xs',
+    )
+    season_control = dmc.Select(
+        id='ts-season',
+        data=_season_data(league),
+        value=season_id,
+        allowDeselect=False,
+        clearable=False,
+        searchable=False,
+        size='xs',
+        radius='md',
+        w=132,
+        comboboxProps={'withinPortal': True},
+    )
+    type_control = dmc.SegmentedControl(
+        id='ts-game-type',
+        data=[{'label': 'Regular', 'value': 'REGULAR'}],
+        value='REGULAR',
+        radius='md',
+        size='xs',
+    )
+    opponent_control = _sized_select(
+        'ts-opponent',
+        'ts-opponent-probes',
+        OPPONENT_ALL_LABEL,
+        [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}],
+        OPPONENT_ALL,
+    )
+    stadium_control = _sized_select(
+        'ts-stadium',
+        'ts-stadium-probes',
+        STADIUM_ALL_LABEL,
+        [{'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL}],
+        STADIUM_ALL,
+    )
+    site_control = dmc.SegmentedControl(
+        id='ts-site',
+        data=list(SITE_OPTIONS),
+        value=SITE_ALL,
+        radius='md',
+        size='xs',
+    )
+    return dmc.Stack(
+        [
+            dcc.Store(id='ts-filter-pack-sync'),
+            dcc.Store(id='ts-sizer-sync'),
+            dcc.Store(
+                id='ts-applied',
+                data={'league': league, 'season': season_id, 'game_type': 'REGULAR'},
+            ),
+            dcc.Store(id='ts-intent'),
+            dcc.Store(id='ts-job'),
+            dmc.Tabs(
+                dmc.TabsList([
+                    dmc.TabsTab(
+                        'Box Score',
+                        value='tab-bs',
+                        leftSection=icon('tabler:table', width=14),
+                    ),
+                ]),
+                id='ts-tabs',
+                value='tab-bs',
+                variant='default',
+                className='braves-clean-tabs',
+                style={'margin': '0 0 16px 0', 'padding': '0', 'borderBottom': 'none'},
+            ),
+            html.Div(_stamp('Last Update: —'), id='ts-stamp'),
+            dmc.Box(
+                [
+                    _cluster('league', [
+                        filter_control('', league_control, wrap_id='ts-league-wrap'),
+                        filter_control('', season_control, wrap_id='ts-season-wrap'),
+                    ]),
+                    _cluster('type', [
+                        filter_control(
+                            '',
+                            type_control,
+                            wrap_id='ts-game-type-wrap',
+                            visible=False,
+                        ),
+                    ]),
+                    _cluster(
+                        'opp',
+                        [filter_control('', opponent_control)],
+                        cluster_id='ts-opponent-cluster',
+                        style={'display': 'none'},
+                    ),
+                ],
+                id='ts-filter-pack',
+                className='filter-pack filter-pack-scope',
+            ),
+            dmc.Box(
+                [
+                    _cluster(
+                        'stadium',
+                        [filter_control('', stadium_control)],
+                        cluster_id='ts-stadium-cluster',
+                        style={'display': 'none'},
+                    ),
+                    _cluster('site', [
+                        filter_control('', site_control, wrap_id='ts-site-wrap'),
+                    ]),
+                ],
+                id='ts-place-pack',
+                className='filter-pack filter-pack-place',
+            ),
+            dmc.Group(
+                [
+                    html.Div(
+                        dmc.SegmentedControl(
+                            id='ts-period',
+                            data=[{'label': 'All', 'value': 'all'}],
+                            value='all',
+                            radius='md',
+                            size='xs',
+                        ),
+                        id='ts-period-wrap',
+                        style={'display': 'none'},
+                    ),
+                    dmc.Switch(
+                        id='ts-show-opp',
+                        label='Show Opp',
+                        checked=False,
+                        size='sm',
+                        color='gray',
+                        ms='auto',
+                    ),
+                ],
+                id='ts-period-bar',
+                justify='flex-start',
+                align='center',
+                wrap='wrap',
+                gap='sm',
+                w='100%',
+            ),
+            html.Div(_loading_body(), id='ts-body'),
+        ],
+        gap='md',
+    )
+
+
+_LOADING_BODY = json.dumps(_jsonable(_loading_body()))
+
+clientside_callback(
+    """
+    function(checked) {
+        return checked ? 'ts-show-opp' : '';
+    }
+    """,
+    Output('ts-body', 'className'),
+    Input('ts-show-opp', 'checked'),
+)
+
+clientside_callback(
+    """
+    function(league, season, gameType, applied) {
+        var current = applied || {};
+        var leagueValue = league == null ? null : league;
+        var seasonValue = season == null ? null : season;
+        var typeValue = gameType == null ? null : gameType;
+        var sameLeague = leagueValue == (current.league == null ? null : current.league);
+        var sameSeason = seasonValue == (current.season == null ? null : current.season);
+        var sameType = typeValue == (current.game_type == null ? null : current.game_type);
+        if (sameLeague && sameSeason && sameType) {
+            return window.dash_clientside.no_update;
+        }
+        var scope = !sameLeague || !sameSeason;
+        return {
+            league: leagueValue,
+            season: seasonValue,
+            game_type: scope ? null : typeValue,
+            skeleton: scope,
+            nonce: Date.now()
+        };
+    }
+    """,
+    Output('ts-intent', 'data'),
+    Input('ts-league', 'value'),
+    Input('ts-season', 'value'),
+    Input('ts-game-type', 'value'),
+    State('ts-applied', 'data'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(intent) {
+        if (!intent || !intent.skeleton) {
+            return window.dash_clientside.no_update;
+        }
+        return __LOADING_BODY__;
+    }
+    """.replace('__LOADING_BODY__', _LOADING_BODY),
+    Output('ts-body', 'children', allow_duplicate=True),
+    Input('ts-intent', 'data'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function() {
+        var api = window.dash_clientside && window.dash_clientside.filter_pack;
+        if (api && api.sync) {
+            api.sync();
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('ts-filter-pack-sync', 'data'),
+    Input('ts-body', 'children'),
+    Input('ts-game-type', 'data'),
+    Input('ts-opponent', 'data'),
+    Input('ts-stadium', 'data'),
+)
+
+
+clientside_callback(
+    """
+    function(opponentOptions, stadiumOptions) {
+        function fill(id, options, fallback) {
+            var host = document.getElementById(id);
+            if (!host) {
+                return;
+            }
+            var labels = [];
+            (options || []).forEach(function (item) {
+                if (item && item.label) {
+                    labels.push(String(item.label));
+                }
+            });
+            if (!labels.length) {
+                labels.push(fallback);
+            }
+            while (host.firstChild) {
+                host.removeChild(host.firstChild);
+            }
+            labels.forEach(function (label) {
+                var span = document.createElement('span');
+                span.className = 'home-team-sizer-probe';
+                span.setAttribute('aria-hidden', 'true');
+                span.textContent = label;
+                host.appendChild(span);
+            });
+        }
+        fill('ts-opponent-probes', opponentOptions, 'vs All Teams');
+        fill('ts-stadium-probes', stadiumOptions, 'All Stadiums');
+        var api = window.dash_clientside && window.dash_clientside.filter_pack;
+        if (api && api.sync) {
+            api.sync();
+            window.setTimeout(api.sync, 0);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('ts-sizer-sync', 'data'),
+    Input('ts-opponent', 'data'),
+    Input('ts-stadium', 'data'),
+)
+
+
+def _same(left, right):
+    return left == right
+
+
+def _triggered_id():
+    try:
+        return ctx.triggered_id
+    except Exception:
+        return None
+
+
+def _menu_value(payload, key, options, fallback):
+    selected = payload.get(key) or fallback
+    if not any(item.get('value') == selected for item in options):
+        return fallback
+    return selected
+
+
+def _load(league, season_id, game_type, period, reason, opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL):
+    try:
+        return team_stats_payload(
+            league or 'PLG',
+            season_id=season_id,
+            game_type=game_type,
+            period=period,
+            reason=reason,
+            opponent=opponent,
+            stadium=stadium,
+            site=site,
+        )
+    except Exception:
+        return {
+            'ok': False,
+            'message': ERROR_GAME,
+            'stamp': 'Last Update: —',
+            'season_id': season_id,
+            'seasons': _season_data(league or 'PLG'),
+            'game_type': game_type,
+            'game_types': [],
+            'game_type_visible': False,
+            'period': 'all',
+            'period_chips': [],
+            'period_visible': False,
+            'opponent': OPPONENT_ALL,
+            'opponent_options': [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}],
+            'opponent_visible': False,
+            'stadium': STADIUM_ALL,
+            'stadium_options': [{'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL}],
+            'stadium_visible': False,
+            'site': SITE_ALL,
+        }
+
+
+def _paint(payload, league, season_id, game_type, period, opponent, stadium, site):
+    seasons = payload.get('seasons') or _season_data(league or 'PLG')
+    selected_season = payload.get('season_id') or season_id
+    types = payload.get('game_types') or []
+    selected_type = payload.get('game_type')
+    if not types:
+        types = [{'label': 'Regular', 'value': 'REGULAR'}]
+    chips = payload.get('period_chips') or [{'label': 'All', 'value': 'all'}]
+    selected_period = payload.get('period') or 'all'
+    if not any(item.get('value') == selected_period for item in chips):
+        selected_period = 'all'
+    opponent_options = payload.get('opponent_options') or [
+        {'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL},
+    ]
+    stadium_options = payload.get('stadium_options') or [
+        {'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL},
+    ]
+    selected_opponent = _menu_value(payload, 'opponent', opponent_options, OPPONENT_ALL)
+    selected_stadium = _menu_value(payload, 'stadium', stadium_options, STADIUM_ALL)
+    selected_site = payload.get('site') or SITE_ALL
+    if selected_site not in ('all', 'away', 'home'):
+        selected_site = SITE_ALL
+    type_style = None if payload.get('game_type_visible') else {'display': 'none'}
+    period_style = None if payload.get('period_visible') else {'display': 'none'}
+    opponent_style = None if payload.get('opponent_visible') else {'display': 'none'}
+    stadium_style = None if payload.get('stadium_visible') else {'display': 'none'}
+    season_out = no_update if _same(selected_season, season_id) else selected_season
+    type_out = no_update if _same(selected_type, game_type) else selected_type
+    period_out = no_update if _same(selected_period, period) else selected_period
+    opponent_out = no_update if _same(selected_opponent, opponent) else selected_opponent
+    stadium_out = no_update if _same(selected_stadium, stadium) else selected_stadium
+    site_out = no_update if _same(selected_site, site) else selected_site
+    # Same response as any select correction, so the bridge's applied State
+    # already matches and that echo does not fetch again.
+    applied = {
+        'league': league or 'PLG',
+        'season': season_id if season_out is no_update else selected_season,
+        'game_type': game_type if type_out is no_update else selected_type,
+    }
+    return (
+        _view(payload),
+        _stamp(payload.get('stamp')),
+        seasons,
+        season_out,
+        types,
+        type_out,
+        type_style,
+        chips,
+        period_out,
+        period_style,
+        applied,
+        opponent_options,
+        opponent_out,
+        opponent_style,
+        stadium_options,
+        stadium_out,
+        stadium_style,
+        site_out,
+    )
+
+
+def _view_outputs():
+    return (
+        Output('ts-body', 'children', allow_duplicate=True),
+        Output('ts-stamp', 'children', allow_duplicate=True),
+        Output('ts-season', 'data', allow_duplicate=True),
+        Output('ts-season', 'value', allow_duplicate=True),
+        Output('ts-game-type', 'data', allow_duplicate=True),
+        Output('ts-game-type', 'value', allow_duplicate=True),
+        Output('ts-game-type-wrap', 'style', allow_duplicate=True),
+        Output('ts-period', 'data', allow_duplicate=True),
+        Output('ts-period', 'value', allow_duplicate=True),
+        Output('ts-period-wrap', 'style', allow_duplicate=True),
+        Output('ts-applied', 'data', allow_duplicate=True),
+        Output('ts-opponent', 'data', allow_duplicate=True),
+        Output('ts-opponent', 'value', allow_duplicate=True),
+        Output('ts-opponent-cluster', 'style', allow_duplicate=True),
+        Output('ts-stadium', 'data', allow_duplicate=True),
+        Output('ts-stadium', 'value', allow_duplicate=True),
+        Output('ts-stadium-cluster', 'style', allow_duplicate=True),
+        Output('ts-site', 'value', allow_duplicate=True),
+    )
+
+
+def _keep_slice():
+    return (no_update, no_update, no_update, no_update, no_update, no_update, no_update)
+
+
+def _skeleton_job(intent, period):
+    # Reset the chip with the skeleton. This callback also listens to the
+    # chip, and Dash drops that echo, so the download callback paints All.
+    # Opponent, stadium, and site stay until that download paints.
+    period_out = no_update if _same(period, 'all') else 'all'
+    return (
+        _loading_body(),
+        no_update, no_update, no_update, no_update, no_update, no_update,
+        no_update, period_out, no_update, no_update,
+    ) + _keep_slice() + (intent,)
+
+
+def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site):
+    painted = _paint(payload, league, season_id, game_type, period, opponent, stadium, site)
+    # applied stays. The slice outputs follow it. The job slot is the caller's.
+    return painted[:10] + (no_update,) + painted[11:]
+
+
+@callback(
+    *_view_outputs(),
+    Output('ts-job', 'data'),
+    Input('ts-intent', 'data'),
+    Input('ts-period', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    prevent_initial_call='initial_duplicate',
+)
+def render_team_stats(intent, period, opponent, stadium, site, league, season_id, game_type):
+    triggered = _triggered_id()
+    if triggered == 'ts-period':
+        reason = 'chip'
+    elif triggered in ('ts-opponent', 'ts-stadium', 'ts-site'):
+        reason = 'slice'
+    elif isinstance(intent, dict) and not intent.get('skeleton'):
+        reason = 'type'
+    else:
+        reason = 'scope'
+    if reason == 'type':
+        requested_type = intent.get('game_type') if isinstance(intent, dict) else game_type
+        try:
+            needs = type_needs_download(league, season_id, requested_type)
+        except Exception:
+            needs = True
+        if needs:
+            job = intent if isinstance(intent, dict) else {
+                'league': league,
+                'season': season_id,
+                'game_type': requested_type,
+                'skeleton': False,
+            }
+            return _skeleton_job(job, period)
+        payload = _load(
+            league, season_id, requested_type, 'all', 'type', opponent, stadium, site,
+        )
+        return _paint(
+            payload, league, season_id, game_type, period, opponent, stadium, site,
+        ) + (no_update,)
+    if reason in ('chip', 'slice'):
+        payload = _load(
+            league, season_id, game_type, period or 'all', reason, opponent, stadium, site,
+        )
+        return _local_paint(
+            payload, league, season_id, game_type, period, opponent, stadium, site,
+        ) + (no_update,)
+    payload = _load(league, season_id, None, 'all', 'scope', OPPONENT_ALL, STADIUM_ALL, SITE_ALL)
+    return _paint(
+        payload, league, season_id, game_type, period, opponent, stadium, site,
+    ) + (no_update,)
+
+
+@callback(
+    *_view_outputs(),
+    Input('ts-job', 'data'),
+    State('ts-intent', 'data'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-period', 'value'),
+    State('ts-opponent', 'value'),
+    State('ts-stadium', 'value'),
+    State('ts-site', 'value'),
+    prevent_initial_call=True,
+)
+def render_team_stats_download(
+    job, intent, league, season_id, game_type, period,
+    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL,
+):
+    if not isinstance(job, dict) or not isinstance(intent, dict):
+        raise PreventUpdate
+    if job.get('nonce') != intent.get('nonce'):
+        raise PreventUpdate
+    league = job.get('league') or league or 'PLG'
+    if job.get('season') is not None:
+        season_id = job.get('season')
+    requested_type = job.get('game_type') if isinstance(job, dict) else game_type
+    payload = _load(
+        league, season_id, requested_type, 'all', 'type', opponent, stadium, site,
+    )
+    return _paint(payload, league, season_id, game_type, period, opponent, stadium, site)

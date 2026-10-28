@@ -1030,6 +1030,10 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.report-js-table td.braves-group-end {
+    border-right-color: #cbd5e1;
+}
+
 .report-js-table thead tr:nth-child(2) th {
     padding-left: 0;
     padding-right: 0;
@@ -1169,6 +1173,18 @@ body {
     background-color: #f8fafc;
 }
 
+.braves-clean-table thead th.is-header-stuck {
+    position: relative;
+    z-index: 4;
+    background-color: #f8fafc;
+}
+
+.braves-clean-table thead tr:first-child > th:first-child.is-header-stuck {
+    position: sticky;
+    left: 0;
+    z-index: 6;
+}
+
 .braves-clean-table th {
     text-align: center;
     vertical-align: middle;
@@ -1219,6 +1235,29 @@ body {
 }
 
 .braves-clean-row:hover {
+    background-color: var(--row-hover) !important;
+}
+
+.braves-clean-table td.braves-group-end {
+    border-right: 1px solid #cbd5e1;
+}
+
+.braves-clean-table tbody tr.braves-opp-row td {
+    background-color: #f1f5f9;
+}
+
+.braves-clean-table tbody tr.braves-opp-row td.braves-opp-label {
+    text-align: right;
+    color: #0f172a;
+    font-weight: 400;
+}
+
+#ts-body:not(.ts-show-opp) tr.braves-opp-row {
+    display: none;
+}
+
+.braves-clean-table tbody tr.braves-clean-row:hover td:first-child,
+.braves-clean-table tbody tr.braves-opp-row:hover td {
     background-color: var(--row-hover) !important;
 }
 
@@ -1327,6 +1366,15 @@ body {
 .ag-theme-alpine.braves-clean-ag-grid .ag-header-align-right .ag-header-cell-label,
 .ag-theme-alpine.braves-clean-ag-grid .ag-right-aligned-header .ag-header-cell-label {
     justify-content: flex-end !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-cell.braves-group-end {
+    border-right: 1px solid #cbd5e1 !important;
+}
+
+.ag-theme-alpine.braves-clean-ag-grid .ag-header.is-header-stuck {
+    z-index: 5 !important;
+    background-color: #f8fafc !important;
 }
 
 .ag-theme-alpine.braves-clean-ag-grid .ag-header-group-cell {
@@ -1527,6 +1575,10 @@ body {
     min-width: 100%;
 }
 
+.ts-sizer-probes {
+    display: contents;
+}
+
 a.home-schedule-row {
     display: block;
     color: inherit;
@@ -1596,6 +1648,11 @@ a.home-schedule-row {
         print-color-adjust: exact !important;
         color-adjust: exact !important;
     }
+    .braves-clean-table thead th,
+    .report-js-table thead th,
+    .ag-theme-alpine.braves-clean-ag-grid .ag-header {
+        transform: none !important;
+    }
     html, body {
         background: #ffffff !important;
         margin: 0 !important;
@@ -1663,4 +1720,43 @@ a.home-schedule-row {
         size: A4 portrait;
         margin: 0;
     }
+}
+
+.filter-pack {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.filter-cluster {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.filter-cluster-inner {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.filter-pack[data-mode="split"] > .filter-cluster-type,
+.filter-pack[data-mode="stack"] > .filter-cluster-team,
+.filter-pack[data-mode="stack"] > .filter-cluster-type {
+    flex-basis: 100%;
+}
+
+.filter-pack-scope > .filter-cluster-opp {
+    flex-basis: 100%;
+}
+
+.filter-pack-place[data-mode="split"] > .filter-cluster-site {
+    flex-basis: 100%;
 }

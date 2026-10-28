@@ -85,6 +85,9 @@ class SeasonListTests(unittest.TestCase):
 
 
 class ParseGameBundleTests(unittest.TestCase):
+    def setUp(self):
+        from synergy_inbounder.runtime_cache import clear_runtime_caches
+        clear_runtime_caches()
     def _run_bundle(self, live_flag):
         seen = []
 
@@ -94,7 +97,7 @@ class ParseGameBundleTests(unittest.TestCase):
                 return payload
             return _call
 
-        def roster(org_id, game_id):
+        def roster(org_id, game_id, fixture_status=None):
             seen.append(('roster', None))
             return {'data': [{
                 'personId': 'p1',
@@ -121,7 +124,7 @@ class ParseGameBundleTests(unittest.TestCase):
                     side_effect=record('player_periods', _player_periods()),
                 ), patch(
                     'synergy_inbounder.parser.Communicator.get_game_play_by_play_synergy',
-                    side_effect=lambda org, game, period_id=None, live=True: (
+                    side_effect=lambda org, game, period_id=None, live=True, fixture_status=None: (
                         seen.append(('pbp', live)) or _empty_stats()
                     ),
                 ), patch(

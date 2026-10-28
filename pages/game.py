@@ -20,11 +20,18 @@ from synergy_inbounder.runtime_cache import (
     report_refresh_state,
     warmup_game_report,
 )
+
+
+def _open_report(*args, **kwargs):
+    """Game page reads and pins the open fixture frame."""
+    kwargs['pin'] = 'open'
+    return get_cached_report(*args, **kwargs)
 from synergy_inbounder.game_status import (
     is_finished_status,
     is_live_play_status,
     status_bucket,
 )
+from synergy_reporter.column_winners import winning_indexes
 from synergy_reporter.report_components import (
     apply_page_cmd,
     lineup_tables_for_size,
@@ -135,12 +142,14 @@ def _bs_player_block(index, dot_color):
                         'sortable': True,
                         'filter': False,
                         'resizable': True,
+                        'suppressMovable': True,
                         'cellClassRules': {'ag-sorted-col-bg': 'params.column.isSortActive()'},
                         'cellDataType': False,
                     },
                     dashGridOptions={
                         'domLayout': 'autoHeight',
                         'suppressHorizontalScroll': False,
+                        'suppressMovableColumns': True,
                         'enableBrowserTooltips': True,
                         'tooltipShowDelay': 200,
                     },
@@ -607,7 +616,7 @@ def update_bs_store(n, game_id, league='plg'):
     if org is None:
         return _error_store(game_id=game_id)
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
     except Exception as exc:
         print(f"Error loading box score: {exc}")
         return _error_store(game_id=game_id)
@@ -746,7 +755,7 @@ def update_pbp_store(n, game_id, league='plg'):
     if org is None:
         return _error_store()
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
     except Exception as exc:
         print(f"Error loading play-by-play: {exc}")
         return _error_store()
@@ -765,7 +774,7 @@ def update_lineup_store(n, game_id, league='plg'):
     if org is None:
         return _error_store()
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
         if (
             _is_game_load(n, _triggered_id())
             and is_finished_status(get_cached_game_status(game_id, org))
@@ -793,7 +802,7 @@ def update_matchup_store(n, game_id, match_info_store, league='plg'):
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
         return json.dumps(report.get_matchup_payload(
             home_team_id=info.get('home_team_id'),
             away_team_id=info.get('away_team_id'),
@@ -816,7 +825,7 @@ def update_rotation_store(n, game_id, match_info_store, league='plg'):
     if org is None:
         return _error_store()
     try:
-        report = get_cached_report(game_id, org)
+        report = _open_report(game_id, org)
         info = safe_loads(match_info_store)
         return json.dumps(report.get_rotation_payload(
             home_team_id=info.get('home_team_id'),
@@ -959,38 +968,60 @@ def _th(label, kind, span=None, cols=None):
     return dmc.TableTh(label, **props)
 
 
+def _append_class(node, name):
+    current = getattr(node, 'className', None) or ''
+    parts = str(current).split()
+    if name not in parts:
+        parts.append(name)
+    node.className = ' '.join(parts)
+
+
+def _boundary_columns(segments):
+    ends = set()
+    for index, (kind, cols) in enumerate(segments):
+        if not cols:
+            continue
+        if index + 1 >= len(segments):
+            if kind == 'group':
+                ends.add(cols[-1])
+            continue
+        if kind == 'group' or segments[index + 1][0] == 'group':
+            ends.add(cols[-1])
+    return ends
+
+
+def _mark_header_edges(top_row, sub_row, segments):
+    return _boundary_columns(segments)
+
+
 def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, home_name=None):
     if df is None or df.empty:
         return dmc.Text("No data available.", c="dimmed", ta="center", fs="italic", p="sm")
 
-    # Precalculate winning values for each column across rows (team summary tables have 2 rows: Home vs Away)
+    # Column-best marks. A blank cell stays out. Timeouts are not compared.
     is_timeouts_card = bool(title and 'timeout' in title.lower())
     col_winners = {}
-    if is_team_summary and len(df) == 2 and not is_timeouts_card:
+    if is_team_summary and len(df) and not is_timeouts_card:
         is_fouls_card = bool(title and 'foul' in title.lower())
         for col in df.columns:
-            if col in ('Team', 'Min'):
+            if col in ('Team', 'Min', '3Pr', '3P-R'):
                 continue
-            val0 = _parse_numeric_stat(df.iloc[0][col])
-            val1 = _parse_numeric_stat(df.iloc[1][col])
-            if val0 is not None and val1 is not None and val0 != val1:
-                # Lower is better for Fouls, TO, TO%, PF. 3P-R is a mix, not a result.
-                if col in ('3Pr', '3P-R'):
-                    continue
-                if is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TO%'):
-                    col_winners[col] = 0 if val0 < val1 else 1
-                else:
-                    col_winners[col] = 0 if val0 > val1 else 1
+            values = [_parse_numeric_stat(df.iloc[index][col]) for index in range(len(df))]
+            lower = is_fouls_card or col in ('Foul', 'PF', 'TO', 'TOV', 'TO%')
+            col_winners[col] = set(winning_indexes(values, lower))
 
     has_grouped_cols = any(c in df.columns for c in ('2M', '2A', '2FG%', '3M', '3A', '3FG%'))
     has_key_stats_grouped = any(c in df.columns for c in _KEY_STAT_LEAVES)
     
+    edge_columns = set()
     if has_grouped_cols:
         top_row = []
         sub_row = []
+        segments = []
         for col in ('Team', 'Min'):
             if col in df.columns:
                 top_row.append(_th(col.upper(), 'braves-th-span', span=2))
+                segments.append(('single', (col,)))
 
         for title_text, members, leaves in (
             ('2PT', ('2M', '2A', '2FG%'), ('M', 'A', '%')),
@@ -1001,36 +1032,49 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
             if any(col in df.columns for col in members):
                 top_row.append(_th(title_text, 'braves-th-group', cols=3))
                 sub_row.extend(_th(leaf, 'braves-th-sub') for leaf in leaves)
+                segments.append(('group', members))
 
         for col in ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS', 'eFG%', 'USG%', 'PM'):
             if col in df.columns:
                 top_row.append(_th(_stat_header(col), 'braves-th-span-tight', span=2))
+                segments.append(('single', (col,)))
+        edge_columns = _mark_header_edges(top_row, sub_row, segments)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif has_key_stats_grouped:
         top_row = []
         sub_row = []
+        segments = []
         if 'Team' in df.columns:
             top_row.append(_th('TEAM', 'braves-th-span', span=2))
+            segments.append(('single', ('Team',)))
         for name, pairs in _KEY_STAT_GROUPS:
             present = [(column, label) for column, label in pairs if column in df.columns]
             if not present:
                 continue
             top_row.append(_th(name, 'braves-th-group', cols=len(present)))
             sub_row.extend(_th(label, 'braves-th-sub') for _column, label in present)
+            segments.append(('group', tuple(column for column, _label in present)))
         if 'BP' in df.columns:
             top_row.append(_th('BP', 'braves-th-span', span=2))
+            segments.append(('single', ('BP',)))
+        edge_columns = _mark_header_edges(top_row, sub_row, segments)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('eFG%', 'TO%', 'ORB%', 'FT-R')):
         top_row = []
         sub_row = []
+        segments = []
         if 'Team' in df.columns:
             top_row.append(_th('TEAM', 'braves-th-span', span=2))
+            segments.append(('single', ('Team',)))
         if 'Pace' in df.columns:
             top_row.append(_th('PACE', 'braves-th-span', span=2))
+            segments.append(('single', ('Pace',)))
         ff_cols = [c for c in ('eFG%', 'TO%', 'ORB%', 'FT-R') if c in df.columns]
         if ff_cols:
             top_row.append(_th('FOUR FACTORS', 'braves-th-group', cols=len(ff_cols)))
             sub_row.extend(_th(fc, 'braves-th-sub') for fc in ff_cols)
+            segments.append(('group', tuple(ff_cols)))
+        edge_columns = _mark_header_edges(top_row, sub_row, segments)
         header = [dmc.TableTr(top_row), dmc.TableTr(sub_row)]
     elif any(c in df.columns for c in ('PPP', 'AS/TO', 'AST%', '3P-R', 'TS%')):
         labels = ['TEAM'] if 'Team' in df.columns else []
@@ -1062,16 +1106,19 @@ def _dmc_table_from_df(df, is_team_summary=True, title=None, away_name=None, hom
             else:
                 val_str = str(val)
 
-            # Determine bolding and color: Only winning row in column is bold blue (team name itself is regular or semi-bold)
-            is_winner = col_winners.get(col) == row_idx
+            is_winner = row_idx in col_winners.get(col, ())
             cell_style = {}
             if is_winner:
                 cell_style['color'] = '#0077b6'
                 cell_style['fontWeight'] = 700
             if c_idx == 0 and team_stripe_style:
                 cell_style.update(team_stripe_style)
-
-            cells.append(dmc.TableTd(val_str, style=cell_style or None))
+            classes = ['braves-group-end'] if col in edge_columns else []
+            cells.append(dmc.TableTd(
+                val_str,
+                style=cell_style or None,
+                className=' '.join(classes) or None,
+            ))
 
         rows.append(dmc.TableTr(cells, className="braves-clean-row"))
 
@@ -1186,7 +1233,7 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             "headerClass": "ag-header-align-center",
             "cellClassRules": sorted_cell_rules,
             "valueFormatter": {"function": "params.value != null ? params.value : ''"},
-            "colSpan": {"function": "params.data && (params.data['#'] === 'TEAM / COACHES' || params.data['#'] === 'TOTAL') ? 3 : 1"},
+            "colSpan": {"function": "params.data && (params.data['#'] === 'TEAM / COACHES' || params.data['#'] === 'TOTAL') ? 2 : 1"},
         })
 
     first_col = next((c for c in ('Player', 'Lineup', 'Lineups', 'Team') if c in col_set), None)
@@ -1230,7 +1277,6 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
         column_defs.append({
             "field": "S",
             "headerName": "S",
-            "pinned": "left",
             "sortable": True,
             "minWidth": 34,
             "width": 36,
@@ -1403,7 +1449,35 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
             })
 
     _apply_click_sort_columns(column_defs)
+    _mark_ag_group_edges(column_defs)
+    _lock_column_move(column_defs)
     return _stamp_designed_widths(column_defs)
+
+
+def _append_def_class(defn, key, name):
+    current = defn.get(key) or ''
+    parts = str(current).split()
+    if name not in parts:
+        parts.append(name)
+    defn[key] = ' '.join(parts)
+
+
+def _lock_column_move(column_defs):
+    for defn in column_defs:
+        defn['suppressMovable'] = True
+        for child in defn.get('children') or []:
+            child['suppressMovable'] = True
+
+
+def _mark_ag_group_edges(column_defs):
+    last = len(column_defs) - 1
+    for index, defn in enumerate(column_defs):
+        children = defn.get('children')
+        next_is_group = index < last and bool(column_defs[index + 1].get('children'))
+        if children:
+            _append_def_class(children[-1], 'cellClass', 'braves-group-end')
+        elif next_is_group:
+            _append_def_class(defn, 'cellClass', 'braves-group-end')
 
 
 def _display_cell(value):
@@ -1656,11 +1730,13 @@ def _matchup_grid():
             'sortable': True,
             'filter': False,
             'resizable': True,
+            'suppressMovable': True,
             'cellDataType': False,
         },
         dashGridOptions={
             'domLayout': 'autoHeight',
             'suppressHorizontalScroll': False,
+            'suppressMovableColumns': True,
             'postSortRows': _LINEUP_POST_SORT,
         },
         eventListeners=_LINEUP_FIT_EVENTS,
@@ -1790,6 +1866,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
                     'whiteSpace': 'normal',
                     'lineHeight': '1.3',
                 }
+            col_def['suppressMovable'] = True
             _apply_click_sort(col_def)
             column_defs.append(col_def)
         _stamp_designed_widths(column_defs)
@@ -1797,6 +1874,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     dash_options = {
         "domLayout": "autoHeight",
         "suppressHorizontalScroll": False,
+        "suppressMovableColumns": True,
     }
     lineup_events = None
     if any('lineup' in str(col).lower() for col in df.columns):
@@ -1841,7 +1919,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
         dag.AgGrid(
             rowData=row_records if row_records is not None else df.to_dict('records'),
             columnDefs=column_defs,
-            defaultColDef={"sortable": True, "filter": False, "resizable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
+            defaultColDef={"sortable": True, "filter": False, "resizable": True, "suppressMovable": True, "cellClassRules": sorted_cell_rules, "cellDataType": False},
             dashGridOptions=dash_options,
             className=grid_class,
             style={'width': '100%'},
@@ -1962,6 +2040,7 @@ def _player_grid_options(pinned_rows):
     return {
         'domLayout': 'autoHeight',
         'suppressHorizontalScroll': False,
+        'suppressMovableColumns': True,
         'pinnedBottomRowData': pinned_rows or [],
         'enableBrowserTooltips': True,
         'tooltipShowDelay': 200,
@@ -2586,6 +2665,7 @@ def render_pbp_children(pbp_store, game_id=None, organization_id=None):
             "headerClass": "ag-header-align-center",
             "cellClass": "ag-cell-align-center",
             "cellStyle": {"textAlign": "center"},
+            "suppressMovable": True,
         }
         if column == 'Player':
             col_def['comparator'] = _PLAYER_NAME_COMPARATOR
@@ -2593,8 +2673,8 @@ def render_pbp_children(pbp_store, game_id=None, organization_id=None):
     grid = dag.AgGrid(
         rowData=pbp_df.to_dict('records'),
         columnDefs=column_defs,
-        defaultColDef={"sortable": True, "filter": True, "resizable": True},
-        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight"},
+        defaultColDef={"sortable": True, "filter": True, "resizable": True, "suppressMovable": True},
+        dashGridOptions={"pagination": True, "paginationPageSize": 25, "domLayout": "autoHeight", "suppressMovableColumns": True},
         columnSize="autoSize",
         className="ag-theme-alpine braves-clean-ag-grid",
         style={'width': '100%'}
@@ -2660,7 +2740,7 @@ def _report_rotation_figure_json(game_id, match_info):
     if not game_id:
         return json.dumps({'_ui': 'empty'})
     try:
-        report = get_cached_report(game_id, _report_org(match_info))
+        report = _open_report(game_id, _report_org(match_info))
         payload = report.get_rotation_payload(
             home_team_id=(match_info or {}).get('home_team_id'),
             away_team_id=(match_info or {}).get('away_team_id'),
@@ -2680,7 +2760,7 @@ def _report_shot_chart_json(game_id, match_info):
         return json.dumps({'_ui': 'empty'})
     info = match_info or {}
     try:
-        report = get_cached_report(game_id, _report_org(info))
+        report = _open_report(game_id, _report_org(info))
         payload = report_shot_chart_payload(
             report.get_play_by_play_df(),
             info.get('away_team_id'),
@@ -3156,7 +3236,7 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
-            report = get_cached_report(game_id, _organization(league))
+            report = _open_report(game_id, _organization(league))
             custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
             if custom_dict:
                 return render_lineup_children(

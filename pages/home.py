@@ -34,6 +34,7 @@ from synergy_inbounder.settings import (
     SYNERGY_SEASONS,
 )
 from synergy_inbounder.parser import Parser
+from synergy_reporter.team_season import plain_fixture_type
 from synergy_inbounder.game_status import (
     format_score_display,
     score_is_clickable,
@@ -50,6 +51,7 @@ from ui_kit import (
     empty_state,
     error_alert,
     filter_control,
+    filter_pack,
     join_meta,
     loading_skeleton,
     matchup_line,
@@ -125,6 +127,7 @@ def layout():
         ),
         dcc.Store(id='home-filter-store', data=initial_home_filters()),
         dcc.Store(id='home-scope-store', data=initial_home_scope()),
+        dcc.Store(id='home-filter-pack-sync'),
         html.Div(
             id='home-game-list',
             children=loading_skeleton(),
@@ -381,12 +384,24 @@ def _jsonable(node):
 clientside_callback(
     'function() { return %s; }' % json.dumps(_jsonable(loading_skeleton())),
     Output('home-schedule-list', 'children', allow_duplicate=True),
-    Input('home-show', 'value'),
-    Input('home-game-type', 'value'),
     Input('home-league', 'value'),
     Input('home-season', 'value'),
-    Input('home-team', 'value'),
     prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function() {
+        var api = window.dash_clientside && window.dash_clientside.filter_pack;
+        if (api && api.sync) {
+            api.sync();
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('home-filter-pack-sync', 'data'),
+    Input('home-game-list', 'children'),
 )
 
 
@@ -417,7 +432,10 @@ def _status_value(row):
 
 
 def _fixture_type_value(row):
-    return row.get('fixtureType') if row.get('fixtureType') not in (None, '') else row.get('Game Type')
+    primary = plain_fixture_type(row.get('fixtureType'))
+    if primary:
+        return primary
+    return plain_fixture_type(row.get('Game Type')) or None
 
 
 def _parse_start(value):
@@ -600,12 +618,14 @@ def game_type_for_show(records, show, game_type, team):
 def game_type_options(records):
     options = []
     seen = set()
-    for record in records:
-        value = record.get('fixtureType') or ''
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        value = plain_fixture_type(record.get('fixtureType'))
         if not value or value in seen:
             continue
         seen.add(value)
-        options.append({'label': str(value).title(), 'value': value})
+        options.append({'label': value.title(), 'value': value})
     return options
 
 
@@ -1007,27 +1027,40 @@ def render_home_page(
             _last_update_line(stamp, delayed=delayed),
             dmc.Stack(
                 [
-                    dmc.Group(
+                    filter_pack(
+                        'home-filter-pack',
                         [
-                            filter_control('', league_control, wrap_id='home-league-wrap'),
-                            filter_control('', season_control, wrap_id='home-season-wrap'),
-                            filter_control(
-                                '',
-                                _team_select(team_options, selected_team),
-                                wrap_id='home-team-wrap',
-                                visible=team_visible,
+                            (
+                                'league',
+                                [
+                                    filter_control('', league_control, wrap_id='home-league-wrap'),
+                                    filter_control('', season_control, wrap_id='home-season-wrap'),
+                                ],
                             ),
-                            filter_control(
-                                '',
-                                type_control,
-                                wrap_id='home-game-type-wrap',
-                                visible=len(options) > 1,
+                            (
+                                'team',
+                                [
+                                    filter_control(
+                                        '',
+                                        _team_select(team_options, selected_team),
+                                        wrap_id='home-team-wrap',
+                                        visible=team_visible,
+                                    ),
+                                ],
                             ),
-                            filter_control('', show_control),
+                            (
+                                'type',
+                                [
+                                    filter_control(
+                                        '',
+                                        type_control,
+                                        wrap_id='home-game-type-wrap',
+                                        visible=len(options) > 1,
+                                    ),
+                                    filter_control('', show_control),
+                                ],
+                            ),
                         ],
-                        gap='sm',
-                        align='center',
-                        wrap='wrap',
                     ),
                     html.Div(list_body, id='home-schedule-list'),
                 ],
