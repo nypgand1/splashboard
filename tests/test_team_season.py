@@ -461,7 +461,10 @@ class TeamCardTests(unittest.TestCase):
         self.assertTrue(built['empty'])
         self.assertFalse(built['period_visible'])
         self.assertEqual(EMPTY_TEAM_STATS, 'No games in this view.')
-        self.assertEqual(EMPTY_TEAM_STATS_NEXT, 'Switch Game Type.')
+        self.assertEqual(
+            EMPTY_TEAM_STATS_NEXT,
+            'Switch Game Type, Opponent, Stadium, or Home/Away.',
+        )
 
     def test_chips_do_not_use_a_person_period_gate(self):
         chips = period_chips_for_ids([1, 2, 11])
@@ -470,6 +473,117 @@ class TeamCardTests(unittest.TestCase):
             ['all', '1', '2', 'h1', '11'],
         )
         self.assertNotIn('h2', [item['value'] for item in chips])
+
+
+class SliceFilterTests(unittest.TestCase):
+    def _built(self, **kwargs):
+        fixtures = [
+            _fixture('g1', 'REGULAR', 'CONFIRMED', venueId='v1', teamIdHome='a', teamIdAway='b'),
+            _fixture('g2', 'REGULAR', 'FINISHED', venueId='v2', teamIdHome='b', teamIdAway='a'),
+            _fixture('g3', 'REGULAR', 'CONFIRMED', venueId='v1', teamIdHome='a', teamIdAway='c'),
+            _fixture('g4', 'PLAYOFF', 'CONFIRMED', venueId='v3', teamIdHome='a', teamIdAway='d'),
+            _fixture('g5', 'REGULAR', 'SCHEDULED', venueId='v9', teamIdHome='a', teamIdAway='e'),
+        ]
+        totals = pd.DataFrame([
+            _total('g1', 'a', points=10),
+            _total('g1', 'b', points=4),
+            _total('g2', 'a', points=8),
+            _total('g2', 'b', points=6),
+            _total('g3', 'a', points=30),
+            _total('g3', 'c', points=2),
+            _total('g4', 'a', points=100),
+            _total('g4', 'd', points=1),
+        ])
+        periods = pd.DataFrame([
+            _period('g1', 'a', 1, points=10),
+            _period('g1', 'b', 1, points=4),
+            _period('g2', 'a', 3, points=8),
+            _period('g2', 'b', 3, points=6),
+            _period('g3', 'a', 2, points=30),
+            _period('g3', 'c', 2, points=2),
+        ])
+        names = {
+            'a': 'Aces', 'b': 'Braves', 'c': 'Clippers', 'd': 'Dragons', 'e': 'Eagles',
+            'v1': 'Arena One', 'v2': 'Arena Two', 'v3': 'Arena Three', 'v9': 'TBD',
+        }
+        return build_team_cards(
+            fixtures, totals, periods, {}, names, 48, 'REGULAR', kwargs.get('period', 'all'),
+            opponent=kwargs.get('opponent', 'all'),
+            stadium=kwargs.get('stadium', 'all'),
+            site=kwargs.get('site', 'all'),
+        )
+
+    def test_opponent_drops_that_team_and_renames_opp(self):
+        built = self._built(opponent='b')
+        names = [row['Team']['text'] for row in built['cards']['team']['rows']]
+        self.assertEqual(names, ['Aces'])
+        self.assertEqual(_text(built['cards'], 'team', 'Aces', 'GP'), '2')
+        self.assertEqual(_text(built['cards'], 'team', 'Aces', 'PTS'), '9.0')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Team'), 'Braves')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'PTS'), '5.0')
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'GP'), '')
+        self.assertNotIn('2', [item['value'] for item in built['period_chips']])
+        self.assertIn('3', [item['value'] for item in built['period_chips']])
+        labels = [item['label'] for item in built['opponent_options']]
+        self.assertEqual(labels[0], 'vs All Teams')
+        self.assertEqual(labels[1:], [
+            'vs Aces', 'vs Braves', 'vs Clippers', 'vs Dragons', 'vs Eagles',
+        ])
+        self.assertTrue(built['opponent_visible'])
+
+    def test_stadium_and_site_stack_and_site_does_not_change_chips(self):
+        stadium = self._built(stadium='v1')
+        self.assertEqual(_text(stadium['cards'], 'team', 'Aces', 'GP'), '2')
+        self.assertEqual(_text(stadium['cards'], 'team', 'Braves', 'GP'), '1')
+        self.assertEqual(_text(stadium['cards'], 'team', 'Clippers', 'GP'), '1')
+        both = self._built(opponent='b', stadium='v1')
+        self.assertEqual(
+            [row['Team']['text'] for row in both['cards']['team']['rows']],
+            ['Aces'],
+        )
+        self.assertEqual(_text(both['cards'], 'team', 'Aces', 'PTS'), '10.0')
+        self.assertEqual(_opp_text(both['cards'], 'team', 0, 'Team'), 'Braves')
+        home = self._built(site='home')
+        away = self._built(site='away')
+        self.assertEqual(_text(home['cards'], 'team', 'Aces', 'GP'), '2')
+        self.assertEqual(_text(home['cards'], 'team', 'Braves', 'GP'), '1')
+        self.assertNotIn('Clippers', [row['Team']['text'] for row in home['cards']['team']['rows']])
+        self.assertEqual(_text(away['cards'], 'team', 'Aces', 'GP'), '1')
+        self.assertEqual(_text(away['cards'], 'team', 'Aces', 'PTS'), '8.0')
+        self.assertEqual(home['period_chips'], away['period_chips'])
+        self.assertIn('2', [item['value'] for item in home['period_chips']])
+        self.assertEqual(
+            [item['label'] for item in home['stadium_options']],
+            ['All Stadiums', 'Arena One', 'Arena Two'],
+        )
+        self.assertNotIn('Arena Three', [item['label'] for item in home['stadium_options']])
+        self.assertTrue(home['stadium_visible'])
+
+    def test_unknown_opponent_falls_back_to_every_team(self):
+        built = self._built(opponent='missing')
+        self.assertEqual(built['opponent'], 'all')
+        self.assertEqual(
+            [row['Team']['text'] for row in built['cards']['team']['rows']],
+            ['Aces', 'Braves', 'Clippers'],
+        )
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Team'), 'Opp')
+
+    def test_one_named_team_hides_the_opponent_menu(self):
+        built = build_team_cards(
+            [_fixture('g1', 'REGULAR', 'CONFIRMED', venueId='v1', teamIdHome='a', teamIdAway='a')],
+            pd.DataFrame([_total('g1', 'a', points=3)]),
+            pd.DataFrame(),
+            {},
+            {'a': 'Aces', 'v1': 'Arena One'},
+            48,
+            'REGULAR',
+            'all',
+            opponent='a',
+        )
+        self.assertFalse(built['opponent_visible'])
+        self.assertEqual(built['opponent'], 'all')
+        self.assertFalse(built['stadium_visible'])
+        self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Team'), 'Opp')
 
 
 class ColumnWinnerTests(unittest.TestCase):
@@ -633,9 +747,14 @@ class PayloadCacheTests(unittest.TestCase):
             second = team_stats_payload(
                 'PLG', dict(SYNERGY_SEASONS)['2025-26'], 'REGULAR', '1', 'chip',
             )
+            third = team_stats_payload(
+                'PLG', dict(SYNERGY_SEASONS)['2025-26'], 'REGULAR', '1', 'slice',
+            )
         self.assertTrue(first['ok'])
         self.assertEqual(second['stamp'], stamp)
         self.assertEqual(second['period'], '1')
+        self.assertEqual(third['stamp'], stamp)
+        self.assertEqual(third['period'], '1')
         self.assertEqual(self.pbp_calls, ['g1'])
         self.assertEqual(_text(second['cards'], 'team', 'Aces', 'PTS'), '3.0')
         season_id = dict(SYNERGY_SEASONS)['2025-26']

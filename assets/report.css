@@ -1575,6 +1575,10 @@ body {
     min-width: 100%;
 }
 
+.ts-sizer-probes {
+    display: contents;
+}
+
 a.home-schedule-row {
     display: block;
     color: inherit;
@@ -1746,5 +1750,13 @@ a.home-schedule-row {
 .filter-pack[data-mode="split"] > .filter-cluster-type,
 .filter-pack[data-mode="stack"] > .filter-cluster-team,
 .filter-pack[data-mode="stack"] > .filter-cluster-type {
+    flex-basis: 100%;
+}
+
+.filter-pack-scope > .filter-cluster-opp {
+    flex-basis: 100%;
+}
+
+.filter-pack-place[data-mode="split"] > .filter-cluster-site {
     flex-basis: 100%;
 }

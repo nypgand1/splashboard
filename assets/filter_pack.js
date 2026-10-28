@@ -29,7 +29,64 @@
         return inner.scrollWidth;
     }
 
+    function gapOf(pack) {
+        var gap = parseFloat(window.getComputedStyle(pack).columnGap);
+        return isFinite(gap) ? gap : 0;
+    }
+
+    function sumWidths(widths, gap) {
+        var need = 0;
+        var count = 0;
+        var index;
+        for (index = 0; index < widths.length; index += 1) {
+            if (widths[index] > 0) {
+                if (count) {
+                    need += gap;
+                }
+                need += widths[index];
+                count += 1;
+            }
+        }
+        return need;
+    }
+
+    function setMode(pack, mode) {
+        if (pack.getAttribute('data-mode') !== mode) {
+            pack.setAttribute('data-mode', mode);
+        }
+    }
+
+    function measureScope(pack) {
+        var league = pack.querySelector(':scope > .filter-cluster-league');
+        var typeNode = pack.querySelector(':scope > .filter-cluster-type');
+        var gap = gapOf(pack);
+        var mode = 'wide';
+        if (sumWidths([contentWidth(league), contentWidth(typeNode)], gap) > pack.clientWidth + 1) {
+            mode = 'split';
+        }
+        setMode(pack, mode);
+    }
+
+    function measurePlace(pack) {
+        var stadium = pack.querySelector(':scope > .filter-cluster-stadium');
+        var site = pack.querySelector(':scope > .filter-cluster-site');
+        var gap = gapOf(pack);
+        var mode = 'wide';
+        if (sumWidths([contentWidth(stadium), contentWidth(site)], gap) > pack.clientWidth + 1) {
+            mode = 'split';
+        }
+        setMode(pack, mode);
+    }
+
     function measure(pack) {
+        if (pack.classList.contains('filter-pack-scope')) {
+            measureScope(pack);
+            return;
+        }
+        if (pack.classList.contains('filter-pack-place')) {
+            measurePlace(pack);
+            return;
+        }
         var clusters = pack.querySelectorAll(':scope > .filter-cluster');
         var league = null;
         var team = null;

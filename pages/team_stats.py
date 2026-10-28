@@ -22,13 +22,21 @@ from synergy_inbounder.settings import (
     SYNERGY_SEASON_ID,
     selectable_seasons,
 )
-from synergy_reporter.team_season import team_stats_payload, type_needs_download
+from synergy_reporter.team_season import (
+    OPPONENT_ALL,
+    OPPONENT_ALL_LABEL,
+    SITE_ALL,
+    SITE_OPTIONS,
+    STADIUM_ALL,
+    STADIUM_ALL_LABEL,
+    team_stats_payload,
+    type_needs_download,
+)
 from ui_kit import (
     ERROR_GAME,
     empty_state,
     error_alert,
     filter_control,
-    filter_pack,
     icon,
 )
 
@@ -63,6 +71,58 @@ _SHOT_GROUPS = (
 )
 _COUNT_TAILS = ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS')
 _TAIL_LABEL = {'AST': 'AS', 'PTS': 'PT'}
+
+
+def _cluster(kind, children, cluster_id=None, style=None):
+    props = {
+        'className': 'filter-cluster filter-cluster-{0}'.format(kind),
+    }
+    if cluster_id:
+        props['id'] = cluster_id
+    if style:
+        props['style'] = style
+    return dmc.Box(
+        dmc.Box(children, className='filter-cluster-inner'),
+        **props,
+    )
+
+
+def _sized_select(select_id, probe_id, label, data, value):
+    return html.Div(
+        [
+            html.Div(
+                html.Span(
+                    label,
+                    className='home-team-sizer-probe',
+                    **{'aria-hidden': 'true'},
+                ),
+                id=probe_id,
+                className='ts-sizer-probes',
+            ),
+            dmc.Select(
+                id=select_id,
+                data=data,
+                value=value,
+                allowDeselect=False,
+                clearable=False,
+                searchable=False,
+                size='xs',
+                radius='md',
+                comboboxProps={'withinPortal': True},
+                rightSectionWidth=28,
+                className='home-team-sizer-control',
+                styles={
+                    'wrapper': {'width': '100%'},
+                    'input': {
+                        'width': '100%',
+                        'paddingInlineStart': '12px',
+                        'paddingInlineEnd': '40px',
+                    },
+                },
+            ),
+        ],
+        className='home-team-sizer',
+    )
 
 
 def _default_season(league):
@@ -385,9 +445,31 @@ def layout():
         radius='md',
         size='xs',
     )
+    opponent_control = _sized_select(
+        'ts-opponent',
+        'ts-opponent-probes',
+        OPPONENT_ALL_LABEL,
+        [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}],
+        OPPONENT_ALL,
+    )
+    stadium_control = _sized_select(
+        'ts-stadium',
+        'ts-stadium-probes',
+        STADIUM_ALL_LABEL,
+        [{'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL}],
+        STADIUM_ALL,
+    )
+    site_control = dmc.SegmentedControl(
+        id='ts-site',
+        data=list(SITE_OPTIONS),
+        value=SITE_ALL,
+        radius='md',
+        size='xs',
+    )
     return dmc.Stack(
         [
             dcc.Store(id='ts-filter-pack-sync'),
+            dcc.Store(id='ts-sizer-sync'),
             dcc.Store(
                 id='ts-applied',
                 data={'league': league, 'season': season_id, 'game_type': 'REGULAR'},
@@ -409,28 +491,44 @@ def layout():
                 style={'margin': '0 0 16px 0', 'padding': '0', 'borderBottom': 'none'},
             ),
             html.Div(_stamp('Last Update: —'), id='ts-stamp'),
-            filter_pack(
-                'ts-filter-pack',
+            dmc.Box(
                 [
-                    (
-                        'league',
-                        [
-                            filter_control('', league_control, wrap_id='ts-league-wrap'),
-                            filter_control('', season_control, wrap_id='ts-season-wrap'),
-                        ],
-                    ),
-                    (
-                        'type',
-                        [
-                            filter_control(
-                                '',
-                                type_control,
-                                wrap_id='ts-game-type-wrap',
-                                visible=False,
-                            ),
-                        ],
+                    _cluster('league', [
+                        filter_control('', league_control, wrap_id='ts-league-wrap'),
+                        filter_control('', season_control, wrap_id='ts-season-wrap'),
+                    ]),
+                    _cluster('type', [
+                        filter_control(
+                            '',
+                            type_control,
+                            wrap_id='ts-game-type-wrap',
+                            visible=False,
+                        ),
+                    ]),
+                    _cluster(
+                        'opp',
+                        [filter_control('', opponent_control)],
+                        cluster_id='ts-opponent-cluster',
+                        style={'display': 'none'},
                     ),
                 ],
+                id='ts-filter-pack',
+                className='filter-pack filter-pack-scope',
+            ),
+            dmc.Box(
+                [
+                    _cluster(
+                        'stadium',
+                        [filter_control('', stadium_control)],
+                        cluster_id='ts-stadium-cluster',
+                        style={'display': 'none'},
+                    ),
+                    _cluster('site', [
+                        filter_control('', site_control, wrap_id='ts-site-wrap'),
+                    ]),
+                ],
+                id='ts-place-pack',
+                className='filter-pack filter-pack-place',
             ),
             dmc.Group(
                 [
@@ -539,6 +637,52 @@ clientside_callback(
     Output('ts-filter-pack-sync', 'data'),
     Input('ts-body', 'children'),
     Input('ts-game-type', 'data'),
+    Input('ts-opponent', 'data'),
+    Input('ts-stadium', 'data'),
+)
+
+
+clientside_callback(
+    """
+    function(opponentOptions, stadiumOptions) {
+        function fill(id, options, fallback) {
+            var host = document.getElementById(id);
+            if (!host) {
+                return;
+            }
+            var labels = [];
+            (options || []).forEach(function (item) {
+                if (item && item.label) {
+                    labels.push(String(item.label));
+                }
+            });
+            if (!labels.length) {
+                labels.push(fallback);
+            }
+            while (host.firstChild) {
+                host.removeChild(host.firstChild);
+            }
+            labels.forEach(function (label) {
+                var span = document.createElement('span');
+                span.className = 'home-team-sizer-probe';
+                span.setAttribute('aria-hidden', 'true');
+                span.textContent = label;
+                host.appendChild(span);
+            });
+        }
+        fill('ts-opponent-probes', opponentOptions, 'vs All Teams');
+        fill('ts-stadium-probes', stadiumOptions, 'All Stadiums');
+        var api = window.dash_clientside && window.dash_clientside.filter_pack;
+        if (api && api.sync) {
+            api.sync();
+            window.setTimeout(api.sync, 0);
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output('ts-sizer-sync', 'data'),
+    Input('ts-opponent', 'data'),
+    Input('ts-stadium', 'data'),
 )
 
 
@@ -553,7 +697,14 @@ def _triggered_id():
         return None
 
 
-def _load(league, season_id, game_type, period, reason):
+def _menu_value(payload, key, options, fallback):
+    selected = payload.get(key) or fallback
+    if not any(item.get('value') == selected for item in options):
+        return fallback
+    return selected
+
+
+def _load(league, season_id, game_type, period, reason, opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL):
     try:
         return team_stats_payload(
             league or 'PLG',
@@ -561,6 +712,9 @@ def _load(league, season_id, game_type, period, reason):
             game_type=game_type,
             period=period,
             reason=reason,
+            opponent=opponent,
+            stadium=stadium,
+            site=site,
         )
     except Exception:
         return {
@@ -575,10 +729,17 @@ def _load(league, season_id, game_type, period, reason):
             'period': 'all',
             'period_chips': [],
             'period_visible': False,
+            'opponent': OPPONENT_ALL,
+            'opponent_options': [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}],
+            'opponent_visible': False,
+            'stadium': STADIUM_ALL,
+            'stadium_options': [{'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL}],
+            'stadium_visible': False,
+            'site': SITE_ALL,
         }
 
 
-def _paint(payload, league, season_id, game_type, period):
+def _paint(payload, league, season_id, game_type, period, opponent, stadium, site):
     seasons = payload.get('seasons') or _season_data(league or 'PLG')
     selected_season = payload.get('season_id') or season_id
     types = payload.get('game_types') or []
@@ -589,11 +750,27 @@ def _paint(payload, league, season_id, game_type, period):
     selected_period = payload.get('period') or 'all'
     if not any(item.get('value') == selected_period for item in chips):
         selected_period = 'all'
+    opponent_options = payload.get('opponent_options') or [
+        {'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL},
+    ]
+    stadium_options = payload.get('stadium_options') or [
+        {'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL},
+    ]
+    selected_opponent = _menu_value(payload, 'opponent', opponent_options, OPPONENT_ALL)
+    selected_stadium = _menu_value(payload, 'stadium', stadium_options, STADIUM_ALL)
+    selected_site = payload.get('site') or SITE_ALL
+    if selected_site not in ('all', 'away', 'home'):
+        selected_site = SITE_ALL
     type_style = None if payload.get('game_type_visible') else {'display': 'none'}
     period_style = None if payload.get('period_visible') else {'display': 'none'}
+    opponent_style = None if payload.get('opponent_visible') else {'display': 'none'}
+    stadium_style = None if payload.get('stadium_visible') else {'display': 'none'}
     season_out = no_update if _same(selected_season, season_id) else selected_season
     type_out = no_update if _same(selected_type, game_type) else selected_type
     period_out = no_update if _same(selected_period, period) else selected_period
+    opponent_out = no_update if _same(selected_opponent, opponent) else selected_opponent
+    stadium_out = no_update if _same(selected_stadium, stadium) else selected_stadium
+    site_out = no_update if _same(selected_site, site) else selected_site
     # Same response as any select correction, so the bridge's applied State
     # already matches and that echo does not fetch again.
     applied = {
@@ -613,6 +790,13 @@ def _paint(payload, league, season_id, game_type, period):
         period_out,
         period_style,
         applied,
+        opponent_options,
+        opponent_out,
+        opponent_style,
+        stadium_options,
+        stadium_out,
+        stadium_style,
+        site_out,
     )
 
 
@@ -629,19 +813,36 @@ def _view_outputs():
         Output('ts-period', 'value', allow_duplicate=True),
         Output('ts-period-wrap', 'style', allow_duplicate=True),
         Output('ts-applied', 'data', allow_duplicate=True),
+        Output('ts-opponent', 'data', allow_duplicate=True),
+        Output('ts-opponent', 'value', allow_duplicate=True),
+        Output('ts-opponent-cluster', 'style', allow_duplicate=True),
+        Output('ts-stadium', 'data', allow_duplicate=True),
+        Output('ts-stadium', 'value', allow_duplicate=True),
+        Output('ts-stadium-cluster', 'style', allow_duplicate=True),
+        Output('ts-site', 'value', allow_duplicate=True),
     )
+
+
+def _keep_slice():
+    return (no_update, no_update, no_update, no_update, no_update, no_update, no_update)
 
 
 def _skeleton_job(intent, period):
     # Reset the chip with the skeleton. This callback also listens to the
     # chip, and Dash drops that echo, so the download callback paints All.
+    # Opponent, stadium, and site stay until that download paints.
     period_out = no_update if _same(period, 'all') else 'all'
     return (
         _loading_body(),
         no_update, no_update, no_update, no_update, no_update, no_update,
         no_update, period_out, no_update, no_update,
-        intent,
-    )
+    ) + _keep_slice() + (intent,)
+
+
+def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site):
+    painted = _paint(payload, league, season_id, game_type, period, opponent, stadium, site)
+    # applied stays. The slice outputs follow it. The job slot is the caller's.
+    return painted[:10] + (no_update,) + painted[11:]
 
 
 @callback(
@@ -649,15 +850,20 @@ def _skeleton_job(intent, period):
     Output('ts-job', 'data'),
     Input('ts-intent', 'data'),
     Input('ts-period', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
     State('ts-league', 'value'),
     State('ts-season', 'value'),
     State('ts-game-type', 'value'),
     prevent_initial_call='initial_duplicate',
 )
-def render_team_stats(intent, period, league, season_id, game_type):
+def render_team_stats(intent, period, opponent, stadium, site, league, season_id, game_type):
     triggered = _triggered_id()
     if triggered == 'ts-period':
         reason = 'chip'
+    elif triggered in ('ts-opponent', 'ts-stadium', 'ts-site'):
+        reason = 'slice'
     elif isinstance(intent, dict) and not intent.get('skeleton'):
         reason = 'type'
     else:
@@ -676,14 +882,23 @@ def render_team_stats(intent, period, league, season_id, game_type):
                 'skeleton': False,
             }
             return _skeleton_job(job, period)
-        payload = _load(league, season_id, requested_type, 'all', 'type')
-        return _paint(payload, league, season_id, game_type, period) + (no_update,)
-    if reason == 'chip':
-        payload = _load(league, season_id, game_type, period or 'all', 'chip')
-        painted = _paint(payload, league, season_id, game_type, period)
-        return painted[:-1] + (no_update, no_update)
-    payload = _load(league, season_id, None, 'all', 'scope')
-    return _paint(payload, league, season_id, game_type, period) + (no_update,)
+        payload = _load(
+            league, season_id, requested_type, 'all', 'type', opponent, stadium, site,
+        )
+        return _paint(
+            payload, league, season_id, game_type, period, opponent, stadium, site,
+        ) + (no_update,)
+    if reason in ('chip', 'slice'):
+        payload = _load(
+            league, season_id, game_type, period or 'all', reason, opponent, stadium, site,
+        )
+        return _local_paint(
+            payload, league, season_id, game_type, period, opponent, stadium, site,
+        ) + (no_update,)
+    payload = _load(league, season_id, None, 'all', 'scope', OPPONENT_ALL, STADIUM_ALL, SITE_ALL)
+    return _paint(
+        payload, league, season_id, game_type, period, opponent, stadium, site,
+    ) + (no_update,)
 
 
 @callback(
@@ -694,9 +909,15 @@ def render_team_stats(intent, period, league, season_id, game_type):
     State('ts-season', 'value'),
     State('ts-game-type', 'value'),
     State('ts-period', 'value'),
+    State('ts-opponent', 'value'),
+    State('ts-stadium', 'value'),
+    State('ts-site', 'value'),
     prevent_initial_call=True,
 )
-def render_team_stats_download(job, intent, league, season_id, game_type, period):
+def render_team_stats_download(
+    job, intent, league, season_id, game_type, period,
+    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL,
+):
     if not isinstance(job, dict) or not isinstance(intent, dict):
         raise PreventUpdate
     if job.get('nonce') != intent.get('nonce'):
@@ -705,5 +926,7 @@ def render_team_stats_download(job, intent, league, season_id, game_type, period
     if job.get('season') is not None:
         season_id = job.get('season')
     requested_type = job.get('game_type') if isinstance(job, dict) else game_type
-    payload = _load(league, season_id, requested_type, 'all', 'type')
-    return _paint(payload, league, season_id, game_type, period)
+    payload = _load(
+        league, season_id, requested_type, 'all', 'type', opponent, stadium, site,
+    )
+    return _paint(payload, league, season_id, game_type, period, opponent, stadium, site)
