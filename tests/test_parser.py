@@ -156,3 +156,67 @@ class ParseGameBundleTests(unittest.TestCase):
         self.assertEqual(starter_dict.get('home'), ['p1'])
         self.assertEqual(int(player_periods.iloc[0]['periodId']), 1)
         self.assertEqual(player_periods.iloc[0]['points'], 4)
+
+    def _bundle(self, live_flag, **failures):
+        from synergy_inbounder.communicator import SynergyAuthError
+
+        def maybe(name, payload):
+            def _call(*_args, **_kwargs):
+                failure = failures.get(name)
+                if failure == 'auth':
+                    raise SynergyAuthError('401')
+                if failure == 'down':
+                    raise RuntimeError('down')
+                return payload
+            return _call
+
+        with patch(
+            'synergy_inbounder.parser.should_use_live_endpoints',
+            return_value=live_flag,
+        ), patch.object(Parser, 'parse_id_tables', return_value={'home': 'Home'}), \
+                patch(
+                    'synergy_inbounder.parser.Communicator.get_game_team_stats_synergy',
+                    side_effect=maybe('team', _team_stats()),
+                ), patch(
+                    'synergy_inbounder.parser.Communicator.get_game_team_stats_periods_synergy',
+                    side_effect=maybe('periods', _empty_stats()),
+                ), patch(
+                    'synergy_inbounder.parser.Communicator.get_game_player_stats_synergy',
+                    side_effect=maybe('player', _player_stats()),
+                ), patch(
+                    'synergy_inbounder.parser.Communicator.get_game_player_stats_periods_synergy',
+                    side_effect=maybe('player_periods', _player_periods()),
+                ), patch(
+                    'synergy_inbounder.parser.Communicator.get_game_play_by_play_synergy',
+                    side_effect=maybe('pbp', {'data': [{
+                        'periodId': 1,
+                        'clock': 'PT10M00S',
+                        'scores': '{"home": 0, "away": 0}',
+                    }]}),
+                ), patch(
+                    'synergy_inbounder.parser.Communicator.get_fixture_roster_synergy',
+                    side_effect=maybe('roster', {'data': []}),
+                ):
+            return Parser.parse_game_bundle('org', 'game-1')
+
+    def test_live_stats_failure_marks_the_frame_without_a_ninth_value(self):
+        result = self._bundle(True, team='down')
+        self.assertEqual(len(result), 8)
+        pbp = result[4]
+        self.assertTrue(pbp.attrs['stats_failed'])
+        self.assertEqual(len(pbp), 1)
+
+    def test_live_auth_on_team_stats_is_not_a_soft_failure(self):
+        from synergy_inbounder.communicator import SynergyAuthError
+
+        with self.assertRaises(SynergyAuthError):
+            self._bundle(True, team='auth')
+
+    def test_player_period_failure_does_not_mark_stats_failed(self):
+        result = self._bundle(True, player_periods='down')
+        self.assertFalse(result[4].attrs['stats_failed'])
+        self.assertTrue(result[7].empty)
+
+    def test_official_stats_failure_raises(self):
+        with self.assertRaises(RuntimeError):
+            self._bundle(False, periods='down')

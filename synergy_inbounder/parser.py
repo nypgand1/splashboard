@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import json
 
-from synergy_inbounder.communicator import Communicator
+from synergy_inbounder.communicator import Communicator, SynergyAuthError
 from synergy_inbounder import frame_store
 from synergy_inbounder.http_wave import run_wave
 from synergy_inbounder.settings import LOGGER
@@ -187,19 +187,29 @@ class Parser:
             reused[attr] = getattr(frame, piece)
             return True
 
+        def _soft(call):
+            if not live:
+                return call()
+            try:
+                return call()
+            except SynergyAuthError:
+                raise
+            except Exception:
+                return {'_stats_failed': True, 'data': []}
+
         def _team():
             if _reuse('team_df', 'team'):
                 return {'data': []}
-            return Communicator.get_game_team_stats_synergy(
+            return _soft(lambda: Communicator.get_game_team_stats_synergy(
                 org_id, game_id, live, fixture_status=status,
-            )
+            ))
 
         def _periods():
             if _reuse('periods_df', 'periods'):
                 return {'data': []}
-            return Communicator.get_game_team_stats_periods_synergy(
+            return _soft(lambda: Communicator.get_game_team_stats_periods_synergy(
                 org_id, game_id, live, fixture_status=status,
-            )
+            ))
 
         def _pbp():
             if _reuse('playbyplay_df', 'pbp'):
@@ -222,9 +232,9 @@ class Parser:
         ) = run_wave([
             _team,
             _periods,
-            lambda: Communicator.get_game_player_stats_synergy(
+            lambda: _soft(lambda: Communicator.get_game_player_stats_synergy(
                 org_id, game_id, live, fixture_status=status,
-            ),
+            )),
             lambda: Parser._load_player_periods(org_id, game_id, live, status),
             _pbp,
             _roster,
@@ -238,6 +248,11 @@ class Parser:
         if 'periods' in reused:
             team_stats_periods_df = reused['periods']
         playbyplay_df = reused['pbp'] if 'pbp' in reused else Parser._pbp_df_from_json(pbp_json)
+        stats_failed = any(
+            isinstance(payload, dict) and payload.get('_stats_failed')
+            for payload in (team_json, periods_json, player_json)
+        )
+        playbyplay_df.attrs['stats_failed'] = stats_failed
         roster = Parser._merge_roster(
             Parser._roster_from_fixture_json(roster_json),
             Parser._roster_from_json(player_json),

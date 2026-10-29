@@ -36,6 +36,8 @@ def should_use_live_endpoints(status=None, game_id=None, organization_id=None):
 _report_lock = threading.Lock()
 _report_cache = {}
 _report_inflight = {}
+_applied = {}
+_delay_paint = {}
 
 _meta_lock = threading.Lock()
 _season_cache = {}
@@ -60,20 +62,90 @@ def report_refresh_state(game_id, organization_id=None):
     with _report_lock:
         entry = _report_cache.get(key)
         if not entry:
-            return {'label': None, 'delayed': False}
+            return {
+                'label': None,
+                'delayed': False,
+                'stats_label': None,
+                'stats_delayed': False,
+                'generation': 0,
+            }
         return {
             'label': entry.get('label'),
             'delayed': bool(entry.get('delayed')),
+            'stats_label': entry.get('stats_label'),
+            'stats_delayed': bool(entry.get('stats_delayed')),
+            'generation': int(entry.get('generation') or 0),
         }
 
 
+def report_generation(game_id, organization_id=None):
+    return int(report_refresh_state(game_id, organization_id).get('generation') or 0)
+
+
+def applied_generation(game_id, organization_id, slot):
+    key = _report_key(game_id, organization_id)
+    with _report_lock:
+        return int(_applied.get((key, slot)) or 0)
+
+
+def note_applied(game_id, organization_id, slot, generation):
+    if not generation:
+        return
+    key = _report_key(game_id, organization_id)
+    with _report_lock:
+        _applied[(key, slot)] = int(generation)
+
+
+def take_delay_paint(game_id, organization_id, slot):
+    """True once when this snapshot is delayed and this slot has not painted it."""
+    key = _report_key(game_id, organization_id)
+    with _report_lock:
+        entry = _report_cache.get(key)
+        delayed = bool(entry and entry.get('delayed'))
+        label = entry.get('label') if entry else None
+        token = (key, slot)
+        if not delayed:
+            _delay_paint.pop(token, None)
+            return False
+        mark = (label, True)
+        if _delay_paint.get(token) == mark:
+            return False
+        _delay_paint[token] = mark
+        return True
+
+
+def _copy_starters(report, previous):
+    if not getattr(report, 'stats_failed', False) or previous is None:
+        return
+    old = previous.get('report')
+    starters = getattr(old, 'starter_dict', None)
+    if not starters:
+        return
+    report.starter_dict = {
+        team_id: list(people)
+        for team_id, people in starters.items()
+    }
+
+
 def _store_report(key, report, status, now):
+    previous = _report_cache.get(key)
+    _copy_starters(report, previous)
+    stats_failed = bool(getattr(report, 'stats_failed', False))
+    label = taipei_now_label()
+    if stats_failed and previous is not None:
+        stats_label = previous.get('stats_label')
+    else:
+        stats_label = None if stats_failed else label
+    generation = int(previous.get('generation') or 0) + 1 if previous else 1
     _report_cache[key] = {
         'report': report,
         'fetched_at': now,
         'status': status,
-        'label': taipei_now_label(),
+        'label': label,
+        'stats_label': stats_label,
+        'stats_delayed': stats_failed,
         'delayed': False,
+        'generation': generation,
     }
 
 
@@ -155,7 +227,7 @@ def get_cached_report(game_id, organization_id=None, pin=None):
         BUDGET.forget(org, str(game_id))
         return entry['report']
 
-    status = entry.get('status') if entry else lookup_game_status(game_id, org)
+    status = lookup_game_status(game_id, org)
     if not is_live_play_status(status):
         BUDGET.forget(org, str(game_id))
         return _build_report(key, game_id, org, now, live=False)
@@ -464,6 +536,8 @@ def clear_runtime_caches():
     with _report_lock:
         _report_cache.clear()
         _report_inflight.clear()
+        _applied.clear()
+        _delay_paint.clear()
     with _meta_lock:
         _season_cache.clear()
         _season_inflight.clear()

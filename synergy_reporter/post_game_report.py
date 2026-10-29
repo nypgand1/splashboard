@@ -395,6 +395,7 @@ class PostGameReport():
         ) = Parser.parse_game_bundle(org, game_id)
         from synergy_inbounder.runtime_cache import cached_regulation_minutes
         self.regulation_minutes = cached_regulation_minutes(org, game_id)
+        self.stats_failed = bool(getattr(self.playbyplay_df, 'attrs', {}).get('stats_failed'))
         self._play_by_play_view = None
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None

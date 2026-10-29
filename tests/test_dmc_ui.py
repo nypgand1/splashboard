@@ -1486,7 +1486,10 @@ class GameBannerStatusTests(unittest.TestCase):
     def test_banner_uses_raw_status_not_live_copy(self):
         tree = game_page.render_game_info_banner(json.dumps({
             'home_team': 'A', 'away_team': 'B',
-            'home_score': '1', 'away_score': '2',
+            'home_score': '9', 'away_score': '8',
+            'banner_ready': True,
+            'banner_home_score': '1',
+            'banner_away_score': '2',
             'status': 'IN_PROGRESS',
             'date': '2026-01-01', 'time': '19:00', 'venue': 'Arena',
         }))
@@ -1508,6 +1511,61 @@ class GameBannerStatusTests(unittest.TestCase):
         meta_line = _by_class(tree, 'home-schedule-meta-line')[0]
         self.assertEqual(meta_line.justify, 'center')
         self.assertEqual(find_type(meta_line, dmc.Badge)[0].size, 'md')
+        self.assertNotIn('9', _string_values(well))
+        self.assertNotIn('8', _string_values(well))
+
+    def _banner(self, **fields):
+        payload = {
+            'home_team': 'A',
+            'away_team': 'B',
+            'home_score': '40',
+            'away_score': '38',
+            'date': '2026-01-01',
+            'time': '19:00',
+            'venue': 'Arena',
+        }
+        payload.update(fields)
+        return game_page.render_game_info_banner(json.dumps(payload))
+
+    def test_in_progress_without_a_scoreboard_keeps_tip_off_and_at(self):
+        tree = self._banner(status='IN_PROGRESS')
+        self.assertEqual(_string_values(_by_class(tree, 'home-score-well')[0]), ['@'])
+        self.assertIn('2026-01-01 | 19:00 | Arena', _string_values(tree))
+
+    def test_zero_scoreboard_renders_zero_and_the_clock(self):
+        tree = self._banner(
+            status='IN_PROGRESS',
+            banner_ready=True,
+            banner_clock='1Q 0:00',
+            banner_home_score='0',
+            banner_away_score='0',
+        )
+        self.assertEqual(_string_values(_by_class(tree, 'home-score-well')[0]), ['0', ':', '0'])
+        self.assertIn('2026-01-01 | 1Q 0:00 | Arena', _string_values(tree))
+
+    def test_pre_tip_live_statuses_ignore_the_fixture_score(self):
+        for status in ('PENDING', 'ABOUT_TO_START', 'WARM_UP', 'ON_PITCH'):
+            tree = self._banner(status=status, banner_ready=True, banner_clock='1Q 9:00')
+            self.assertEqual(
+                _string_values(_by_class(tree, 'home-score-well')[0]),
+                ['@'],
+                status,
+            )
+            self.assertIn('2026-01-01 | 19:00 | Arena', _string_values(tree))
+
+    def test_finished_banner_uses_the_fixture_score_and_tip_off(self):
+        tree = self._banner(
+            status='FINISHED',
+            home_score='88',
+            away_score='79',
+            banner_ready=True,
+            banner_clock='4Q 0:05',
+            banner_home_score='80',
+            banner_away_score='77',
+        )
+        self.assertEqual(_string_values(_by_class(tree, 'home-score-well')[0]), ['79', ':', '88'])
+        self.assertIn('2026-01-01 | 19:00 | Arena', _string_values(tree))
+        self.assertNotIn('4Q 0:05', _string_values(tree))
 
     def test_banner_shares_two_line_composition_with_date_in_cluster(self):
         tree = game_banner(

@@ -510,9 +510,19 @@ class MatchupTabTests(unittest.TestCase):
         self.assertIn(('matchup-team', 'value'), inputs)
         self.assertIn(('tabs', 'value'), inputs)
 
-        store_specs = _callbacks_for('matchup_store', 'data')
-        self.assertEqual(len(store_specs), 1)
-        store_inputs = {(item['id'], item['property']) for item in store_specs[0]['inputs']}
+        store_specs = [
+            item for item in GLOBAL_CALLBACK_LIST
+            if 'matchup_store.data' in str(item.get('output'))
+        ]
+        live_specs = [
+            item for item in store_specs
+            if ('match_info_store', 'data') in {
+                (row['id'], row['property']) for row in item['inputs']
+            }
+        ]
+        self.assertEqual(len(store_specs), 2)
+        self.assertEqual(len(live_specs), 1)
+        store_inputs = {(item['id'], item['property']) for item in live_specs[0]['inputs']}
         self.assertIn(('interval-component', 'n_intervals'), store_inputs)
         self.assertIn(('game_id', 'children'), store_inputs)
         self.assertIn(('match_info_store', 'data'), store_inputs)
@@ -544,22 +554,29 @@ class MatchupTabTests(unittest.TestCase):
                 return {'home_id': home_team_id, 'away_id': away_team_id, 'pairs': []}
 
         report = _Report()
-        with patch.object(game_page, 'get_cached_report', return_value=report):
-            raw = game_page.update_matchup_store(2, 'g1', json.dumps({
-                'home_team_id': 'h',
-                'away_team_id': 'a',
-            }))
+        info = json.dumps({
+            'home_team_id': 'h',
+            'away_team_id': 'a',
+        })
+        with patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'):
+            raw = game_page.update_matchup_store(2, 'g1', info)
         self.assertEqual(report.args, ('h', 'a'))
         self.assertEqual(json.loads(raw)['pairs'], [])
 
-        with patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('boom')):
-            raw = game_page.update_matchup_store(3, 'g1', json.dumps({
-                'home_team_id': 'h',
-                'away_team_id': 'a',
-            }))
+        with patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('boom')), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'):
+            raw = game_page.update_matchup_store(3, 'g1', info)
         self.assertEqual(json.loads(raw)['_ui'], 'error')
         self.assertEqual(json.loads(game_page.update_matchup_store(0, None, '{}')), {})
-        with patch.object(game_page, 'get_cached_report') as cached:
+        with patch.object(game_page, 'get_cached_report') as cached, \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'):
             waiting = game_page.update_matchup_store(1, 'g1', '{}')
         cached.assert_not_called()
         self.assertEqual(json.loads(waiting), {})
+
+        with patch.object(game_page, '_fixture_status', return_value='FINISHED'), \
+                patch.object(game_page, 'get_cached_report') as finished:
+            kept = game_page.update_matchup_store(1, 'g1', '{}')
+        finished.assert_not_called()
+        self.assertIs(kept, no_update)
