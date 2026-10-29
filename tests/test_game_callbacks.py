@@ -20,34 +20,52 @@ class SafeLoadsTests(unittest.TestCase):
 
 
 class WarmupGateTests(unittest.TestCase):
-    def _load(self, n, triggered, status):
+    def _publish(self, n, triggered, status):
         report = Mock()
+        report.get_play_by_play_df.return_value = pd.DataFrame()
         report.get_all_lineup_stats_json_dict.return_value = {'size': 5}
-        with patch.object(game_page, 'get_cached_report', return_value=report), \
-                patch.object(game_page, 'get_cached_game_status', return_value=status), \
+        report.get_matchup_payload.return_value = {}
+        report.get_rotation_payload.return_value = {}
+        info = {
+            'status': status,
+            'time': '19:00',
+            'home_team_id': 'h',
+            'away_team_id': 'a',
+            'home_score': '88',
+            'away_score': '79',
+        }
+        with patch.object(game_page, '_fixture_status', return_value=status), \
+                patch.object(game_page, 'get_cached_report', return_value=report) as cached, \
                 patch.object(game_page, 'warmup_game_report') as warmup, \
-                patch.object(game_page, '_triggered_id', return_value=triggered):
-            payload = game_page.update_lineup_store(n, 'gid', 'plg')
-        return payload, warmup
+                patch.object(game_page, '_triggered_id', return_value=triggered), \
+                patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, '_box_payload', return_value='{}'):
+            outputs = game_page.publish_finished_snapshot(n, 'gid', 'plg')
+        return outputs, warmup, cached
 
     def test_finished_load_starts_warmup_before_the_interval_ticks(self):
-        payload, warmup = self._load(0, 'interval-component', 'FINISHED')
+        outputs, warmup, cached = self._publish(0, 'interval-component', 'FINISHED')
         warmup.assert_called_once_with('gid', organization_id='b1vqz')
-        self.assertIn('"size": 5', payload)
+        cached.assert_called_once_with('gid', 'b1vqz', pin='open')
+        self.assertIn('"size": 5', outputs[2])
 
     def test_game_or_league_change_warms_a_finished_game(self):
-        _, by_game = self._load(4, 'game_id', 'CONFIRMED')
+        _, by_game, _ = self._publish(4, 'game_id', 'CONFIRMED')
         by_game.assert_called_once_with('gid', organization_id='b1vqz')
-        _, by_league = self._load(4, 'game_league', 'FINISHED')
+        _, by_league, _ = self._publish(4, 'game_league', 'FINISHED')
         by_league.assert_called_once_with('gid', organization_id='b1vqz')
 
     def test_later_tick_and_unfinished_load_do_not_start_warmup(self):
-        _, later = self._load(3, 'interval-component', 'FINISHED')
+        outputs, later, _ = self._publish(3, 'interval-component', 'FINISHED')
         later.assert_not_called()
-        _, live = self._load(0, 'game_id', 'IN_PROGRESS')
-        live.assert_not_called()
-        _, abandoned = self._load(0, 'game_id', 'ABANDONED')
-        abandoned.assert_not_called()
+        self.assertIn('"size": 5', outputs[2])
+        live, live_warmup, live_cached = self._publish(0, 'game_id', 'IN_PROGRESS')
+        live_warmup.assert_not_called()
+        live_cached.assert_not_called()
+        self.assertTrue(all(item is no_update for item in live))
+        abandoned, abandoned_warmup, _ = self._publish(0, 'game_id', 'ABANDONED')
+        abandoned_warmup.assert_not_called()
+        self.assertIn('"size": 5', abandoned[2])
 
 
 class IntervalGateTests(unittest.TestCase):
@@ -649,7 +667,8 @@ class BoxScorePeriodUiTests(unittest.TestCase):
             def box_score_slice_json(self):
                 return {'1': {'t_df': 'slice-frame'}}
 
-        with patch.object(game_page, 'get_cached_report', return_value=_Report()):
+        with patch.object(game_page, 'get_cached_report', return_value=_Report()), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'):
             payload = json.loads(game_page.update_bs_store(1, 'g1'))
         self.assertIn('88', payload['t_df'])
         self.assertIn('1.50', payload['adv_df'])
@@ -972,5 +991,234 @@ class GridDmcContractTests(unittest.TestCase):
         self.assertNotIn('"sm": 3', code)
         self.assertNotIn('dbc.Row', code)
         self.assertNotIn('dbc.Col', code)
+
+
+class ScoreboardTests(unittest.TestCase):
+    def _frame(self, rows):
+        return pd.DataFrame(rows)
+
+    def test_clock_is_the_last_event_and_later_scoreless_rows_are_ignored(self):
+        from synergy_inbounder.live_clock import scoreboard_from_pbp_frame
+
+        frame = self._frame([
+            {'periodId': 1, 'clock': 'PT10M00S', 'scores': '{"home": 0, "away": 0}'},
+            {'periodId': 2, 'clock': 'PT03M41S', 'scores': None},
+            {'periodId': 2, 'clock': None, 'scores': '{"home": 50, "away": 40}'},
+        ])
+        label, home, away = scoreboard_from_pbp_frame(frame, 'home', 'away')
+        self.assertEqual(label, '2Q 3:41')
+        self.assertEqual((home, away), ('0', '0'))
+
+    def test_missing_score_on_the_clock_event_walks_backward(self):
+        from synergy_inbounder.live_clock import scoreboard_from_pbp_frame
+
+        frame = self._frame([
+            {'periodId': 1, 'clock': 'PT08M00S', 'scores': '{"home": 12, "away": 7}'},
+            {'periodId': 1, 'clock': 'PT07M00S', 'scores': '{"home": 12}'},
+            {'periodId': 1, 'clock': 'PT06M00S', 'scores': None},
+        ])
+        label, home, away = scoreboard_from_pbp_frame(frame, 'home', 'away')
+        self.assertEqual(label, '1Q 6:00')
+        self.assertEqual((home, away), ('12', '7'))
+
+    def test_no_drawable_clock_returns_nothing(self):
+        from synergy_inbounder.live_clock import clock_from_pbp_frame, scoreboard_from_pbp_frame
+
+        frame = self._frame([
+            {'periodId': 1, 'clock': None, 'scores': '{"home": 2, "away": 1}'},
+        ])
+        self.assertEqual(scoreboard_from_pbp_frame(frame, 'home', 'away'), (None, None, None))
+        self.assertIsNone(clock_from_pbp_frame(frame))
+
+    def test_a_score_of_zero_stays_zero(self):
+        from synergy_inbounder.live_clock import scoreboard_from_pbp_frame
+
+        frame = self._frame([
+            {'periodId': 1, 'clock': 'PT00M00S', 'scores': {'home': 0, 'away': 0.0}},
+        ])
+        self.assertEqual(
+            scoreboard_from_pbp_frame(frame, 'home', 'away'),
+            ('1Q 0:00', '0', '0'),
+        )
+
+
+class LivePaintTests(unittest.TestCase):
+    def _info(self, **extra):
+        payload = {
+            'status': 'IN_PROGRESS',
+            'time': '19:00',
+            'date': '2026-01-01',
+            'venue': 'Arena',
+            'home_team': 'Home',
+            'away_team': 'Away',
+            'home_team_id': 'home',
+            'away_team_id': 'away',
+            'home_score': '40',
+            'away_score': '38',
+        }
+        payload.update(extra)
+        return payload
+
+    def test_in_progress_banner_reads_the_play_by_play_scoreboard(self):
+        report = Mock()
+        report.playbyplay_df = pd.DataFrame([
+            {'periodId': 2, 'clock': 'PT03M41S', 'scores': '{"home": 10, "away": 8}'},
+        ])
+        with patch.object(game_page, '_info_dict', return_value=self._info()), \
+                patch.object(game_page, 'get_cached_report', return_value=report):
+            raw = game_page.update_match_info_store(1, 'g1', 'plg', None)
+        data = json.loads(raw)
+        self.assertTrue(data['banner_ready'])
+        self.assertEqual(data['banner_clock'], '2Q 3:41')
+        self.assertEqual(data['banner_home_score'], '10')
+        self.assertEqual(data['banner_away_score'], '8')
+        self.assertEqual(data['home_score'], '40')
+
+    def test_same_generation_does_not_rewrite_the_banner(self):
+        previous = json.dumps(self._info(banner_generation=4, banner_ready=True))
+        with patch.object(game_page, '_info_dict', return_value=self._info()), \
+                patch.object(game_page, 'get_cached_report', return_value=Mock()), \
+                patch.object(game_page, 'report_generation', return_value=4):
+            result = game_page.update_match_info_store(2, 'g1', 'plg', previous)
+        self.assertIs(result, no_update)
+
+    def test_a_stale_banner_does_not_overwrite(self):
+        report = Mock()
+        report.playbyplay_df = pd.DataFrame([
+            {'periodId': 1, 'clock': 'PT01M00S', 'scores': '{"home": 1, "away": 0}'},
+        ])
+        generations = iter([1, 2])
+        with patch.object(game_page, '_info_dict', return_value=self._info()), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)):
+            result = game_page.update_match_info_store(2, 'g1', 'plg', None)
+        self.assertIs(result, no_update)
+
+    def test_pre_tip_does_not_open_the_report(self):
+        with patch.object(game_page, '_info_dict', return_value=self._info(status='PENDING')), \
+                patch.object(game_page, 'get_cached_report') as cached:
+            raw = game_page.update_match_info_store(1, 'g1', 'plg', None)
+        cached.assert_not_called()
+        data = json.loads(raw)
+        self.assertEqual(data['status'], 'PENDING')
+        self.assertNotIn('banner_ready', data)
+
+    def test_play_by_play_failure_keeps_the_banner(self):
+        from synergy_inbounder.communicator import SynergyAuthError
+
+        previous = json.dumps(self._info(banner_ready=True, banner_clock='1Q 5:00'))
+        with patch.object(game_page, '_info_dict', return_value=self._info()), \
+                patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('down')):
+            kept = game_page.update_match_info_store(1, 'g1', 'plg', previous)
+        self.assertEqual(kept, previous)
+        with patch.object(game_page, '_info_dict', return_value=self._info()), \
+                patch.object(game_page, 'get_cached_report', side_effect=SynergyAuthError('401')):
+            auth = game_page.update_match_info_store(1, 'g1', 'plg', previous)
+        self.assertEqual(json.loads(auth)['_ui'], 'error')
+
+    def test_stats_failure_keeps_the_whole_box_and_still_updates_lineup(self):
+        report = Mock()
+        report.stats_failed = True
+        report.get_all_lineup_stats_json_dict.return_value = {'size': 5}
+        previous = json.dumps({'qt_pts_df': 'old-box', 't_df': 'old-teams'})
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, '_box_payload') as boxed:
+            kept = json.loads(game_page.update_bs_store(1, 'g1', 'plg', previous))
+            lineup = json.loads(game_page.update_lineup_store(1, 'g1', 'plg'))
+        boxed.assert_not_called()
+        self.assertEqual(kept['qt_pts_df'], 'old-box')
+        self.assertEqual(kept['t_df'], 'old-teams')
+        self.assertTrue(kept['stats_delayed'])
+        self.assertEqual(lineup, {'size': 5})
+
+    def test_stats_failure_with_no_box_is_the_red_alert(self):
+        report = Mock(stats_failed=True)
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', return_value=report):
+            raw = game_page.update_bs_store(1, 'g1', 'plg', None)
+        self.assertEqual(json.loads(raw)['_ui'], 'error')
+
+    def test_a_stale_stats_failure_does_not_rewrite_the_box(self):
+        report = Mock(stats_failed=True)
+        previous = json.dumps({'qt_pts_df': 'newer-box', 'generation': 2})
+        generations = iter([1, 2])
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)), \
+                patch.object(game_page, 'note_applied') as noted:
+            result = game_page.update_bs_store(1, 'g1', 'plg', previous)
+        self.assertIs(result, no_update)
+        noted.assert_not_called()
+
+    def test_a_stale_play_by_play_does_not_overwrite(self):
+        report = Mock()
+        report.get_play_by_play_df.return_value = pd.DataFrame({'eventType': ['shot']})
+        generations = iter([1, 1, 2])
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)), \
+                patch.object(game_page, 'note_applied') as noted:
+            result = game_page.update_pbp_store(1, 'g1', 'plg')
+        self.assertIs(result, no_update)
+        noted.assert_not_called()
+
+    def test_finish_waits_while_the_fixture_is_live(self):
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report') as cached:
+            outputs = game_page.publish_finished_snapshot(1, 'g1', 'plg')
+        cached.assert_not_called()
+        self.assertTrue(all(item is no_update for item in outputs))
+
+    def test_finish_success_writes_every_store_and_stops_the_interval(self):
+        report = Mock()
+        report.get_play_by_play_df.return_value = pd.DataFrame({'eventType': ['shot']})
+        report.get_all_lineup_stats_json_dict.return_value = {'size': 5}
+        report.get_matchup_payload.return_value = {'pairs': []}
+        report.get_rotation_payload.return_value = {'periods': []}
+        info = self._info(
+            status='FINISHED',
+            home_score='88',
+            away_score='79',
+            time='19:00',
+        )
+        with patch.object(game_page, '_fixture_status', return_value='FINISHED'), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, '_box_payload', return_value='{"qt_pts_df":"official"}'), \
+                patch.object(game_page, 'warmup_game_report'), \
+                patch.object(game_page, '_triggered_id', return_value='interval-component'):
+            outputs = game_page.publish_finished_snapshot(3, 'g1', 'plg')
+        self.assertIn('official', outputs[0])
+        self.assertIn('shot', outputs[1])
+        self.assertIn('"size": 5', outputs[2])
+        self.assertIn('pairs', outputs[3])
+        self.assertIn('periods', outputs[4])
+        posted = json.loads(outputs[5])
+        self.assertEqual(posted['home_score'], '88')
+        self.assertEqual(posted['status'], 'FINISHED')
+        self.assertNotIn('banner_ready', posted)
+        self.assertTrue(game_page.set_interval_disabled(outputs[5]))
+
+    def test_finish_failure_keeps_a_snapshot_and_errors_on_the_first_load(self):
+        from synergy_inbounder.communicator import SynergyAuthError
+
+        with patch.object(game_page, '_fixture_status', return_value='FINISHED'), \
+                patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('down')), \
+                patch.object(game_page, 'report_generation', return_value=2):
+            held = game_page.publish_finished_snapshot(1, 'g1', 'plg')
+        self.assertTrue(all(item is no_update for item in held))
+
+        with patch.object(game_page, '_fixture_status', return_value='FINISHED'), \
+                patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('down')), \
+                patch.object(game_page, 'report_generation', return_value=0):
+            fresh = game_page.publish_finished_snapshot(0, 'g1', 'plg')
+        self.assertTrue(all(json.loads(item)['_ui'] == 'error' for item in fresh))
+
+        with patch.object(game_page, '_fixture_status', return_value='FINISHED'), \
+                patch.object(game_page, 'get_cached_report', side_effect=SynergyAuthError('401')), \
+                patch.object(game_page, 'report_generation', return_value=2):
+            auth = game_page.publish_finished_snapshot(1, 'g1', 'plg')
+        self.assertTrue(all(json.loads(item)['_ui'] == 'error' for item in auth))
 
 

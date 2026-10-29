@@ -5,7 +5,12 @@ import threading
 
 import pandas as pd
 
-from synergy_reporter.rotation import clock_to_seconds, period_label
+from synergy_reporter.rotation import (
+    _parse_scores,
+    _same_id,
+    clock_to_seconds,
+    period_label,
+)
 
 _LOCK = threading.Lock()
 _CLOCKS = {}
@@ -45,17 +50,67 @@ def label_from_summary(payload):
     return format_period_clock(status.get('periodId'), main)
 
 
+def _score_text(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number.is_integer():
+        return str(int(number))
+    return str(number)
+
+
 def clock_from_pbp_frame(frame):
+    label, _home, _away = scoreboard_from_pbp_frame(frame, None, None)
+    return label
+
+
+def scoreboard_from_pbp_frame(frame, home_id, away_id):
+    """Clock and the scoreboard at that event, from API ``data`` order.
+
+    The clock is the last row with ``periodId`` and a parseable clock.
+    The score is that row's home and away points, or the nearest earlier
+    row that has both. Rows after the clock that have no clock are ignored.
+    No clock returns ``(None, None, None)``.
+    """
     if frame is None or getattr(frame, 'empty', True):
-        return None
+        return None, None, None
     if 'periodId' not in frame.columns or 'clock' not in frame.columns:
-        return None
+        return None, None, None
+    records = frame.to_dict('records')
+    clock_at = None
     label = None
-    for row in frame.to_dict('records'):
+    for index, row in enumerate(records):
         text = format_period_clock(row.get('periodId'), row.get('clock'))
         if text:
+            clock_at = index
             label = text
-    return label
+    if clock_at is None:
+        return None, None, None
+    home_score = None
+    away_score = None
+    for row in records[:clock_at + 1]:
+        found_home = None
+        found_away = None
+        for key, value in _parse_scores(row.get('scores')).items():
+            text = _score_text(value)
+            if text is None:
+                continue
+            if _same_id(key, home_id):
+                found_home = text
+            elif _same_id(key, away_id):
+                found_away = text
+        if found_home is not None and found_away is not None:
+            home_score = found_home
+            away_score = found_away
+    return label, home_score, away_score
 
 
 def clock_from_pbp_store(raw):

@@ -2,7 +2,7 @@
 import json
 import pandas as pd
 import numpy as np
-from synergy_inbounder.possessions import annotate_possessions
+from synergy_inbounder.possessions import annotate_possessions, lineup_credit_moves
 from synergy_inbounder.settings import LOGGER
 
 def process_lineup_pbp(df, starter_dict):
@@ -60,6 +60,20 @@ def _flagged_points(event, made, flag):
     )
 
 
+_POSS_MOVE_COLUMNS = ('POSS', 'Opp_POSS')
+_FT_MOVE_COLUMNS = (
+    '1M', '1A', 'PTS', 'PIP', 'SCP', 'FBP', 'POT',
+    'Opp_1M', 'Opp_1A', 'Opp_PTS', 'Opp_PIP', 'Opp_SCP', 'Opp_FBP', 'Opp_POT',
+)
+
+
+def _move_credit(frame, moves, columns):
+    for source, destination in moves:
+        for column in columns:
+            frame.at[destination, column] = frame.at[destination, column] + frame.at[source, column]
+            frame.at[source, column] = 0
+
+
 def process_lineup_stats(df):
     lineup_df = df.copy()
     lineup_df['clock'] = pd.to_datetime(lineup_df['clock'], format='PT%MM%SS')
@@ -79,6 +93,7 @@ def process_lineup_stats(df):
     annotated = annotate_possessions(lineup_df)
     poss_end = annotated['poss_end'].fillna(False)
     poss_team = annotated['poss_team_id']
+    poss_moves, ft_moves = lineup_credit_moves(annotated)
 
     lineup_df_dict = dict()
     for t in entity.dropna().unique():
@@ -133,6 +148,8 @@ def process_lineup_stats(df):
         lineup_df['Opp_BLK'] = np.where(is_opp & (event == 'block'), 1, np.nan)
         lineup_df['Opp_PF'] = np.where(is_opp & (event == 'foul') & (subtype != 'drawn'), 1, np.nan)
         lineup_df['Opp_FD'] = np.where(is_opp & (event == 'foul') & (subtype == 'drawn'), 1, np.nan)
+        _move_credit(lineup_df, poss_moves, _POSS_MOVE_COLUMNS)
+        _move_credit(lineup_df, ft_moves, _FT_MOVE_COLUMNS)
 
         lineup_df[t] = lineup_df[t].apply(lambda x: json.dumps(sorted(list(x))))
         col_list = [t, 'duration', 'POSS', 'Opp_POSS', '2M', '2A', '3M', '3A', '1M', '1A',

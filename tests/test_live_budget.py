@@ -142,12 +142,14 @@ class LiveReportFailureTests(unittest.TestCase):
             delayed = report_refresh_state('g', 'org-budget')
             self.assertIs(second, first)
             self.assertTrue(delayed['delayed'])
+            self.assertEqual(delayed['generation'], 1)
             self.assertEqual(delayed['label'], label)
             self.assertIn(REFRESH_DELAYED, str(game_page._last_update_span('g', 'org-budget')))
             Scripted.mode = 'ok'
             clock['now'] = 1090.0
             third = get_cached_report('g', 'org-budget')
         self.assertIsNot(third, first)
+        self.assertEqual(report_refresh_state('g', 'org-budget')['generation'], 2)
         self.assertFalse(report_refresh_state('g', 'org-budget')['delayed'])
         self.assertNotIn(REFRESH_DELAYED, str(game_page._last_update_span('g', 'org-budget')))
 
@@ -225,6 +227,127 @@ class LiveReportFailureTests(unittest.TestCase):
             with self.assertRaises(SynergyApiError):
                 get_cached_report('gid-9', 'org-drop')
         self.assertEqual(seen, ['gid-9'])
+
+    def test_stats_failure_keeps_starters_and_the_box_stamp(self):
+        import app  # noqa: F401
+        from pages import game as game_page
+
+        clock, monotonic = _clock()
+
+        class Scripted:
+            mode = 'ok'
+
+            def __init__(self, game_id, organization_id=None):
+                self.stats_failed = Scripted.mode == 'stats'
+                self.starter_dict = {} if self.stats_failed else {'home': ['p1']}
+                self.playbyplay_df = pd.DataFrame()
+
+        with patch('synergy_reporter.post_game_report.PostGameReport', Scripted), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='IN_PROGRESS'), \
+                patch('synergy_inbounder.runtime_cache.time.monotonic', side_effect=monotonic):
+            get_cached_report('g', 'org-stats')
+            first = report_refresh_state('g', 'org-stats')
+            Scripted.mode = 'stats'
+            clock['now'] = 1030.0
+            second = get_cached_report('g', 'org-stats')
+        self.assertEqual(second.starter_dict, {'home': ['p1']})
+        state = report_refresh_state('g', 'org-stats')
+        self.assertTrue(state['stats_delayed'])
+        self.assertFalse(state['delayed'])
+        self.assertEqual(state['stats_label'], first['label'])
+        self.assertEqual(state['generation'], 2)
+        box_line = str(game_page._last_update_span('g', 'org-stats', box=True))
+        pbp_line = str(game_page._last_update_span('g', 'org-stats'))
+        self.assertIn(REFRESH_DELAYED, box_line)
+        self.assertIn(first['label'], box_line)
+        self.assertNotIn(REFRESH_DELAYED, pbp_line)
+
+    def test_leaving_live_builds_an_official_report_immediately(self):
+        clock, monotonic = _clock()
+        phase = {'status': 'IN_PROGRESS'}
+        built = []
+
+        class Scripted:
+            def __init__(self, game_id, organization_id=None):
+                built.append(phase['status'])
+                self.stats_failed = False
+                self.starter_dict = {}
+                self.playbyplay_df = pd.DataFrame()
+
+        def lookup(game_id, organization_id=None):
+            return phase['status']
+
+        with patch('synergy_reporter.post_game_report.PostGameReport', Scripted), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', side_effect=lookup), \
+                patch('synergy_inbounder.runtime_cache.time.monotonic', side_effect=monotonic):
+            get_cached_report('g', 'org-finish')
+            phase['status'] = 'FINISHED'
+            clock['now'] = 1001.0
+            get_cached_report('g', 'org-finish')
+        self.assertEqual(built, ['IN_PROGRESS', 'FINISHED'])
+        state = report_refresh_state('g', 'org-finish')
+        self.assertEqual(state['generation'], 2)
+        self.assertFalse(state['delayed'])
+        self.assertFalse(state['stats_delayed'])
+
+    def test_a_failed_official_build_keeps_the_live_snapshot(self):
+        clock, monotonic = _clock()
+        phase = {'status': 'IN_PROGRESS'}
+
+        class Scripted:
+            def __init__(self, game_id, organization_id=None):
+                if phase['status'] != 'IN_PROGRESS':
+                    raise SynergyApiError('official')
+                self.stats_failed = False
+                self.starter_dict = {'home': ['p1']}
+                self.playbyplay_df = pd.DataFrame()
+
+        with patch('synergy_reporter.post_game_report.PostGameReport', Scripted), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', side_effect=lambda *_a, **_k: phase['status']), \
+                patch('synergy_inbounder.runtime_cache.time.monotonic', side_effect=monotonic):
+            first = get_cached_report('g', 'org-official-fail')
+            phase['status'] = 'FINISHED'
+            clock['now'] = 1001.0
+            with self.assertRaises(SynergyApiError):
+                get_cached_report('g', 'org-official-fail')
+        state = report_refresh_state('g', 'org-official-fail')
+        self.assertEqual(state['generation'], 1)
+        self.assertTrue(state['delayed'])
+        self.assertEqual(first.starter_dict, {'home': ['p1']})
+
+    def test_a_delayed_snapshot_paints_once_and_generation_zero_does_not_stick(self):
+        from synergy_inbounder.runtime_cache import (
+            applied_generation,
+            note_applied,
+            report_generation,
+            take_delay_paint,
+        )
+
+        clock, monotonic = _clock()
+
+        class Scripted:
+            mode = 'ok'
+
+            def __init__(self, game_id, organization_id=None):
+                if Scripted.mode == 'boom':
+                    raise SynergyApiError('500')
+                self.game_id = game_id
+
+        with patch('synergy_reporter.post_game_report.PostGameReport', Scripted), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='IN_PROGRESS'), \
+                patch('synergy_inbounder.runtime_cache.time.monotonic', side_effect=monotonic):
+            get_cached_report('g', 'org-paint')
+            Scripted.mode = 'boom'
+            clock['now'] = 1030.0
+            get_cached_report('g', 'org-paint')
+        self.assertEqual(report_generation('g', 'org-paint'), 1)
+        self.assertTrue(take_delay_paint('g', 'org-paint', 'pbp'))
+        self.assertFalse(take_delay_paint('g', 'org-paint', 'pbp'))
+        self.assertTrue(take_delay_paint('g', 'org-paint', 'bs'))
+        note_applied('g', 'org-paint', 'pbp', 0)
+        self.assertEqual(applied_generation('g', 'org-paint', 'pbp'), 0)
+        note_applied('g', 'org-paint', 'pbp', 1)
+        self.assertEqual(applied_generation('g', 'org-paint', 'pbp'), 1)
 
 
 class SeasonMetaTests(unittest.TestCase):

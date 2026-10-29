@@ -602,7 +602,7 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(runs[0]['end'], 30.0)
         self.assertEqual(runs[0]['start'], 30.0)
 
-    def test_run_start_trims_to_first_scorer_of_tight_window(self):
+    def test_run_start_drops_a_basket_after_a_two_minute_gap(self):
         events = [
             (0.0, 0, 0),
             (30.0, 3, 0),
@@ -615,6 +615,60 @@ class RotationFigureTests(unittest.TestCase):
         self.assertEqual(runs[0]['away_pts'], 0)
         self.assertEqual(runs[0]['start'], 230.0)
         self.assertEqual(runs[0]['end'], 260.0)
+
+    def test_run_keeps_the_wide_stretch_when_the_net_dips(self):
+        events = [
+            (0.0, 0, 0),
+            (10.0, 0, 3),
+            (20.0, 0, 5),
+            (30.0, 2, 5),
+            (40.0, 2, 8),
+            (50.0, 2, 10),
+            (60.0, 4, 10),
+            (70.0, 4, 13),
+            (80.0, 4, 16),
+            (90.0, 4, 18),
+        ]
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(
+            [(run['side'], run['home_pts'], run['away_pts'], run['start'], run['end']) for run in runs],
+            [('away', 4, 18, 10.0, 90.0)],
+        )
+
+    def test_run_end_stops_at_the_first_tied_net(self):
+        events = [
+            (0.0, 0, 0),
+            (30.0, 8, 0),
+            (50.0, 8, 2),
+            (70.0, 10, 2),
+        ]
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]['home_pts'], 8)
+        self.assertEqual(runs[0]['away_pts'], 0)
+        self.assertEqual(runs[0]['end'], 30.0)
+
+    def test_four_unanswered_points_split_two_surges(self):
+        events = [
+            (0.0, 0, 0),
+            (10.0, 10, 0),
+            (20.0, 10, 4),
+            (30.0, 20, 4),
+        ]
+        runs = detect_runs(events, min_delta=8)
+        self.assertEqual(
+            [(run['home_pts'], run['away_pts'], run['start']) for run in runs],
+            [(10, 0, 10.0), (10, 0, 30.0)],
+        )
+
+    def test_run_does_not_cross_halftime(self):
+        events = [
+            (0.0, 0, 0),
+            (10.0, 0, 5),
+            (40.0, 0, 10),
+        ]
+        self.assertEqual(detect_runs(events, min_delta=8, halftime=25), [])
+        self.assertEqual(detect_runs(events, min_delta=8)[0]['away_pts'], 10)
 
     def test_run_excludes_slow_blowout_with_high_opponent_scoring(self):
         # 27-18 (delta=9, but opponent scored 18 points) should NOT be considered a Run
@@ -632,6 +686,43 @@ class RotationFigureTests(unittest.TestCase):
         ]
         runs = detect_runs(events, min_delta=8)
         self.assertEqual(len(runs), 0)
+
+    def test_opening_game_runs_use_the_wide_stretch(self):
+        # Collapsed scoreboard for PLG 51b84508, home-away. Halftime is elapsed 1440.
+        events = [
+            (0.0, 0, 0), (30.0, 3, 0), (55.0, 3, 2), (108.0, 3, 4), (127.0, 3, 7),
+            (144.0, 5, 7), (175.0, 5, 9), (195.0, 5, 11), (275.0, 5, 14), (318.0, 5, 17),
+            (359.0, 5, 20), (417.0, 6, 20), (462.0, 6, 22), (479.0, 8, 22), (508.0, 10, 22),
+            (536.0, 12, 22), (557.0, 12, 24), (613.0, 14, 24), (635.0, 14, 27), (691.0, 15, 27),
+            (728.0, 17, 27), (803.0, 17, 29), (840.0, 19, 29), (872.0, 19, 31), (920.0, 21, 31),
+            (956.0, 23, 31), (1013.0, 23, 33), (1038.0, 25, 33), (1079.0, 27, 33), (1100.0, 27, 36),
+            (1133.0, 27, 37), (1152.0, 27, 40), (1162.0, 28, 40), (1181.0, 28, 43), (1230.0, 28, 45),
+            (1268.0, 28, 48), (1288.0, 30, 48), (1330.0, 30, 51), (1344.0, 32, 51), (1373.0, 34, 51),
+            (1399.0, 36, 51), (1421.0, 37, 51), (1450.0, 37, 52), (1509.0, 37, 55), (1536.0, 38, 55),
+            (1571.0, 38, 57), (1608.0, 41, 57), (1618.0, 41, 59), (1710.0, 41, 61), (1734.0, 43, 61),
+            (1759.0, 43, 64), (1791.0, 43, 66), (1811.0, 45, 66), (1825.0, 45, 69), (1843.0, 45, 71),
+            (1893.0, 47, 71), (1924.0, 47, 73), (1955.0, 47, 76), (1981.0, 47, 79), (1991.0, 49, 79),
+            (2031.0, 52, 79), (2049.0, 52, 81), (2080.0, 52, 84), (2106.0, 54, 84), (2125.0, 56, 84),
+            (2135.0, 57, 84), (2241.0, 60, 84), (2323.0, 60, 86), (2336.0, 62, 86), (2356.0, 62, 88),
+            (2412.0, 64, 88), (2437.0, 64, 90), (2485.0, 66, 90), (2527.0, 67, 90), (2544.0, 67, 92),
+            (2600.0, 70, 92), (2625.0, 70, 94), (2632.0, 70, 96), (2663.0, 70, 98), (2688.0, 73, 98),
+            (2707.0, 73, 100), (2742.0, 73, 102), (2776.0, 73, 103), (2791.0, 75, 103), (2810.0, 75, 105),
+            (2819.0, 77, 105), (2844.0, 79, 105),
+        ]
+        runs = detect_runs(events, min_delta=8, halftime=1440.0)
+        self.assertEqual(
+            [
+                (run['side'], run['home_pts'], run['away_pts'], run['start'], run['end'])
+                for run in runs
+            ],
+            [
+                ('away', 3, 22, 55.0, 462.0),
+                ('away', 3, 18, 1100.0, 1330.0),
+                ('away', 4, 18, 1759.0, 1981.0),
+                ('home', 8, 0, 2106.0, 2241.0),
+                ('away', 3, 11, 2625.0, 2776.0),
+            ],
+        )
 
 
     def test_figure_autosizes_without_fixed_width(self):

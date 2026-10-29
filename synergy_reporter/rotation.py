@@ -232,61 +232,122 @@ def _side_steps(h_prev, a_prev, h_curr, a_curr, side):
     return my_step, opp_step
 
 
-def _window_stats(score_points, i, j, side, max_opp_consecutive):
-    _, h0, a0 = score_points[i]
-    opp_consecutive = 0
+RUN_MAX_GAP = 120
+RUN_OPP_CAP = 4
+
+
+def _crosses_halftime(score_points, i, j, halftime):
+    if halftime is None:
+        return False
     for k in range(i + 1, j + 1):
-        _, h_curr, a_curr = score_points[k]
-        _, h_prev, a_prev = score_points[k - 1]
-        my_step, opp_step = _side_steps(h_prev, a_prev, h_curr, a_curr, side)
-        if opp_step > 0:
-            opp_consecutive += opp_step
+        if score_points[k - 1][0] < halftime <= score_points[k][0]:
+            return True
+    return False
+
+
+def _side_score_times(score_points, i, j, side):
+    times = []
+    for k in range(i + 1, j + 1):
+        my_step, _ = _side_steps(
+            score_points[k - 1][1], score_points[k - 1][2],
+            score_points[k][1], score_points[k][2], side,
+        )
         if my_step > 0:
-            opp_consecutive = 0
-        if opp_consecutive > max_opp_consecutive:
+            times.append(score_points[k][0])
+    return times
+
+
+def _gap_breaks(times, max_gap):
+    return any(later - earlier > max_gap for earlier, later in zip(times, times[1:]))
+
+
+def _window_points(score_points, i, j, side, min_delta, max_opp_consecutive, halftime):
+    """Points across a baseline→end stretch, or None when the stretch is not a run."""
+    if i >= j or _crosses_halftime(score_points, i, j, halftime):
+        return None
+    streak = 0
+    for k in range(i + 1, j + 1):
+        my_step, opp_step = _side_steps(
+            score_points[k - 1][1], score_points[k - 1][2],
+            score_points[k][1], score_points[k][2], side,
+        )
+        if opp_step > 0:
+            streak += opp_step
+        if my_step > 0:
+            streak = 0
+        if streak > max_opp_consecutive:
             return None
-    _, h_end, a_end = score_points[j]
-    dh = h_end - h0
-    da = a_end - a0
+    _, h0, a0 = score_points[i]
+    _, h1, a1 = score_points[j]
+    dh = h1 - h0
+    da = a1 - a0
     my_tot = dh if side == 'home' else da
     opp_tot = da if side == 'home' else dh
-    return {
-        'dh': dh,
-        'da': da,
-        'my_tot': my_tot,
-        'opp_tot': opp_tot,
-        'delta': my_tot - opp_tot,
-    }
-
-
-def _qualifies_run(stats, min_delta):
-    return (
-        stats is not None
-        and stats['delta'] >= min_delta
-        and stats['my_tot'] >= min_delta
-        and stats['opp_tot'] <= 4
-    )
+    delta = my_tot - opp_tot
+    if delta >= min_delta and my_tot >= min_delta and opp_tot <= RUN_OPP_CAP:
+        return dh, da, delta
+    return None
 
 
 def _first_side_score_index(score_points, i, j, side):
     for k in range(i + 1, j + 1):
-        _, h_curr, a_curr = score_points[k]
-        _, h_prev, a_prev = score_points[k - 1]
-        my_step, _ = _side_steps(h_prev, a_prev, h_curr, a_curr, side)
+        my_step, _ = _side_steps(
+            score_points[k - 1][1], score_points[k - 1][2],
+            score_points[k][1], score_points[k][2], side,
+        )
         if my_step > 0:
             return k
     return None
 
 
-def detect_runs(events_with_scores, min_delta=8, max_opp_consecutive=3):
+def _first_peak(score_points, i, side, min_delta, max_opp_consecutive, halftime, max_gap):
+    """Earliest index where the net from `i` is at its maximum."""
+    streak = 0
+    best = None
+    previous_side_time = None
+    _, h0, a0 = score_points[i]
+    for j in range(i + 1, len(score_points)):
+        if _crosses_halftime(score_points, j - 1, j, halftime):
+            break
+        my_step, opp_step = _side_steps(
+            score_points[j - 1][1], score_points[j - 1][2],
+            score_points[j][1], score_points[j][2], side,
+        )
+        if my_step > 0 and previous_side_time is not None and score_points[j][0] - previous_side_time > max_gap:
+            break
+        if opp_step > 0:
+            streak += opp_step
+        if my_step > 0:
+            streak = 0
+            previous_side_time = score_points[j][0]
+        if streak > max_opp_consecutive:
+            break
+        dh = score_points[j][1] - h0
+        da = score_points[j][2] - a0
+        my_tot = dh if side == 'home' else da
+        opp_tot = da if side == 'home' else dh
+        delta = my_tot - opp_tot
+        if delta >= min_delta and my_tot >= min_delta and opp_tot <= RUN_OPP_CAP:
+            if best is None or delta > best[0]:
+                best = (delta, j)
+    return None if best is None else best[1]
+
+
+def detect_runs(events_with_scores, min_delta=8, max_opp_consecutive=3, halftime=None, max_gap=RUN_MAX_GAP):
     """
-    Detect basketball momentum runs:
-    - Accumulated net margin delta >= min_delta (e.g. 8 pts)
-    - Wave breaks when opponent scores > max_opp_consecutive points (>= 4 pts) without response
-    - Endpoint is the max-delta instant, not the last still-legal tick
-    - Start trims to the first scorer of the tightest qualifying suffix
+    Detect basketball momentum runs.
+
+    A stretch qualifies when the net is at least `min_delta`, that side scored
+    at least `min_delta`, and the opponent scored at most 4. It ends at the
+    first instant that net is largest. The baseline is the earliest scoreboard
+    at which the whole stretch still qualifies. The clock starts at that side's
+    first basket. Four unanswered opponent points, a gap longer than `max_gap`
+    seconds between that side's baskets, or halftime (elapsed `halftime`) ends it.
+    Two runs that share a scoring event keep the larger net, then the shorter
+    one, then the earlier one.
+
     events_with_scores: list of (elapsed, home_pts, away_pts)
-    returns: list of {'side': 'home'|'away', 'home_pts': int, 'away_pts': int, 'start': float, 'end': float, 'delta': int}
+    returns: list of {'side', 'home_pts', 'away_pts', 'start', 'end', 'delta'}
     """
     if not events_with_scores or len(events_with_scores) < 2:
         return []
@@ -298,90 +359,60 @@ def detect_runs(events_with_scores, min_delta=8, max_opp_consecutive=3):
 
     n = len(score_points)
     raw_runs = []
-
     for side in ('home', 'away'):
-        for i in range(n):
-            _, h_start, a_start = score_points[i]
-            opp_consecutive = 0
-            best_j = None
-            best_delta = -1
-            best_my = -1
-            best_pts = (0, 0)
-
-            for j in range(i + 1, n):
-                t_curr, h_curr, a_curr = score_points[j]
-                _, h_prev, a_prev = score_points[j - 1]
-                my_step, opp_step = _side_steps(h_prev, a_prev, h_curr, a_curr, side)
-                if opp_step > 0:
-                    opp_consecutive += opp_step
-                if my_step > 0:
-                    opp_consecutive = 0
-                if opp_consecutive > max_opp_consecutive:
-                    break
-
-                dh = h_curr - h_start
-                da = a_curr - a_start
-                my_tot = dh if side == 'home' else da
-                opp_tot = da if side == 'home' else dh
-                delta = my_tot - opp_tot
-                if delta >= min_delta and my_tot >= min_delta and opp_tot <= 4:
-                    if (
-                        best_j is None
-                        or delta > best_delta
-                        or (delta == best_delta and my_tot > best_my)
-                    ):
-                        best_j = j
-                        best_delta = delta
-                        best_my = my_tot
-                        best_pts = (dh, da)
-
-            if best_j is None:
-                continue
-
-            i_tight = i
-            tight_pts = best_pts
-            tight_delta = best_delta
-            for i2 in range(i + 1, best_j):
-                stats = _window_stats(
-                    score_points, i2, best_j, side, max_opp_consecutive,
-                )
-                if _qualifies_run(stats, min_delta):
-                    i_tight = i2
-                    tight_pts = (stats['dh'], stats['da'])
-                    tight_delta = stats['delta']
-
-            first = _first_side_score_index(score_points, i_tight, best_j, side)
-            t_start = (
-                score_points[first][0]
-                if first is not None
-                else score_points[i_tight][0]
+        for j in range(1, n):
+            my_step, _ = _side_steps(
+                score_points[j - 1][1], score_points[j - 1][2],
+                score_points[j][1], score_points[j][2], side,
             )
+            if my_step <= 0:
+                continue
+            chosen = None
+            for i in range(j - 1, -1, -1):
+                if _crosses_halftime(score_points, i, j, halftime):
+                    break
+                if _gap_breaks(_side_score_times(score_points, i, j, side), max_gap):
+                    break
+                stats = _window_points(
+                    score_points, i, j, side, min_delta, max_opp_consecutive, halftime,
+                )
+                if stats is not None:
+                    chosen = i
+            if chosen is None:
+                continue
+            if _first_peak(
+                score_points, chosen, side, min_delta, max_opp_consecutive, halftime, max_gap,
+            ) != j:
+                continue
+            stats = _window_points(
+                score_points, chosen, j, side, min_delta, max_opp_consecutive, halftime,
+            )
+            if stats is None:
+                continue
+            dh, da, delta = stats
+            first = _first_side_score_index(score_points, chosen, j, side)
+            if first is None:
+                continue
             raw_runs.append({
                 'side': side,
-                'home_pts': tight_pts[0],
-                'away_pts': tight_pts[1],
-                'start': t_start,
-                'end': score_points[best_j][0],
-                'delta': tight_delta,
+                'home_pts': dh,
+                'away_pts': da,
+                'start': score_points[first][0],
+                'end': score_points[j][0],
+                'delta': delta,
+                'events': [score_points[k][0] for k in range(first, j + 1)],
             })
 
-    if not raw_runs:
-        return []
-
-    raw_runs.sort(key=lambda r: (-r['delta'], -(r['end'] - r['start'])))
+    raw_runs.sort(key=lambda r: (-r['delta'], r['end'] - r['start'], r['start']))
     selected_runs = []
-    for r in raw_runs:
-        overlap = False
-        for s in selected_runs:
-            intersect = max(0.0, min(r['end'], s['end']) - max(r['start'], s['start']))
-            r_len = max(1.0, r['end'] - r['start'])
-            if intersect / r_len > 0.4:
-                overlap = True
-                break
-        if not overlap:
-            selected_runs.append(r)
-
+    for run in raw_runs:
+        stamps = set(run['events'])
+        if any(stamps & set(kept['events']) for kept in selected_runs):
+            continue
+        selected_runs.append(run)
     selected_runs.sort(key=lambda r: r['start'])
+    for run in selected_runs:
+        del run['events']
     return selected_runs
 
 
@@ -873,7 +904,8 @@ def build_rotation_payload(
         })
         score_events.append((game_end, curr_h, curr_a))
 
-    runs = detect_runs(score_events, min_delta=8)
+    halftime = next((period['end'] for period in periods if period.get('id') == 2), None)
+    runs = detect_runs(score_events, min_delta=8, halftime=halftime)
     kills = detect_kills(possession_trips(df, periods), home_team_id, away_team_id)
 
 

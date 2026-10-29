@@ -7,7 +7,9 @@ _IGNORE = {
     'possessionArrow', 'assist', 'block', 'possession', 'foul', 'steal',
 }
 _LAST_FT = {'1Of1', '2Of2', '3Of3'}
+_EARLIER_FT = {'1Of2', '1Of3', '2Of3'}
 _NON_POSSESSION_FOUL = {'technical', 'unsportsmanlike'}
+_FOUL_STOP = {'2pt', '3pt', 'rebound', 'turnover', 'jumpBall', 'period'}
 
 
 def _missing(value):
@@ -30,6 +32,10 @@ def annotate_possessions(df):
     free throw, or turnover. ``poss_team_id`` is the offense, including when
     the end row is the opponent's defensive rebound. API ``possession`` events
     are not ends. Technical and unsportsmanlike free throws do not end a trip.
+    A used trip with no rebound, turnover, or made shot still ends on its last
+    row when the other team starts the next ball event. A non-last free throw
+    that arrives after its made last free throw already closed the trip keeps
+    that trip's id and does not start another.
     """
     columns = {
         'poss_end': pd.Series(dtype=bool),
@@ -51,7 +57,10 @@ def annotate_possessions(df):
     used = False
     trip_id = 0
     current_id = None
+    last_live = None
     non_poss_ft = False
+    attach_id = None
+    attach_team = None
 
     def remember(entity):
         if _missing(entity) or entity in teams:
@@ -65,14 +74,15 @@ def annotate_possessions(df):
         return None
 
     def start(team):
-        nonlocal open_team, used, trip_id, current_id
+        nonlocal open_team, used, trip_id, current_id, last_live
         trip_id += 1
         current_id = trip_id
         open_team = team
         used = False
+        last_live = None
 
     def close(index, team):
-        nonlocal open_team, used, current_id
+        nonlocal open_team, used, current_id, last_live
         if team is not None and used:
             poss_end[index] = True
             poss_team[index] = team
@@ -80,6 +90,7 @@ def annotate_possessions(df):
         open_team = None
         used = False
         current_id = None
+        last_live = None
 
     def ensure(team):
         nonlocal open_team
@@ -87,8 +98,21 @@ def annotate_possessions(df):
             start(team)
             return
         if open_team != team:
-            open_team = None
+            if used and last_live is not None:
+                close(last_live, open_team)
+            else:
+                open_team = None
             start(team)
+
+    def clear_attach():
+        nonlocal attach_id, attach_team
+        attach_id = None
+        attach_team = None
+
+    def note_live(index):
+        nonlocal last_live
+        if used and open_team is not None:
+            last_live = index
 
     def next_ball(index):
         cursor = index + 1
@@ -112,14 +136,16 @@ def annotate_possessions(df):
             if sub_type in _LAST_FT:
                 non_poss_ft = False
             continue
-        if event_type == 'period' and sub_type == 'end':
-            if open_team is not None:
-                poss_ids[index] = current_id
-                poss_team[index] = open_team
-            close(index, open_team)
-            non_poss_ft = False
+        if event_type == 'period':
+            clear_attach()
+            if sub_type == 'end':
+                if open_team is not None:
+                    poss_ids[index] = current_id
+                    poss_team[index] = open_team
+                close(index, open_team)
+                non_poss_ft = False
             continue
-        if event_type in _IGNORE or event_type == 'period' or _missing(entity):
+        if event_type in _IGNORE or _missing(entity):
             continue
         non_poss_ft = False
         remember(entity)
@@ -128,14 +154,17 @@ def annotate_possessions(df):
             poss_team[index] = open_team
 
         if event_type == 'jumpBall':
+            clear_attach()
             if sub_type == 'won':
                 ensure(entity)
                 poss_ids[index] = current_id
                 poss_team[index] = open_team
             continue
         if event_type in ('2pt', '3pt'):
+            clear_attach()
             ensure(entity)
             used = True
+            note_live(index)
             poss_ids[index] = current_id
             poss_team[index] = open_team
             if _made(event.get('success')):
@@ -149,19 +178,35 @@ def annotate_possessions(df):
                     close(index, entity)
             continue
         if event_type == 'freeThrow':
+            if (
+                sub_type in _EARLIER_FT
+                and attach_id is not None
+                and entity == attach_team
+            ):
+                poss_ids[index] = attach_id
+                poss_team[index] = attach_team
+                continue
+            clear_attach()
             ensure(entity)
             used = True
+            note_live(index)
             poss_ids[index] = current_id
             poss_team[index] = open_team
             if sub_type in _LAST_FT and _made(event.get('success')):
+                closed_id = current_id
                 close(index, entity)
+                attach_id = closed_id
+                attach_team = entity
             continue
         if event_type == 'rebound' and sub_type == 'offensive':
+            clear_attach()
             ensure(entity)
             poss_ids[index] = current_id
             poss_team[index] = open_team
+            note_live(index)
             continue
         if event_type == 'rebound' and sub_type == 'defensive':
+            clear_attach()
             if open_team is not None and open_team != entity:
                 close(index, open_team)
                 start(entity)
@@ -172,10 +217,14 @@ def annotate_possessions(df):
                 start(entity)
                 poss_ids[index] = current_id
                 poss_team[index] = open_team
+            else:
+                note_live(index)
             continue
         if event_type == 'turnover':
+            clear_attach()
             ensure(entity)
             used = True
+            note_live(index)
             poss_ids[index] = current_id
             poss_team[index] = open_team
             close(index, entity)
@@ -189,6 +238,77 @@ def annotate_possessions(df):
     out['poss_team_id'] = poss_team
     out['poss_id'] = poss_ids
     return out
+
+
+def _same_id(left, right):
+    if _missing(left) or _missing(right):
+        return False
+    return left == right or str(left) == str(right)
+
+
+def lineup_credit_moves(df):
+    """Move a free-throw trip's POSS and free throws back to the awarding foul.
+
+    Returns ``(poss_moves, ft_moves)``. Each item is ``(source, destination)``
+    using ``df`` index labels. A trip with no free throw is unchanged. When the
+    awarding foul cannot be found, that credit stays on its original row.
+    """
+    if df is None or len(df) == 0:
+        return [], []
+    if 'poss_id' not in getattr(df, 'columns', []) or 'eventType' not in df.columns:
+        return [], []
+
+    labels = list(df.index)
+    events = list(df['eventType'])
+    if 'subType' in df.columns:
+        subtypes = list(df['subType'])
+    else:
+        subtypes = [None] * len(df)
+    poss_ids = list(df['poss_id'])
+    if 'poss_end' in df.columns:
+        poss_ends = [bool(value) if not _missing(value) else False for value in df['poss_end']]
+    else:
+        poss_ends = [False] * len(df)
+
+    groups = {}
+    order = []
+    for pos, poss_id in enumerate(poss_ids):
+        if _missing(poss_id):
+            continue
+        key = poss_id if not isinstance(poss_id, float) else int(poss_id) if poss_id.is_integer() else poss_id
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(pos)
+
+    def awarding_foul(ft_pos):
+        for pos in range(ft_pos - 1, -1, -1):
+            event_type = events[pos]
+            if event_type in _FOUL_STOP:
+                return None
+            if event_type == 'foul' and subtypes[pos] not in _NON_POSSESSION_FOUL:
+                return labels[pos]
+        return None
+
+    poss_moves = []
+    ft_moves = []
+    for key in order:
+        positions = groups[key]
+        ft_positions = [pos for pos in positions if events[pos] == 'freeThrow']
+        if not ft_positions:
+            continue
+        owner = awarding_foul(ft_positions[0])
+        end_positions = [pos for pos in positions if poss_ends[pos]]
+        if owner is not None and end_positions:
+            end_label = labels[end_positions[-1]]
+            if not _same_id(end_label, owner):
+                poss_moves.append((end_label, owner))
+        for pos in ft_positions:
+            destination = awarding_foul(pos)
+            source = labels[pos]
+            if destination is not None and not _same_id(source, destination):
+                ft_moves.append((source, destination))
+    return poss_moves, ft_moves
 
 
 def _period_id(value):
