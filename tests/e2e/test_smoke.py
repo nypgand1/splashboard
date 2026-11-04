@@ -675,6 +675,60 @@ def test_rotation_playhead_follows_click_time(page, e2e_server):
     assert abs(on_empty - 20) < 4
 
 
+def test_ipad_1366_uses_desktop_rules(page, e2e_server):
+    page.set_viewport_size({'width': 1366, 'height': 1024})
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    page.locator('#pane-bs table').first.wait_for(state='attached', timeout=20000)
+    page.locator('#report-tab').wait_for(state='visible', timeout=20000)
+    strip = _game_tab_strip(page)
+    assert strip['display'] != 'grid'
+    assert strip['rows'] == 1
+
+    for _ in range(8):
+        page.evaluate(
+            '''() => {
+                if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
+                    window.dash_clientside.set_props('tabs', {value: 'tab-report'});
+                }
+            }'''
+        )
+        try:
+            page.locator('#report-tab').click(force=True, timeout=2000)
+        except Exception:
+            _select_tab(page, 'Report')
+        if page.locator('#wrap-report').is_visible() and page.locator('#report-page-list').count():
+            break
+        time.sleep(0.4)
+    page.locator('#report-page-list').wait_for(state='visible', timeout=20000)
+
+    _select_tab(page, 'Lineup Stats')
+    lineup = _lineup_frame(page)
+    assert lineup['marginLeft'] == '0px'
+    assert lineup['marginRight'] == '0px'
+    assert lineup['headerW'] == 250
+    assert lineup['overflow'] is False
+    matchups = page.evaluate(
+        '''() => {
+            const el = document.getElementById('wrap-matchups');
+            const cs = el ? getComputedStyle(el) : null;
+            return cs ? {l: cs.marginLeft, r: cs.marginRight} : null;
+        }'''
+    )
+    assert matchups == {'l': '0px', 'r': '0px'}
+
+    _select_tab(page, 'Rotation')
+    _reveal_loading(page, 'wrap-rotation')
+    page.locator('#wrap-rotation .js-plotly-plot').wait_for(state='visible', timeout=20000)
+    page.wait_for_function(_ROTATION_LANE_WIDE, timeout=20000)
+    lane = _rotation_right_lane(page)
+    assert lane['l'] == 112
+    assert lane['r'] == 112
+    assert lane['rightKillShown'] is True
+    assert lane['keepsNames'] is True
+    assert lane['leftKillText'] == '3+ STOPS,3+ STOPS'
+
+
 def test_report_tab_hidden_on_narrow_viewport(page, e2e_server):
     page.set_viewport_size({'width': 375, 'height': 812})
     page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')

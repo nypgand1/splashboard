@@ -6,7 +6,8 @@ import json
 from synergy_inbounder.communicator import Communicator, SynergyAuthError
 from synergy_inbounder import frame_store
 from synergy_inbounder.http_wave import run_wave
-from synergy_inbounder.settings import LOGGER
+from synergy_inbounder.logs import data as log_data
+from synergy_inbounder.logs import unexpected as log_unexpected
 from synergy_inbounder.runtime_cache import (
     cached_fixture_status,
     get_cached_id_table,
@@ -194,7 +195,8 @@ class Parser:
                 return call()
             except SynergyAuthError:
                 raise
-            except Exception:
+            except Exception as exc:
+                log_data.debug('live stats unavailable: %s', exc)
                 return {'_stats_failed': True, 'data': []}
 
         def _team():
@@ -224,6 +226,7 @@ class Parser:
                     org_id, game_id, fixture_status=status,
                 )
             except Exception:
+                log_unexpected.exception('fixture roster failed game=%s', game_id)
                 return {'data': []}
 
         (
@@ -294,8 +297,8 @@ class Parser:
             return Communicator.get_game_player_stats_periods_synergy(
                 org_id, game_id, live, fixture_status=fixture_status,
             )
-        except Exception:
-            LOGGER.warning('player period stats unavailable')
+        except Exception as exc:
+            log_data.debug('player period stats unavailable game=%s: %s', game_id, exc)
             return {'data': []}
 
     @staticmethod

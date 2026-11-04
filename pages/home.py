@@ -18,6 +18,9 @@ import dash_mantine_components as dmc
 import pandas as pd
 
 from synergy_inbounder.communicator import SynergyAuthError
+from synergy_inbounder.logs import auth as log_auth
+from synergy_inbounder.logs import data as log_data
+from synergy_inbounder.logs import unexpected as log_unexpected
 from synergy_inbounder.live_clock import forget_finished, recall, refresh_summaries
 from synergy_inbounder.names import TEAM_TBD, display_name
 from synergy_inbounder.runtime_cache import (
@@ -148,7 +151,8 @@ def _home_filter_values(filters):
 def _triggered_id():
     try:
         return ctx.triggered_id
-    except Exception:
+    except Exception as exc:
+        log_data.debug('home triggered id unavailable: %s', exc)
         return None
 
 
@@ -253,8 +257,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
         season_key = season_id or default_season_id(league)
         refresh = season_refresh_state(org, season_key)
         names = id_refresh_state(org)
-    except SynergyAuthError as exc:
-        print(f"Error loading home game list: {exc}")
+    except SynergyAuthError:
+        log_auth.exception('home game list auth failed')
         return render_home_page(
             None,
             show=show,
@@ -263,8 +267,8 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
             season_id=season_id,
             failed=True,
         ), no_update
-    except Exception as exc:
-        print(f"Error loading home game list: {exc}")
+    except Exception:
+        log_unexpected.exception('home game list failed')
         if first or scope_change:
             return render_home_page(
                 None,
@@ -411,15 +415,15 @@ def _plain(value):
     try:
         if pd.isna(value):
             return None
-    except Exception:
-        pass
+    except Exception as exc:
+        log_data.debug('home value na check failed: %s', exc)
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     if hasattr(value, 'item'):
         try:
             return value.item()
-        except Exception:
-            pass
+        except Exception as exc:
+            log_data.debug('home scalar unwrap failed: %s', exc)
     return value
 
 
@@ -444,11 +448,12 @@ def _parse_start(value):
     try:
         if pd.isna(value):
             return None
-    except Exception:
-        pass
+    except Exception as exc:
+        log_data.debug('home start na check failed: %s', exc)
     try:
         return pd.to_datetime(value)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('home start parse failed: %s', exc)
         return None
 
 
@@ -1118,8 +1123,8 @@ def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
                 max_games=2,
                 organization_id=org,
             )
-        except Exception as e:
-            print(f"Failed to start home prefetch: {e}")
+        except Exception:
+            log_unexpected.exception('home prefetch failed to start')
 
     df = game_list_df.copy()
     df['Venue'] = df.apply(lambda x: display_name(id_table, x.get('venueId')), axis=1)

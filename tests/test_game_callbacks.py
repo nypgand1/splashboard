@@ -211,7 +211,8 @@ class LiveRefreshWiringTests(unittest.TestCase):
 
     def test_open_lineup_size_uses_store_or_recomputes(self):
         with patch.object(game_page, 'render_lineup_children', return_value='painted') as render, \
-                patch.object(game_page, 'get_cached_report') as cached:
+                patch.object(game_page, 'get_cached_report') as cached, \
+                patch.object(game_page, '_info_dict', return_value={}):
             painted = game_page.update_pane_lineup(
                 '5', 'tab-lineup', '{"5": {"Home": "{}"}}', 'g1', True,
             )
@@ -221,16 +222,61 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertTrue(render.call_args.kwargs['show_opp'])
 
         report = cached.return_value
-        report.get_lineup_stats_json_dict.return_value = {'Home': '{}'}
+        report.get_all_lineup_stats_json_dict.return_value = {'4': {'Home': '{}'}}
         with patch.object(game_page, 'render_lineup_children', return_value='sized') as render, \
-                patch.object(game_page, 'get_cached_report', return_value=report):
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, '_info_dict', return_value={}):
             painted = game_page.update_pane_lineup(
                 '4', 'tab-lineup', '{"5": {"Home": "{}"}}', 'g1', False,
             )
         self.assertEqual(painted, 'sized')
-        report.get_lineup_stats_json_dict.assert_called_once_with(lineup_size=4)
+        report.get_all_lineup_stats_json_dict.assert_called_once_with(sizes=(4,))
         self.assertFalse(render.call_args.kwargs['show_opp'])
         self.assertIn('"4"', render.call_args.args[0])
+
+    def test_banner_clock_does_not_wake_box_lineup_or_shot_chart(self):
+        from dash._callback import GLOBAL_CALLBACK_LIST
+
+        def specs(fragment):
+            return [item for item in GLOBAL_CALLBACK_LIST if fragment in item['output']]
+
+        box = specs('bs-score-scroll.children')
+        self.assertEqual(len(box), 1)
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(box[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(box[0]['state']))
+
+        lineup = _callback_specs('pane-lineup.children')
+        self.assertEqual(len(lineup), 1)
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(lineup[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(lineup[0]['state']))
+
+        chart = specs('pane-shot-chart.children')
+        self.assertEqual(len(chart), 1)
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(chart[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(chart[0]['state']))
+
+        players = specs('shot-chart-player-away.data')
+        self.assertEqual(len(players), 1)
+        self.assertIn(('tabs', 'value'), _dep_pairs(players[0]['inputs']))
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(players[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(players[0]['state']))
+
+        periods = specs('shot-chart-period.data')
+        self.assertEqual(len(periods), 1)
+        self.assertIn(('tabs', 'value'), _dep_pairs(periods[0]['inputs']))
+        self.assertNotIn('match_info_store', {item['id'] for item in periods[0]['inputs']})
+
+        playhead = specs('rotation_view_store.data')
+        self.assertEqual(len(playhead), 1)
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(playhead[0]['inputs']))
+
+        chip = specs('rotation-live.style')
+        self.assertEqual(len(chip), 1)
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(chip[0]['inputs']))
+
+        matchup = specs('matchup-team.data')
+        self.assertEqual(len(matchup), 1)
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(matchup[0]['inputs']))
 
 
 class RotationViewTests(unittest.TestCase):
@@ -974,8 +1020,23 @@ class ShotChartUiTests(unittest.TestCase):
         self.assertIn('Last Update', str(game_page.update_shot_chart_last_update('{}', 'tab-shot-chart')))
 
     def test_hidden_tab_does_not_rebuild_the_chart(self):
-        result = game_page.update_shot_chart('{}', '{}', 'all', 'all', 'all', 'tab-bs')
+        result = game_page.update_shot_chart('{}', 'all', 'all', 'all', 'tab-bs', '{}')
         self.assertTrue(all(item is no_update for item in result))
+        self.assertEqual(
+            game_page.update_shot_chart_period_options(_shot_frame(), 'tab-bs'),
+            (no_update, no_update),
+        )
+        info = json.dumps({'away_team_id': 'away', 'home_team_id': 'home'})
+        self.assertEqual(
+            game_page.update_shot_chart_players(_shot_frame(), 'tab-lineup', info),
+            (no_update, no_update),
+        )
+        data, style = game_page.update_shot_chart_period_options(_shot_frame(), 'tab-shot-chart')
+        self.assertEqual([item['label'] for item in data], ['All', '1Q', '2Q', '1H'])
+        self.assertEqual(style, {'display': 'flex'})
+        away, home = game_page.update_shot_chart_players(_shot_frame(), 'tab-shot-chart', info)
+        self.assertEqual(away[1]['label'], '#9 Chen')
+        self.assertEqual(home[1]['label'], '#7 Lin')
 
 
 class GridDmcContractTests(unittest.TestCase):
@@ -1103,6 +1164,16 @@ class LivePaintTests(unittest.TestCase):
         self.assertEqual(data['status'], 'PENDING')
         self.assertNotIn('banner_ready', data)
 
+    def test_pre_tip_repeat_does_not_rewrite_the_store(self):
+        info = self._info(status='WARM_UP')
+        with patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, 'get_cached_report') as cached:
+            first = game_page.update_match_info_store(1, 'g1', 'plg', None)
+            again = game_page.update_match_info_store(2, 'g1', 'plg', first)
+        cached.assert_not_called()
+        self.assertEqual(json.loads(first)['status'], 'WARM_UP')
+        self.assertIs(again, no_update)
+
     def test_play_by_play_failure_keeps_the_banner(self):
         from synergy_inbounder.communicator import SynergyAuthError
 
@@ -1145,11 +1216,9 @@ class LivePaintTests(unittest.TestCase):
         generations = iter([1, 2])
         with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
                 patch.object(game_page, 'get_cached_report', return_value=report), \
-                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)), \
-                patch.object(game_page, 'note_applied') as noted:
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)):
             result = game_page.update_bs_store(1, 'g1', 'plg', previous)
         self.assertIs(result, no_update)
-        noted.assert_not_called()
 
     def test_a_stale_play_by_play_does_not_overwrite(self):
         report = Mock()
@@ -1157,11 +1226,68 @@ class LivePaintTests(unittest.TestCase):
         generations = iter([1, 1, 2])
         with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
                 patch.object(game_page, 'get_cached_report', return_value=report), \
-                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)), \
-                patch.object(game_page, 'note_applied') as noted:
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)):
             result = game_page.update_pbp_store(1, 'g1', 'plg')
         self.assertIs(result, no_update)
-        noted.assert_not_called()
+
+    def test_each_page_remembers_the_generation_it_painted(self):
+        report = Mock()
+        report.get_play_by_play_df.return_value = pd.DataFrame({'eventType': ['shot']})
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, 'report_generation', return_value=3):
+            first = game_page.update_pbp_store(1, 'g1', 'plg')
+            again = game_page.update_pbp_store(2, 'g1', 'plg', first)
+            fresh = game_page.update_pbp_store(3, 'g1', 'plg', None)
+        painted = json.loads(first)
+        self.assertEqual(painted['generation'], 3)
+        self.assertEqual(painted['game_id'], 'g1')
+        self.assertIn('shot', painted['frame'])
+        self.assertIs(again, no_update)
+        self.assertEqual(json.loads(fresh)['generation'], 3)
+
+    def test_a_budget_wait_keeps_the_fixture_header_and_a_skeleton(self):
+        from synergy_inbounder.communicator import LiveBudgetWait
+
+        info = self._info()
+        previous = json.dumps(self._info(banner_ready=True, banner_clock='1Q 5:00'))
+        previous_pbp = json.dumps({'columns': ['eventType'], 'data': [['shot']]})
+        with patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', side_effect=LiveBudgetWait('wait')):
+            banner = json.loads(game_page.update_match_info_store(1, 'g1', 'plg', None))
+            waiting = json.loads(game_page.update_pbp_store(1, 'g1', 'plg', None))
+            kept = game_page.update_match_info_store(2, 'g1', 'plg', previous)
+            kept_pbp = game_page.update_pbp_store(2, 'g1', 'plg', previous_pbp)
+        self.assertNotIn('banner_ready', banner)
+        self.assertEqual(banner['home_team'], 'Home')
+        self.assertEqual(banner['time'], info['time'])
+        self.assertEqual(waiting['_ui'], 'waiting')
+        self.assertEqual(kept, previous)
+        self.assertEqual(kept_pbp, previous_pbp)
+
+    def test_a_build_failure_without_a_snapshot_alerts_the_tabs(self):
+        info = self._info()
+        with patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('down')):
+            banner = json.loads(game_page.update_match_info_store(1, 'g1', 'plg', None))
+            alert = json.loads(game_page.update_pbp_store(1, 'g1', 'plg', None))
+        self.assertNotIn('banner_ready', banner)
+        self.assertEqual(banner['home_team'], 'Home')
+        self.assertEqual(banner['time'], info['time'])
+        self.assertEqual(alert['_ui'], 'error')
+
+    def test_rotation_without_team_ids_does_not_open_the_report(self):
+        with patch.object(game_page, '_info_dict', return_value={}), \
+                patch.object(game_page, 'get_cached_report') as cached:
+            result = game_page.update_rotation_store(1, 'g1', 'plg')
+        cached.assert_not_called()
+        self.assertIs(result, no_update)
+
+    def test_last_update_without_a_snapshot_is_a_dash(self):
+        text = str(game_page._last_update_span('missing-game', 'org-missing'))
+        self.assertIn('Last Update: —', text)
 
     def test_finish_waits_while_the_fixture_is_live(self):
         with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \

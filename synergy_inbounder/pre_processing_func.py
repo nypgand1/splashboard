@@ -29,26 +29,37 @@ def process_lineup_pbp(df, starter_dict):
             else:
                 df.at[i, t] = list(df.at[i-1, t])
 
-def _option_on(raw, name):
+def _parsed_option(raw):
+    """Parse one ``options`` cell once. ``None`` when it carries no flags."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return False
+        return None
     if isinstance(raw, str):
         text = raw.strip()
         if not text or text == 'null':
-            return False
+            return None
         try:
             raw = json.loads(text)
         except json.JSONDecodeError:
-            return False
-    if isinstance(raw, dict):
-        return bool(raw.get(name))
-    if isinstance(raw, (list, tuple)):
-        for item in raw:
+            return None
+    if isinstance(raw, (dict, list, tuple)):
+        return raw
+    return None
+
+
+def _flag_from_parsed(parsed, name):
+    if isinstance(parsed, dict):
+        return bool(parsed.get(name))
+    if isinstance(parsed, (list, tuple)):
+        for item in parsed:
             if item == name:
                 return True
             if isinstance(item, dict) and (item.get('name') == name or item.get(name) is True):
                 return True
     return False
+
+
+def _option_on(raw, name):
+    return _flag_from_parsed(_parsed_option(raw), name)
 
 
 def _flagged_points(event, made, flag):

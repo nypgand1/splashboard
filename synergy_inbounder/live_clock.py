@@ -185,7 +185,9 @@ def refresh_summaries(org_id, candidates):
             if 'budget' in text or '429' in text:
                 return
             continue
-        except Exception:
+        except Exception as exc:
+            from synergy_inbounder.logs import data as log_data
+            log_data.debug('live summary unavailable fixture=%s: %s', fixture_id, exc)
             continue
         label = label_from_summary(payload)
         if label:

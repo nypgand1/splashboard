@@ -175,12 +175,18 @@ class LiveBudget:
         multi = len(watched) >= 2
         our_turn = (not multi) or game_id == self._next_game(org, watched)
         slot_closed = multi and (now - self._last_bundle.get(org, now - LIVE_SLOT_SECONDS)) < LIVE_SLOT_SECONDS
-        if not has_snapshot and not self._cooling(org, now) and self._budget_open(org, now):
+        never_reserved = game_id not in self._last_fetch.get(org, {})
+        if (
+            not has_snapshot
+            and never_reserved
+            and not self._cooling(org, now)
+            and self._budget_open(org, now)
+        ):
             return 'fetch'
         if not our_turn:
             return 'serve' if has_snapshot else 'fail'
-        if slot_closed and has_snapshot:
-            return 'serve'
+        if slot_closed:
+            return 'serve' if has_snapshot else 'fail'
         if not multi and has_snapshot and age_seconds < SHORT_CACHE_SECONDS:
             return 'serve'
         if self._cooling(org, now):

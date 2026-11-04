@@ -421,12 +421,13 @@ class FourStateTests(unittest.TestCase):
         }
 
         class FakeReport:
-            def get_lineup_stats_json_dict(self, lineup_size=5):
-                self.size = lineup_size
-                return custom
+            def get_all_lineup_stats_json_dict(self, sizes=(5,)):
+                self.size = sizes[0]
+                return {str(sizes[0]): custom}
 
         fake = FakeReport()
-        with patch.object(game_page, 'get_cached_report', return_value=fake):
+        with patch.object(game_page, 'get_cached_report', return_value=fake), \
+                patch.object(game_page, '_info_dict', return_value={}):
             tree = game_page.update_pane_lineup('4', 'tab-lineup', store, 'g1')
         self.assertEqual(fake.size, 4)
         self.assertFalse(any(isinstance(node, dmc.Title) for node in walk(tree)))

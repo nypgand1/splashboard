@@ -17,6 +17,8 @@ from dash.exceptions import PreventUpdate
 from dash.development.base_component import Component
 import dash_mantine_components as dmc
 
+from synergy_inbounder.logs import data as log_data
+from synergy_inbounder.logs import unexpected as log_unexpected
 from synergy_inbounder.settings import (
     EASL_SEASON_ID,
     SYNERGY_SEASON_ID,
@@ -693,7 +695,8 @@ def _same(left, right):
 def _triggered_id():
     try:
         return ctx.triggered_id
-    except Exception:
+    except Exception as exc:
+        log_data.debug('team stats triggered id unavailable: %s', exc)
         return None
 
 
@@ -717,6 +720,7 @@ def _load(league, season_id, game_type, period, reason, opponent=OPPONENT_ALL, s
             site=site,
         )
     except Exception:
+        log_unexpected.exception('team stats page load failed')
         return {
             'ok': False,
             'message': ERROR_GAME,
@@ -873,6 +877,7 @@ def render_team_stats(intent, period, opponent, stadium, site, league, season_id
         try:
             needs = type_needs_download(league, season_id, requested_type)
         except Exception:
+            log_unexpected.exception('team stats type download check failed')
             needs = True
         if needs:
             job = intent if isinstance(intent, dict) else {

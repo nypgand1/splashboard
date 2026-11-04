@@ -461,6 +461,10 @@ class LineupStoreShapeTests(unittest.TestCase):
         from synergy_reporter.report_components import lineup_tables_for_size
         store = {'勇士': '{"columns":["Lineup"]}'}
         self.assertEqual(lineup_tables_for_size(store, 5)['勇士'], '{"columns":["Lineup"]}')
+        stamped = {'5': {'勇士': '{"columns":["Lineup"]}'}, 'generation': 2, 'game_id': 'g1'}
+        self.assertEqual(lineup_tables_for_size(stamped, 5)['勇士'], '{"columns":["Lineup"]}')
+        self.assertEqual(lineup_tables_for_size({'_ui': 'waiting', 'game_id': 'g1'}, 5), {})
+        self.assertEqual(lineup_tables_for_size({'generation': 2, 'game_id': 'g1'}, 5), {})
 
 
 class PaneRenderGateTests(unittest.TestCase):

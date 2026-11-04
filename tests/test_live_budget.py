@@ -8,6 +8,7 @@ import pandas as pd
 
 from synergy_inbounder.communicator import (
     Communicator,
+    LiveBudgetWait,
     SynergyApiError,
     SynergyAuthError,
     drop_cached_live_urls,
@@ -27,6 +28,7 @@ from ui_kit import ERROR_HOME, REFRESH_DELAYED
 
 
 LIVE_PBP = 'https://example.test/o/org/fixtures/g/playbyplay/live'
+OFFICIAL_PBP = 'https://example.test/o/org/fixtures/g/playbyplay'
 
 
 class FakeResponse:
@@ -97,6 +99,12 @@ class LiveBudgetTests(unittest.TestCase):
         self.assertEqual(BUDGET.acquire('gone', 'b', False, 0, 0), 'fetch')
         BUDGET.forget('gone', 'a')
         self.assertEqual(BUDGET.acquire('gone', 'b', True, 40, 60), 'fetch')
+
+    def test_a_reserved_game_without_a_snapshot_does_not_jump(self):
+        self.assertEqual(BUDGET.acquire('slot', 'a', False, 0, 0), 'fetch')
+        self.assertEqual(BUDGET.acquire('slot', 'b', False, 0, 50), 'fetch')
+        self.assertEqual(BUDGET.acquire('slot', 'a', False, 61, 61), 'fail')
+        self.assertEqual(BUDGET.acquire('slot', 'b', True, 11, 61), 'serve')
 
     def test_a_quiet_game_leaves_after_seventy_seconds(self):
         self.assertEqual(BUDGET.acquire('watch', 'old', False, 0, 0), 'fetch')
@@ -524,7 +532,7 @@ class LiveHttpBudgetTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(response.status_code, 500)
 
-    def test_an_open_live_route_retries_a_5xx(self):
+    def test_an_open_live_route_does_not_retry_a_5xx(self):
         calls = {'n': 0}
 
         def get(url, params=None, headers=None, **kwargs):
@@ -533,8 +541,39 @@ class LiveHttpBudgetTests(unittest.TestCase):
 
         with self._token(), patch.object(Communicator, 'get', side_effect=get):
             response = Communicator.get_synergy(LIVE_PBP, organization_id='org-retry')
+        self.assertEqual(calls['n'], 1)
+        self.assertEqual(response.status_code, 500)
+
+    def test_a_non_live_5xx_retries_once(self):
+        calls = {'n': 0}
+
+        def get(url, params=None, headers=None, **kwargs):
+            calls['n'] += 1
+            return FakeResponse(500 if calls['n'] == 1 else 200)
+
+        with self._token(), patch.object(Communicator, 'get', side_effect=get):
+            response = Communicator.get_synergy(OFFICIAL_PBP, organization_id='org-official')
         self.assertEqual(calls['n'], 2)
         self.assertEqual(response.status_code, 200)
+
+    def test_a_budget_wait_is_logged_once_per_stretch(self):
+        from synergy_inbounder.runtime_cache import _clear_budget_wait
+
+        with patch.object(BUDGET, 'acquire', return_value='fail'), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='IN_PROGRESS'), \
+                self.assertLogs('synergy.live.budget', level='INFO') as first:
+            with self.assertRaises(LiveBudgetWait):
+                get_cached_report('g', 'org-wait')
+            with self.assertRaises(LiveBudgetWait):
+                get_cached_report('g', 'org-wait')
+        self.assertEqual(len(first.output), 1)
+        _clear_budget_wait('org-wait', 'g')
+        with patch.object(BUDGET, 'acquire', return_value='fail'), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='IN_PROGRESS'), \
+                self.assertLogs('synergy.live.budget', level='INFO') as second:
+            with self.assertRaises(LiveBudgetWait):
+                get_cached_report('g', 'org-wait')
+        self.assertEqual(len(second.output), 1)
 
     def test_429_pauses_that_organization(self):
         def get(url, params=None, headers=None, **kwargs):

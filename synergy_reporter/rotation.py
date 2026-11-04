@@ -722,12 +722,6 @@ def build_rotation_payload(
     if pbp_df is None or getattr(pbp_df, 'empty', True):
         return empty
     if home_team_id is None or away_team_id is None:
-        team_ids = list(starter_dict.keys())
-        if home_team_id is None and team_ids:
-            home_team_id = team_ids[0]
-        if away_team_id is None and len(team_ids) > 1:
-            away_team_id = team_ids[1]
-    if home_team_id is None:
         return empty
 
     df = pbp_df.copy()
