@@ -28,6 +28,9 @@ def _made(value):
 def annotate_possessions(df):
     """Mark each stats possession in ``df`` without sorting it.
 
+    A frame that already has ``poss_end``, ``poss_team_id``, and ``poss_id``
+    is returned as-is. Callers share one annotation per report.
+
     ``poss_end`` is true on the row that ends a trip which included a shot,
     free throw, or turnover. ``poss_team_id`` is the offense, including when
     the end row is the opponent's defensive rebound. API ``possession`` events
@@ -37,6 +40,12 @@ def annotate_possessions(df):
     that arrives after its made last free throw already closed the trip keeps
     that trip's id and does not start another.
     """
+    ready = df is not None and all(
+        name in getattr(df, 'columns', [])
+        for name in ('poss_end', 'poss_team_id', 'poss_id')
+    )
+    if ready:
+        return df
     columns = {
         'poss_end': pd.Series(dtype=bool),
         'poss_team_id': pd.Series(dtype=object),

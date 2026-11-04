@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import os
+import threading
 
 from synergy_inbounder.names import (
     display_name,
@@ -12,8 +13,13 @@ from synergy_inbounder.names import (
 )
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
-from synergy_inbounder.possessions import possession_counts
-from synergy_inbounder.pre_processing_func import _option_on, process_lineup_pbp, process_lineup_stats
+from synergy_inbounder.possessions import annotate_possessions, possession_counts
+from synergy_inbounder.pre_processing_func import (
+    _flag_from_parsed,
+    _parsed_option,
+    process_lineup_pbp,
+    process_lineup_stats,
+)
 from synergy_reporter.rotation import build_rotation_payload, clock_to_seconds, period_label
 
 
@@ -344,8 +350,9 @@ def _flag_split_counts(pbp, entity_ids, period_ids):
     success = frame['success'] if 'success' in frame.columns else pd.Series([0] * len(frame), index=frame.index)
     made = success.map(_shot_made)
     entity = frame['entityId']
+    parsed = options.map(_parsed_option)
     for prefix, flag_name, _points in _FLAG_SPLITS:
-        flag = options.map(lambda raw, name=flag_name: _option_on(raw, name))
+        flag = parsed.map(lambda item, name=flag_name: _flag_from_parsed(item, name))
         for shot, made_leaf, attempt_leaf in (('2pt', '2M', '2A'), ('3pt', '3M', '3A')):
             attempts = flag & (event == shot)
             makes = attempts & made
@@ -396,6 +403,8 @@ class PostGameReport():
         from synergy_inbounder.runtime_cache import cached_regulation_minutes
         self.regulation_minutes = cached_regulation_minutes(org, game_id)
         self.stats_failed = bool(getattr(self.playbyplay_df, 'attrs', {}).get('stats_failed'))
+        self._derive_lock = threading.RLock()
+        self._lineup_frame_df = None
         self._play_by_play_view = None
         self._raw_lineup_df_dict = None
         self._lineup_json_by_size = None
@@ -505,6 +514,26 @@ class PostGameReport():
         frame.sort_values(by=['Team'], ascending=True, inplace=True)
         return frame
 
+    def _lock(self):
+        """Re-entrant lock. Reports built without ``__init__`` get one on first use."""
+        lock = self.__dict__.get('_derive_lock')
+        if lock is None:
+            lock = threading.RLock()
+            self._derive_lock = lock
+        return lock
+
+    def _lineup_frame(self):
+        """One lineup walk and one possession annotation for this report."""
+        with self._lock():
+            cached = self.__dict__.get('_lineup_frame_df')
+            if cached is not None:
+                return cached
+            source = self.playbyplay_df
+            frame = source.copy() if source is not None else pd.DataFrame()
+            process_lineup_pbp(frame, self.starter_dict or {})
+            self._lineup_frame_df = annotate_possessions(frame)
+            return self._lineup_frame_df
+
     def _possession_totals(self, stats, period_ids):
         pbp = getattr(self, 'playbyplay_df', None)
         if pbp is None or len(pbp) == 0:
@@ -514,7 +543,7 @@ class PostGameReport():
                 + stats['turnovers'].fillna(0)
                 - stats['reboundsOffensive'].fillna(0)
             )
-        counts = possession_counts(pbp, period_ids)
+        counts = possession_counts(self._lineup_frame(), period_ids)
         return stats['entityId'].map(lambda entity_id: float(counts.get(entity_id, 0)))
 
     def box_score_period_chips(self):
@@ -814,9 +843,11 @@ class PostGameReport():
         return p_df_dict
 
     def _raw_lineup_stats(self):
-        if self._raw_lineup_df_dict is None:
-            self._raw_lineup_df_dict = process_lineup_stats(self.get_play_by_play_df())
-        return self._raw_lineup_df_dict
+        with self._lock():
+            cached = self.__dict__.get('_raw_lineup_df_dict')
+            if cached is None:
+                self._raw_lineup_df_dict = process_lineup_stats(self._lineup_frame())
+            return self._raw_lineup_df_dict
 
     def _get_lineup_stats_df_dict(self, lineup_size=5):
         lineup_df_dict = self._raw_lineup_stats()
@@ -1105,79 +1136,86 @@ class PostGameReport():
         return {team_name: df.to_json(date_format='iso', orient='split') for team_name, df in lineup_stats_df_dict.items()}
 
     def get_all_lineup_stats_json_dict(self, sizes=(5, 4, 3, 2)):
-        if self._lineup_json_by_size is None:
-            self._lineup_json_by_size = {}
-        missing = [size for size in sizes if str(size) not in self._lineup_json_by_size]
-        for size in missing:
-            self._lineup_json_by_size[str(size)] = self.get_lineup_stats_json_dict(lineup_size=size)
-        return {str(size): self._lineup_json_by_size[str(size)] for size in sizes}
+        with self._lock():
+            cached = self.__dict__.get('_lineup_json_by_size')
+            if cached is None:
+                cached = {}
+                self._lineup_json_by_size = cached
+            missing = [size for size in sizes if str(size) not in cached]
+            for size in missing:
+                cached[str(size)] = self.get_lineup_stats_json_dict(lineup_size=size)
+            return {str(size): cached[str(size)] for size in sizes}
    
     def get_rotation_payload(self, home_team_id=None, away_team_id=None):
         cache_key = (str(home_team_id), str(away_team_id))
-        if self._rotation_payload is not None and getattr(self, '_rotation_key', None) == cache_key:
+        with self._lock():
+            cached = self.__dict__.get('_rotation_payload')
+            if cached is not None and self.__dict__.get('_rotation_key') == cache_key:
+                return cached
+            df = self._lineup_frame().copy()
+            self._rotation_payload = build_rotation_payload(
+                df,
+                starter_dict=self.starter_dict,
+                id_table=self.id_table,
+                home_team_id=home_team_id,
+                away_team_id=away_team_id,
+                roster=self.roster,
+            )
+            self._rotation_key = cache_key
             return self._rotation_payload
-
-        df = self.playbyplay_df.copy()
-        process_lineup_pbp(df, self.starter_dict)
-        self._rotation_payload = build_rotation_payload(
-            df,
-            starter_dict=self.starter_dict,
-            id_table=self.id_table,
-            home_team_id=home_team_id,
-            away_team_id=away_team_id,
-            roster=self.roster,
-        )
-        self._rotation_key = cache_key
-        return self._rotation_payload
 
     def get_matchup_payload(self, home_team_id=None, away_team_id=None):
         cache_key = (str(home_team_id), str(away_team_id))
-        if self._matchup_payload is not None and getattr(self, '_matchup_key', None) == cache_key:
-            return self._matchup_payload
-        from synergy_reporter.matchups import build_matchup_payload
-        df = self.playbyplay_df.copy()
-        process_lineup_pbp(df, self.starter_dict)
-        shirts = {}
-        for person in self.roster or []:
-            if not isinstance(person, dict) or person.get('personId') is None:
-                continue
-            if person.get('shirtNumber') is None:
-                continue
-            shirts[person['personId']] = person['shirtNumber']
-            shirts[str(person['personId'])] = person['shirtNumber']
+        with self._lock():
+            cached = self.__dict__.get('_matchup_payload')
+            if cached is not None and self.__dict__.get('_matchup_key') == cache_key:
+                return cached
+            from synergy_reporter.matchups import build_matchup_payload
+            df = self._lineup_frame().copy()
+            shirts = {}
+            for person in self.roster or []:
+                if not isinstance(person, dict) or person.get('personId') is None:
+                    continue
+                if person.get('shirtNumber') is None:
+                    continue
+                shirts[person['personId']] = person['shirtNumber']
+                shirts[str(person['personId'])] = person['shirtNumber']
 
-        def _on_court(team_id):
-            if team_id is None:
-                return []
-            column = team_id if team_id in df.columns else str(team_id)
-            if column not in df.columns:
-                return []
-            return df[column].tolist()
+            def _on_court(team_id):
+                if team_id is None:
+                    return []
+                column = team_id if team_id in df.columns else str(team_id)
+                if column not in df.columns:
+                    return []
+                return df[column].tolist()
 
-        team_people = {}
-        for team_id in (home_team_id, away_team_id):
-            if team_id is None:
-                continue
-            team_people[str(team_id)] = team_person_ids(
-                self.roster, team_id, _on_court(team_id),
+            team_people = {}
+            for team_id in (home_team_id, away_team_id):
+                if team_id is None:
+                    continue
+                team_people[str(team_id)] = team_person_ids(
+                    self.roster, team_id, _on_court(team_id),
+                )
+            self._matchup_payload = build_matchup_payload(
+                df,
+                home_id=home_team_id,
+                away_id=away_team_id,
+                id_table=self.id_table or {},
+                shirts=shirts,
+                team_people=team_people,
             )
-        self._matchup_payload = build_matchup_payload(
-            df,
-            home_id=home_team_id,
-            away_id=away_team_id,
-            id_table=self.id_table or {},
-            shirts=shirts,
-            team_people=team_people,
-        )
-        self._matchup_key = cache_key
-        return self._matchup_payload
+            self._matchup_key = cache_key
+            return self._matchup_payload
 
     def get_play_by_play_df(self):
-        if self._play_by_play_view is not None:
-            return self._play_by_play_view
+        with self._lock():
+            cached = self.__dict__.get('_play_by_play_view')
+            if cached is not None:
+                return cached
+            return self._build_play_by_play_view()
 
-        df = self.playbyplay_df.copy()
-        process_lineup_pbp(df, self.starter_dict)
+    def _build_play_by_play_view(self):
+        df = self._lineup_frame().copy()
         team_id_list = df['entityId'].dropna().unique()
         
         df['Team'] = df.apply(lambda x: self.id_table.get(x['entityId'], x['entityId']), axis=1)

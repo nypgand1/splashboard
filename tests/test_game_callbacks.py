@@ -211,7 +211,8 @@ class LiveRefreshWiringTests(unittest.TestCase):
 
     def test_open_lineup_size_uses_store_or_recomputes(self):
         with patch.object(game_page, 'render_lineup_children', return_value='painted') as render, \
-                patch.object(game_page, 'get_cached_report') as cached:
+                patch.object(game_page, 'get_cached_report') as cached, \
+                patch.object(game_page, '_info_dict', return_value={}):
             painted = game_page.update_pane_lineup(
                 '5', 'tab-lineup', '{"5": {"Home": "{}"}}', 'g1', True,
             )
@@ -221,16 +222,61 @@ class LiveRefreshWiringTests(unittest.TestCase):
         self.assertTrue(render.call_args.kwargs['show_opp'])
 
         report = cached.return_value
-        report.get_lineup_stats_json_dict.return_value = {'Home': '{}'}
+        report.get_all_lineup_stats_json_dict.return_value = {'4': {'Home': '{}'}}
         with patch.object(game_page, 'render_lineup_children', return_value='sized') as render, \
-                patch.object(game_page, 'get_cached_report', return_value=report):
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, '_info_dict', return_value={}):
             painted = game_page.update_pane_lineup(
                 '4', 'tab-lineup', '{"5": {"Home": "{}"}}', 'g1', False,
             )
         self.assertEqual(painted, 'sized')
-        report.get_lineup_stats_json_dict.assert_called_once_with(lineup_size=4)
+        report.get_all_lineup_stats_json_dict.assert_called_once_with(sizes=(4,))
         self.assertFalse(render.call_args.kwargs['show_opp'])
         self.assertIn('"4"', render.call_args.args[0])
+
+    def test_banner_clock_does_not_wake_box_lineup_or_shot_chart(self):
+        from dash._callback import GLOBAL_CALLBACK_LIST
+
+        def specs(fragment):
+            return [item for item in GLOBAL_CALLBACK_LIST if fragment in item['output']]
+
+        box = specs('bs-score-scroll.children')
+        self.assertEqual(len(box), 1)
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(box[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(box[0]['state']))
+
+        lineup = _callback_specs('pane-lineup.children')
+        self.assertEqual(len(lineup), 1)
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(lineup[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(lineup[0]['state']))
+
+        chart = specs('pane-shot-chart.children')
+        self.assertEqual(len(chart), 1)
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(chart[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(chart[0]['state']))
+
+        players = specs('shot-chart-player-away.data')
+        self.assertEqual(len(players), 1)
+        self.assertIn(('tabs', 'value'), _dep_pairs(players[0]['inputs']))
+        self.assertNotIn(('match_info_store', 'data'), _dep_pairs(players[0]['inputs']))
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(players[0]['state']))
+
+        periods = specs('shot-chart-period.data')
+        self.assertEqual(len(periods), 1)
+        self.assertIn(('tabs', 'value'), _dep_pairs(periods[0]['inputs']))
+        self.assertNotIn('match_info_store', {item['id'] for item in periods[0]['inputs']})
+
+        playhead = specs('rotation_view_store.data')
+        self.assertEqual(len(playhead), 1)
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(playhead[0]['inputs']))
+
+        chip = specs('rotation-live.style')
+        self.assertEqual(len(chip), 1)
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(chip[0]['inputs']))
+
+        matchup = specs('matchup-team.data')
+        self.assertEqual(len(matchup), 1)
+        self.assertIn(('match_info_store', 'data'), _dep_pairs(matchup[0]['inputs']))
 
 
 class RotationViewTests(unittest.TestCase):
@@ -974,8 +1020,23 @@ class ShotChartUiTests(unittest.TestCase):
         self.assertIn('Last Update', str(game_page.update_shot_chart_last_update('{}', 'tab-shot-chart')))
 
     def test_hidden_tab_does_not_rebuild_the_chart(self):
-        result = game_page.update_shot_chart('{}', '{}', 'all', 'all', 'all', 'tab-bs')
+        result = game_page.update_shot_chart('{}', 'all', 'all', 'all', 'tab-bs', '{}')
         self.assertTrue(all(item is no_update for item in result))
+        self.assertEqual(
+            game_page.update_shot_chart_period_options(_shot_frame(), 'tab-bs'),
+            (no_update, no_update),
+        )
+        info = json.dumps({'away_team_id': 'away', 'home_team_id': 'home'})
+        self.assertEqual(
+            game_page.update_shot_chart_players(_shot_frame(), 'tab-lineup', info),
+            (no_update, no_update),
+        )
+        data, style = game_page.update_shot_chart_period_options(_shot_frame(), 'tab-shot-chart')
+        self.assertEqual([item['label'] for item in data], ['All', '1Q', '2Q', '1H'])
+        self.assertEqual(style, {'display': 'flex'})
+        away, home = game_page.update_shot_chart_players(_shot_frame(), 'tab-shot-chart', info)
+        self.assertEqual(away[1]['label'], '#9 Chen')
+        self.assertEqual(home[1]['label'], '#7 Lin')
 
 
 class GridDmcContractTests(unittest.TestCase):
@@ -1103,6 +1164,16 @@ class LivePaintTests(unittest.TestCase):
         self.assertEqual(data['status'], 'PENDING')
         self.assertNotIn('banner_ready', data)
 
+    def test_pre_tip_repeat_does_not_rewrite_the_store(self):
+        info = self._info(status='WARM_UP')
+        with patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, 'get_cached_report') as cached:
+            first = game_page.update_match_info_store(1, 'g1', 'plg', None)
+            again = game_page.update_match_info_store(2, 'g1', 'plg', first)
+        cached.assert_not_called()
+        self.assertEqual(json.loads(first)['status'], 'WARM_UP')
+        self.assertIs(again, no_update)
+
     def test_play_by_play_failure_keeps_the_banner(self):
         from synergy_inbounder.communicator import SynergyAuthError
 
@@ -1208,8 +1279,9 @@ class LivePaintTests(unittest.TestCase):
         self.assertEqual(alert['_ui'], 'error')
 
     def test_rotation_without_team_ids_does_not_open_the_report(self):
-        with patch.object(game_page, 'get_cached_report') as cached:
-            result = game_page.update_rotation_store(1, 'g1', '{}', 'plg')
+        with patch.object(game_page, '_info_dict', return_value={}), \
+                patch.object(game_page, 'get_cached_report') as cached:
+            result = game_page.update_rotation_store(1, 'g1', 'plg')
         cached.assert_not_called()
         self.assertIs(result, no_update)
 

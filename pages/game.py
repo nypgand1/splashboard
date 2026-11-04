@@ -613,42 +613,161 @@ def _fixture_status(game_id, org):
     return lookup_game_status(game_id, org)
 
 
+def _report_slot(report, name):
+    """Return ``(present, value)`` for a real attribute. Misses Mock children."""
+    try:
+        data = object.__getattribute__(report, '__dict__')
+    except Exception:
+        return False, None
+    if not isinstance(data, dict) or name not in data:
+        return False, None
+    return True, data[name]
+
+
+def _store_slot(report, name, value):
+    try:
+        data = object.__getattribute__(report, '__dict__')
+    except Exception as exc:
+        log_data.debug('report memo skipped: %s', exc)
+        return
+    if isinstance(data, dict):
+        data[name] = value
+
+
+def _memo_unlocked(report, name, builder):
+    present, cached = _report_slot(report, name)
+    if present and cached is not None:
+        return cached
+    value = builder()
+    _store_slot(report, name, value)
+    return value
+
+
+def _memo_on_report(report, name, builder):
+    """Return a cached raw payload. A second caller waits out the first build."""
+    present, lock = _report_slot(report, '_derive_lock')
+    if present and lock is not None:
+        with lock:
+            return _memo_unlocked(report, name, builder)
+    return _memo_unlocked(report, name, builder)
+
+
+def _box_dict(report, game_id):
+    _, cached = _report_slot(report, '_box_dict')
+    if isinstance(cached, dict) and cached.get('game_id') == game_id:
+        return cached
+
+    def build():
+        return {
+            'game_id': game_id,
+            'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
+            'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
+            'qt_tout_df': report.get_period_team_timeout_df().to_json(date_format='iso', orient='split'),
+            't_adv_df': report.get_team_advance_stats_df().to_json(date_format='iso', orient='split'),
+            'adv_df': report.get_team_advanced_df().to_json(date_format='iso', orient='split'),
+            't_df': report.get_team_stats_df().to_json(date_format='iso', orient='split'),
+            'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
+            'p_df_dict': report.get_player_stats_json_dict(),
+            'p_summary_dict': report.get_player_box_score_summary_json_dict(),
+            'period_chips': report.box_score_period_chips() if hasattr(report, 'box_score_period_chips') else [],
+            'slices': report.box_score_slice_json() if hasattr(report, 'box_score_slice_json') else {},
+        }
+
+    value = _memo_on_report(report, '_box_dict', build)
+    if isinstance(value, dict) and value.get('game_id') != game_id:
+        return build()
+    return value
+
+
 def _box_payload(report, game_id):
-    bs_dict = {
-        'game_id': game_id,
-        'qt_pts_df': report.get_period_team_pts_df().to_json(date_format='iso', orient='split'),
-        'qt_foul_df': report.get_period_team_fouls_df().to_json(date_format='iso', orient='split'),
-        'qt_tout_df': report.get_period_team_timeout_df().to_json(date_format='iso', orient='split'),
-        't_adv_df': report.get_team_advance_stats_df().to_json(date_format='iso', orient='split'),
-        'adv_df': report.get_team_advanced_df().to_json(date_format='iso', orient='split'),
-        't_df': report.get_team_stats_df().to_json(date_format='iso', orient='split'),
-        'k_df': report.get_team_key_stats_df().to_json(date_format='iso', orient='split'),
-        'p_df_dict': report.get_player_stats_json_dict(),
-        'p_summary_dict': report.get_player_box_score_summary_json_dict(),
-        'period_chips': report.box_score_period_chips() if hasattr(report, 'box_score_period_chips') else [],
-        'slices': report.box_score_slice_json() if hasattr(report, 'box_score_slice_json') else {},
-    }
-    return json.dumps(bs_dict)
+    return json.dumps(_box_dict(report, game_id))
+
+
+def _pbp_split_json(report):
+    def build():
+        return report.get_play_by_play_df().to_json(date_format='iso', orient='split')
+    return _memo_on_report(report, '_pbp_split_json', build)
+
+
+def _lineup_dict(report):
+    return _memo_on_report(
+        report,
+        '_lineup_store_dict',
+        lambda: report.get_all_lineup_stats_json_dict(sizes=(5,)),
+    )
 
 
 def _lineup_payload(report):
-    return json.dumps(report.get_all_lineup_stats_json_dict(sizes=(5,)))
+    return json.dumps(_lineup_dict(report))
+
+
+def _matchup_dict(report, info):
+    if not info.get('home_team_id') or not info.get('away_team_id'):
+        return {}
+    key = (str(info.get('home_team_id')), str(info.get('away_team_id')))
+    _, cached = _report_slot(report, '_matchup_store_dict')
+    _, cached_key = _report_slot(report, '_matchup_store_key')
+    if cached is not None and cached_key == key:
+        return cached
+    data = report.get_matchup_payload(
+        home_team_id=info.get('home_team_id'),
+        away_team_id=info.get('away_team_id'),
+    )
+    _store_slot(report, '_matchup_store_dict', data)
+    _store_slot(report, '_matchup_store_key', key)
+    return data
 
 
 def _matchup_payload(report, info):
-    if not info.get('home_team_id') or not info.get('away_team_id'):
-        return json.dumps({})
-    return json.dumps(report.get_matchup_payload(
+    return json.dumps(_matchup_dict(report, info))
+
+
+def _rotation_dict(report, info):
+    key = (str(info.get('home_team_id')), str(info.get('away_team_id')))
+    _, cached = _report_slot(report, '_rotation_store_dict')
+    _, cached_key = _report_slot(report, '_rotation_store_key')
+    if cached is not None and cached_key == key:
+        return cached
+    data = report.get_rotation_payload(
         home_team_id=info.get('home_team_id'),
         away_team_id=info.get('away_team_id'),
-    ))
+    )
+    _store_slot(report, '_rotation_store_dict', data)
+    _store_slot(report, '_rotation_store_key', key)
+    return data
 
 
 def _rotation_payload(report, info):
-    return json.dumps(report.get_rotation_payload(
-        home_team_id=info.get('home_team_id'),
-        away_team_id=info.get('away_team_id'),
-    ))
+    return json.dumps(_rotation_dict(report, info))
+
+
+def _paint_info(match_info, game_id, league):
+    """Names for a paint. The fixture row fills a banner that has not arrived."""
+    info = match_info if isinstance(match_info, dict) else safe_loads(match_info)
+    if not isinstance(info, dict):
+        info = {}
+    ready = (
+        info.get('home_team') and info.get('away_team')
+        and info.get('home_team_id') and info.get('away_team_id')
+        and info.get('organization_id')
+    )
+    if ready or not game_id:
+        return info
+    org = info.get('organization_id') or _organization(league)
+    if not org:
+        return info
+    try:
+        fresh = _info_dict(org, game_id) or {}
+    except Exception as exc:
+        log_data.debug('fixture names unavailable: %s', exc)
+        return info
+    if not isinstance(fresh, dict):
+        return info
+    merged = dict(fresh)
+    for key, value in info.items():
+        if value not in (None, ''):
+            merged[key] = value
+    return merged
 
 
 def _info_dict(org, game_id):
@@ -739,22 +858,48 @@ def _already_painted(previous, generation, game_id, org):
     return True
 
 
+def _frame_text(payload):
+    """A play-by-play split string wrapped so generation can stamp it once."""
+    if isinstance(payload, dict) and set(payload) == {'frame'} and isinstance(payload.get('frame'), str):
+        return payload['frame']
+    return None
+
+
 def _with_generation(payload, generation, game_id, org):
+    frame = _frame_text(payload)
     if not generation:
-        return payload
+        if frame is not None:
+            return frame
+        if isinstance(payload, str):
+            return payload
+        return json.dumps(payload)
     state = report_refresh_state(game_id, org)
     delay = state.get('label') if state.get('delayed') else None
-    data = safe_loads(payload)
-    if isinstance(data, dict) and 'columns' in data and 'data' in data:
+    if frame is not None:
         wrapped = {
             'generation': generation,
             'game_id': game_id,
-            'frame': payload if isinstance(payload, str) else json.dumps(data),
+            'frame': frame,
         }
         if delay:
             wrapped['delay_seen'] = delay
         return json.dumps(wrapped)
-    if not isinstance(data, dict):
+    if isinstance(payload, str):
+        data = safe_loads(payload)
+        if isinstance(data, dict) and 'columns' in data and 'data' in data:
+            wrapped = {
+                'generation': generation,
+                'game_id': game_id,
+                'frame': payload,
+            }
+            if delay:
+                wrapped['delay_seen'] = delay
+            return json.dumps(wrapped)
+        if not isinstance(data, dict):
+            return payload
+    elif isinstance(payload, dict):
+        data = dict(payload)
+    else:
         return payload
     data['generation'] = generation
     data['game_id'] = game_id
@@ -835,7 +980,7 @@ def update_bs_store(n, game_id, league='plg', previous=None):
     if _stale(game_id, org, generation):
         return no_update
     try:
-        payload = _box_payload(report, game_id)
+        payload = _box_dict(report, game_id)
     except Exception:
         log_payload.exception('box score payload failed game=%s', game_id)
         return _keep_previous(previous, game_id)
@@ -870,6 +1015,8 @@ def update_match_info_store(n, game_id, league='plg', previous=None):
     if not is_live_play_status(info.get('status')):
         return no_update
     if info.get('status') != 'IN_PROGRESS':
+        if safe_loads(previous) == info:
+            return no_update
         return json.dumps(info, ensure_ascii=False)
     try:
         report = _open_report(game_id, org)
@@ -905,9 +1052,8 @@ def update_match_info_store(n, game_id, league='plg', previous=None):
 @callback(
     Output('game-info-banner-wrap', 'children'),
     Input('match_info_store', 'data'),
-    Input('pbp_store', 'data'),
 )
-def render_game_info_banner(match_info_store, pbp_store=None):
+def render_game_info_banner(match_info_store):
     info = safe_loads(match_info_store)
     if not info or info.get('_ui') == 'error':
         return html.Div()
@@ -963,7 +1109,7 @@ def _live_report(game_id, org):
 def _finish_outputs(game_id, org, report, info):
     return (
         _box_payload(report, game_id),
-        report.get_play_by_play_df().to_json(date_format='iso', orient='split'),
+        _pbp_split_json(report),
         _lineup_payload(report),
         _matchup_payload(report, info),
         _rotation_payload(report, info),
@@ -1051,7 +1197,7 @@ def update_pbp_store(n, game_id, league='plg', previous=None):
     if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
-        payload = report.get_play_by_play_df().to_json(date_format='iso', orient='split')
+        payload = {'frame': _pbp_split_json(report)}
     except Exception:
         log_payload.exception('play-by-play payload failed game=%s', game_id)
         return _keep_previous(previous, game_id)
@@ -1086,7 +1232,7 @@ def update_lineup_store(n, game_id, league='plg', previous=None):
     if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
-        payload = _lineup_payload(report)
+        payload = _lineup_dict(report)
     except Exception:
         log_payload.exception('lineup payload failed game=%s', game_id)
         return _keep_previous(previous, game_id)
@@ -1098,12 +1244,11 @@ def update_lineup_store(n, game_id, league='plg', previous=None):
     Output('matchup_store', 'data', allow_duplicate=True),
     Input('interval-component', 'n_intervals'),
     Input('game_id', 'children'),
-    Input('match_info_store', 'data'),
     Input('game_league', 'children'),
     State('matchup_store', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def update_matchup_store(n, game_id, match_info_store, league='plg', previous=None):
+def update_matchup_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
@@ -1112,13 +1257,13 @@ def update_matchup_store(n, game_id, match_info_store, league='plg', previous=No
     try:
         if not is_live_play_status(_fixture_status(game_id, org)):
             return no_update
+        info = _info_dict(org, game_id) or {}
     except SynergyAuthError:
         log_auth.exception('matchups status failed game=%s', game_id)
         return _error_store(game_id=game_id)
     except Exception:
         log_unexpected.exception('matchups status failed game=%s', game_id)
         return _keep_previous(previous, game_id)
-    info = safe_loads(match_info_store)
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
@@ -1134,7 +1279,7 @@ def update_matchup_store(n, game_id, match_info_store, league='plg', previous=No
     if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
-        payload = _matchup_payload(report, info)
+        payload = _matchup_dict(report, info)
     except Exception:
         log_payload.exception('matchups payload failed game=%s', game_id)
         return _keep_previous(previous, game_id)
@@ -1146,18 +1291,24 @@ def update_matchup_store(n, game_id, match_info_store, league='plg', previous=No
     Output('rotation_store', 'data', allow_duplicate=True),
     Input('interval-component', 'n_intervals'),
     Input('game_id', 'children'),
-    Input('match_info_store', 'data'),
     Input('game_league', 'children'),
     State('rotation_store', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def update_rotation_store(n, game_id, match_info_store, league='plg', previous=None):
+def update_rotation_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
-    info = safe_loads(match_info_store)
+    try:
+        info = _info_dict(org, game_id) or {}
+    except SynergyAuthError:
+        log_auth.exception('rotation status failed game=%s', game_id)
+        return _error_store(game_id=game_id)
+    except Exception:
+        log_unexpected.exception('rotation status failed game=%s', game_id)
+        return _keep_previous(previous, game_id)
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return no_update
     try:
@@ -1173,7 +1324,7 @@ def update_rotation_store(n, game_id, match_info_store, league='plg', previous=N
     if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
-        payload = _rotation_payload(report, info)
+        payload = _rotation_dict(report, info)
     except Exception:
         log_payload.exception('rotation payload failed game=%s', game_id)
         return _keep_previous(previous, game_id)
@@ -3231,12 +3382,19 @@ def update_pane_bs(bs_store, active_tab, period='all'):
     Input('bs-period', 'data'),
     Input('game_id', 'children'),
     Input('tabs', 'value'),
-    Input('match_info_store', 'data'),
+    State('match_info_store', 'data'),
     State('bs-player-columns', 'data'),
+    State('game_league', 'children'),
 )
-def sync_box_score(bs_store, period, game_id, active_tab, match_info, column_state):
+def sync_box_score(bs_store, period, game_id, active_tab, match_info, column_state, league='plg'):
     return box_score_sync_values(
-        bs_store, period, game_id, active_tab, column_state, ctx.triggered_id, match_info,
+        bs_store,
+        period,
+        game_id,
+        active_tab,
+        column_state,
+        ctx.triggered_id,
+        _paint_info(match_info, game_id, league),
     )
 
 
@@ -3317,8 +3475,11 @@ def update_rotation_period_options(rotation_store):
     Output('shot-chart-period', 'data'),
     Output('shot-chart-period-bar', 'style'),
     Input('pbp_store', 'data'),
+    Input('tabs', 'value'),
 )
-def update_shot_chart_period_options(pbp_store):
+def update_shot_chart_period_options(pbp_store, active_tab='tab-shot-chart'):
+    if active_tab != 'tab-shot-chart':
+        return no_update, no_update
     return shot_chart_period_state(pbp_store)
 
 
@@ -3326,10 +3487,15 @@ def update_shot_chart_period_options(pbp_store):
     Output('shot-chart-player-away', 'data'),
     Output('shot-chart-player-home', 'data'),
     Input('pbp_store', 'data'),
-    Input('match_info_store', 'data'),
+    Input('tabs', 'value'),
+    State('match_info_store', 'data'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_shot_chart_players(pbp_store, match_info_store):
-    return shot_chart_player_state(pbp_store, match_info_store)
+def update_shot_chart_players(pbp_store, active_tab, match_info_store=None, game_id=None, league='plg'):
+    if active_tab != 'tab-shot-chart':
+        return no_update, no_update
+    return shot_chart_player_state(pbp_store, _paint_info(match_info_store, game_id, league))
 
 
 @callback(
@@ -3355,17 +3521,26 @@ def reset_shot_chart_filters(game_id, period, away_player, home_player):
     Output('shot-chart-court-away', 'children'),
     Output('shot-chart-court-home', 'children'),
     Input('pbp_store', 'data'),
-    Input('match_info_store', 'data'),
     Input('shot-chart-period', 'value'),
     Input('shot-chart-player-away', 'value'),
     Input('shot-chart-player-home', 'value'),
     Input('tabs', 'value'),
+    State('match_info_store', 'data'),
+    State('game_id', 'children'),
+    State('game_league', 'children'),
 )
-def update_shot_chart(pbp_store, match_info_store, period, away_player, home_player, active_tab):
+def update_shot_chart(
+    pbp_store, period, away_player, home_player, active_tab,
+    match_info_store=None, game_id=None, league='plg',
+):
     if active_tab != 'tab-shot-chart':
         return (no_update,) * 7
     return shot_chart_outputs(shot_chart_panel(
-        pbp_store, match_info_store, period, away_player, home_player,
+        pbp_store,
+        _paint_info(match_info_store, game_id, league),
+        period,
+        away_player,
+        home_player,
     ))
 
 
@@ -3616,7 +3791,7 @@ def update_pane_pbp(pbp_store, active_tab, game_id=None, league='plg'):
     State('game_id', 'children'),
     State('lineup-show-opp', 'checked'),
     State('game_league', 'children'),
-    Input('match_info_store', 'data'),
+    State('match_info_store', 'data'),
 )
 def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=None, game_id=None, show_opp=False, league='plg', match_info=None):
     if active_tab != 'tab-lineup':
@@ -3627,26 +3802,28 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
         log_data.debug('lineup size parse failed: %s', exc)
         size_int = 5
     show_opp = bool(show_opp)
+    info = _paint_info(match_info, game_id, league)
     meta = safe_loads(lineup_store)
     if meta.get('_ui') in ('waiting', 'error'):
-        return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=match_info)
+        return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=info)
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
             report = _open_report(game_id, _organization(league))
-            custom_dict = report.get_lineup_stats_json_dict(lineup_size=size_int)
+            sized = report.get_all_lineup_stats_json_dict(sizes=(size_int,))
+            custom_dict = sized.get(str(size_int)) if isinstance(sized, dict) else None
             if custom_dict:
                 return render_lineup_children(
                     json.dumps({str(size_int): custom_dict}),
                     size_int,
                     show_opp=show_opp,
-                    match_info=match_info,
+                    match_info=info,
                 )
         except LiveBudgetWait:
             return [loading_skeleton('table')]
         except Exception:
             log_payload.exception('lineup size payload failed game=%s', game_id)
-    return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=match_info)
+    return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=info)
 
 
 @callback(
