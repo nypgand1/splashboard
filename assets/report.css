@@ -128,9 +128,6 @@ body {
         border-bottom-left-radius: 12px;
         border-bottom-right-radius: 12px;
     }
-    .app-main-content {
-        padding: 16px;
-    }
 }
 
 /* Mobile (≤ 768px) */
