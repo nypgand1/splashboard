@@ -832,8 +832,9 @@ class PostGameReport():
             if bib_str is not None:
                 try:
                     return (0, int(bib_str))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    from synergy_inbounder.logs import data as log_data
+                    log_data.debug('lineup bib parse failed: %s', exc)
             return (1, person_name(self.id_table, pid))
 
         u_df_dict = dict()
@@ -998,7 +999,9 @@ class PostGameReport():
                     return None
                 try:
                     return int(v)
-                except Exception:
+                except Exception as exc:
+                    from synergy_inbounder.logs import data as log_data
+                    log_data.debug('box score int parse failed: %s', exc)
                     return None
 
             or_team = _clean_int('reboundsTeamOffensive')

@@ -97,6 +97,10 @@ class SynergyAuthError(SynergyApiError):
     pass
 
 
+class LiveBudgetWait(Exception):
+    """This game has no snapshot because the shared live slot is not open."""
+
+
 def drop_cached_live_urls(game_id):
     """Drop partial /live HTTP hits for one fixture so the next bundle is one generation."""
     if not game_id:
@@ -119,7 +123,9 @@ def drop_cached_live_urls(game_id):
                 urls.append(url)
         if urls:
             cache.delete(urls=urls)
-    except Exception:
+    except Exception as exc:
+        from synergy_inbounder.logs import unexpected
+        unexpected.exception('drop live http cache failed: %s', exc)
         return
 
 
@@ -261,7 +267,7 @@ class Communicator:
                     expire_after=expire_after, **kwargs,
                 )
                 r = Communicator._note_live_response(org_id, url, r)
-        if r.status_code >= 500 and (route is None or BUDGET.allow_retry(org_id, route)):
+        if r.status_code >= 500 and route is None:
             r = Communicator.get(
                 url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
                 expire_after=expire_after, **kwargs,

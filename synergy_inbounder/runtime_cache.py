@@ -38,6 +38,7 @@ _report_cache = {}
 _report_inflight = {}
 _applied = {}
 _delay_paint = {}
+_budget_wait_notice = set()
 
 _meta_lock = threading.Lock()
 _season_cache = {}
@@ -127,6 +128,19 @@ def _copy_starters(report, previous):
     }
 
 
+def _note_budget_wait(org, game_id):
+    token = (str(org), str(game_id))
+    if token in _budget_wait_notice:
+        return
+    _budget_wait_notice.add(token)
+    from synergy_inbounder.logs import budget
+    budget.info('waiting for a live slot org=%s game=%s', org, game_id)
+
+
+def _clear_budget_wait(org, game_id):
+    _budget_wait_notice.discard((str(org), str(game_id)))
+
+
 def _store_report(key, report, status, now):
     previous = _report_cache.get(key)
     _copy_starters(report, previous)
@@ -137,6 +151,7 @@ def _store_report(key, report, status, now):
     else:
         stats_label = None if stats_failed else label
     generation = int(previous.get('generation') or 0) + 1 if previous else 1
+    _clear_budget_wait(key[0] if isinstance(key, tuple) else None, key[-1] if isinstance(key, tuple) else key)
     _report_cache[key] = {
         'report': report,
         'fetched_at': now,
@@ -247,8 +262,9 @@ def get_cached_report(game_id, organization_id=None, pin=None):
                     _mark_report_delayed(key)
                 if entry:
                     return entry['report']
-                from synergy_inbounder.communicator import SynergyApiError
-                raise SynergyApiError('No live snapshot for {game}'.format(game=game_id))
+                from synergy_inbounder.communicator import LiveBudgetWait
+                _note_budget_wait(org, game_id)
+                raise LiveBudgetWait('No live snapshot for {game}'.format(game=game_id))
             fut = Future()
             _report_inflight[key] = fut
             is_builder = True
@@ -287,12 +303,16 @@ def _build_report(key, game_id, org, now, live, future=None):
         future.set_result(stored)
         return stored
     except SynergyAuthError as exc:
+        from synergy_inbounder.logs import auth
+        auth.exception('live report auth failed game=%s', game_id)
         _drop_partial_live_http(game_id, live)
         with _report_lock:
             _report_cache.pop(key, None)
         future.set_exception(exc)
         raise
     except Exception as exc:
+        from synergy_inbounder.logs import build
+        build.exception('live report build failed game=%s', game_id)
         _drop_partial_live_http(game_id, live)
         with _report_lock:
             stale = _mark_report_delayed(key)
@@ -336,7 +356,9 @@ def _drop_partial_live_http(game_id, live):
     try:
         from synergy_inbounder.communicator import drop_cached_live_urls
         drop_cached_live_urls(game_id)
-    except Exception:
+    except Exception as exc:
+        from synergy_inbounder.logs import unexpected
+        unexpected.exception('drop partial live http cache failed: %s', exc)
         return
 
 
@@ -367,9 +389,13 @@ def _load_meta(cache, inflight, key, ttl, builder, now):
         fut.set_result(value)
         return value
     except SynergyAuthError as exc:
+        from synergy_inbounder.logs import auth
+        auth.exception('meta refresh auth failed')
         fut.set_exception(exc)
         raise
     except Exception as exc:
+        from synergy_inbounder.logs import unexpected
+        unexpected.exception('meta refresh failed')
         with _meta_lock:
             entry = cache.get(key)
             if entry:
@@ -443,8 +469,9 @@ def warmup_game_report(game_id, match_info=None, organization_id=None):
                     home_team_id=info.get('home_team_id'),
                     away_team_id=info.get('away_team_id'),
                 )
-        except Exception as e:
-            print(f"Background warmup error for {game_id}: {e}")
+        except Exception:
+            from synergy_inbounder.logs import unexpected
+            unexpected.exception('background warmup failed game=%s', game_id)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -456,17 +483,21 @@ def _parse_start_time(value):
     try:
         if pd.isna(value):
             return None
-    except Exception:
-        pass
+    except Exception as exc:
+        from synergy_inbounder.logs import data
+        data.debug('start time is not a scalar: %s', exc)
     try:
         parsed = pd.to_datetime(value)
-    except Exception:
+    except Exception as exc:
+        from synergy_inbounder.logs import data
+        data.debug('start time parse failed: %s', exc)
         return None
     try:
         if pd.isna(parsed):
             return None
-    except Exception:
-        pass
+    except Exception as exc:
+        from synergy_inbounder.logs import data
+        data.debug('start time na check failed: %s', exc)
     return parsed
 
 
@@ -476,8 +507,9 @@ def _fixture_id(value):
     try:
         if pd.isna(value):
             return ''
-    except Exception:
-        pass
+    except Exception as exc:
+        from synergy_inbounder.logs import data
+        data.debug('fixture id na check failed: %s', exc)
     text = str(value).strip()
     if not text or text.lower() == 'nan':
         return ''
@@ -525,8 +557,9 @@ def prefetch_latest_games(season_df, max_games=2, organization_id=None):
         for gid in target_ids:
             try:
                 get_cached_report(gid, organization_id)
-            except Exception as e:
-                print(f"Prefetch error for game {gid}: {e}")
+            except Exception as exc:
+                from synergy_inbounder.logs import unexpected
+                unexpected.exception('prefetch failed game=%s: %s', gid, exc)
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
@@ -538,6 +571,7 @@ def clear_runtime_caches():
         _report_inflight.clear()
         _applied.clear()
         _delay_paint.clear()
+        _budget_wait_notice.clear()
     with _meta_lock:
         _season_cache.clear()
         _season_inflight.clear()
@@ -550,5 +584,6 @@ def clear_runtime_caches():
         from synergy_reporter.team_season import clear_team_stats_cache
         clear_team_stats_cache()
     except Exception:
-        pass
+        from synergy_inbounder.logs import unexpected
+        unexpected.exception('clear team stats cache failed')
 

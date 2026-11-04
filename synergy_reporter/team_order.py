@@ -2,6 +2,8 @@
 
 import json
 
+from synergy_inbounder.logs import data as log_data
+
 HOME_DOT = '#00b4d8'
 AWAY_DOT = '#94a3b8'
 HOME_STRIPE = '#0077b6'
@@ -14,7 +16,8 @@ def side_names(match_info):
     if isinstance(match_info, str):
         try:
             info = json.loads(match_info) if match_info.strip() else {}
-        except Exception:
+        except Exception as exc:
+            log_data.debug('team order match info parse failed: %s', exc)
             info = {}
     if not isinstance(info, dict):
         info = {}
@@ -65,7 +68,8 @@ def order_team_split_json(payload, away_name, home_name):
         return payload
     try:
         parsed = json.loads(payload)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('team order split parse failed: %s', exc)
         return payload
     columns = parsed.get('columns') if isinstance(parsed, dict) else None
     data = parsed.get('data') if isinstance(parsed, dict) else None

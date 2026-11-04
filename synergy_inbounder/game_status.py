@@ -89,8 +89,9 @@ def _is_numeric_score(val):
     try:
         if val != val:
             return False
-    except Exception:
-        pass
+    except Exception as exc:
+        from synergy_inbounder.logs import data as log_data
+        log_data.debug('score na check failed: %s', exc)
     text = str(val).strip()
     if not text or text.lower() in ('nan', 'none', '-', '—', 'vs'):
         return False

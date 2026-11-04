@@ -1145,11 +1145,9 @@ class LivePaintTests(unittest.TestCase):
         generations = iter([1, 2])
         with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
                 patch.object(game_page, 'get_cached_report', return_value=report), \
-                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)), \
-                patch.object(game_page, 'note_applied') as noted:
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)):
             result = game_page.update_bs_store(1, 'g1', 'plg', previous)
         self.assertIs(result, no_update)
-        noted.assert_not_called()
 
     def test_a_stale_play_by_play_does_not_overwrite(self):
         report = Mock()
@@ -1157,11 +1155,67 @@ class LivePaintTests(unittest.TestCase):
         generations = iter([1, 1, 2])
         with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
                 patch.object(game_page, 'get_cached_report', return_value=report), \
-                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)), \
-                patch.object(game_page, 'note_applied') as noted:
+                patch.object(game_page, 'report_generation', side_effect=lambda *_a, **_k: next(generations)):
             result = game_page.update_pbp_store(1, 'g1', 'plg')
         self.assertIs(result, no_update)
-        noted.assert_not_called()
+
+    def test_each_page_remembers_the_generation_it_painted(self):
+        report = Mock()
+        report.get_play_by_play_df.return_value = pd.DataFrame({'eventType': ['shot']})
+        with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', return_value=report), \
+                patch.object(game_page, 'report_generation', return_value=3):
+            first = game_page.update_pbp_store(1, 'g1', 'plg')
+            again = game_page.update_pbp_store(2, 'g1', 'plg', first)
+            fresh = game_page.update_pbp_store(3, 'g1', 'plg', None)
+        painted = json.loads(first)
+        self.assertEqual(painted['generation'], 3)
+        self.assertEqual(painted['game_id'], 'g1')
+        self.assertIn('shot', painted['frame'])
+        self.assertIs(again, no_update)
+        self.assertEqual(json.loads(fresh)['generation'], 3)
+
+    def test_a_budget_wait_keeps_the_fixture_header_and_a_skeleton(self):
+        from synergy_inbounder.communicator import LiveBudgetWait
+
+        info = self._info()
+        previous = json.dumps(self._info(banner_ready=True, banner_clock='1Q 5:00'))
+        previous_pbp = json.dumps({'columns': ['eventType'], 'data': [['shot']]})
+        with patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', side_effect=LiveBudgetWait('wait')):
+            banner = json.loads(game_page.update_match_info_store(1, 'g1', 'plg', None))
+            waiting = json.loads(game_page.update_pbp_store(1, 'g1', 'plg', None))
+            kept = game_page.update_match_info_store(2, 'g1', 'plg', previous)
+            kept_pbp = game_page.update_pbp_store(2, 'g1', 'plg', previous_pbp)
+        self.assertNotIn('banner_ready', banner)
+        self.assertEqual(banner['home_team'], 'Home')
+        self.assertEqual(banner['time'], info['time'])
+        self.assertEqual(waiting['_ui'], 'waiting')
+        self.assertEqual(kept, previous)
+        self.assertEqual(kept_pbp, previous_pbp)
+
+    def test_a_build_failure_without_a_snapshot_alerts_the_tabs(self):
+        info = self._info()
+        with patch.object(game_page, '_info_dict', return_value=info), \
+                patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \
+                patch.object(game_page, 'get_cached_report', side_effect=RuntimeError('down')):
+            banner = json.loads(game_page.update_match_info_store(1, 'g1', 'plg', None))
+            alert = json.loads(game_page.update_pbp_store(1, 'g1', 'plg', None))
+        self.assertNotIn('banner_ready', banner)
+        self.assertEqual(banner['home_team'], 'Home')
+        self.assertEqual(banner['time'], info['time'])
+        self.assertEqual(alert['_ui'], 'error')
+
+    def test_rotation_without_team_ids_does_not_open_the_report(self):
+        with patch.object(game_page, 'get_cached_report') as cached:
+            result = game_page.update_rotation_store(1, 'g1', '{}', 'plg')
+        cached.assert_not_called()
+        self.assertIs(result, no_update)
+
+    def test_last_update_without_a_snapshot_is_a_dash(self):
+        text = str(game_page._last_update_span('missing-game', 'org-missing'))
+        self.assertIn('Last Update: —', text)
 
     def test_finish_waits_while_the_fixture_is_live(self):
         with patch.object(game_page, '_fixture_status', return_value='IN_PROGRESS'), \

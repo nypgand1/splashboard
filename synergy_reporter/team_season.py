@@ -4,13 +4,14 @@
 Counting columns are sums divided by GP. Shot percentages and the efficiency
 cards sum the inputs first, then use the same formulas as one Box Score half.
 """
-import logging
 import threading
 import time
 
 import pandas as pd
 
-from synergy_inbounder.communicator import SynergyApiError, _cache_hits
+from synergy_inbounder.communicator import SynergyAuthError, _cache_hits
+from synergy_inbounder.logs import auth as log_auth
+from synergy_inbounder.logs import unexpected as log_unexpected
 from synergy_inbounder.game_status import is_finished_status
 from synergy_inbounder.http_wave import run_wave
 from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
@@ -41,8 +42,6 @@ from synergy_reporter.post_game_report import (
 )
 from synergy_reporter.rotation import clock_to_seconds, period_label
 from ui_kit import ERROR_GAME
-
-LOGGER = logging.getLogger('SynergyInbounder')
 
 EMPTY_TEAM_STATS = 'No games in this view.'
 EMPTY_TEAM_STATS_NEXT = 'Switch Game Type, Opponent, Stadium, or Home/Away.'
@@ -816,7 +815,7 @@ def _download_pbp(org_id, row):
                 playbyplay_df=frame, touch=('playbyplay_df',),
             )
         except Exception:
-            LOGGER.warning('Team Stats play-by-play failed for %s', fixture_id)
+            log_unexpected.exception('team stats play-by-play failed fixture=%s', fixture_id)
             frame_store.store(
                 org_id, fixture_id, status=status,
                 pbp_failed=True, touch=('playbyplay_df',),
@@ -1029,8 +1028,11 @@ def team_stats_payload(
             stadium=stadium,
             site=site,
         )
-    except (SynergyApiError, Exception):
-        LOGGER.warning('Team Stats failed to load %s %s', key, selected_season)
+    except SynergyAuthError:
+        log_auth.exception('team stats load auth failed %s %s', key, selected_season)
+        return _error_payload(key, selected_season, seasons)
+    except Exception:
+        log_unexpected.exception('team stats load failed %s %s', key, selected_season)
         return _error_payload(key, selected_season, seasons)
     payload = {
         'ok': True,

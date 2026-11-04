@@ -8,20 +8,21 @@ import dash_mantine_components as dmc
 import dash_ag_grid as dag
 import pandas as pd
 
-from synergy_inbounder.communicator import SynergyAuthError
+from synergy_inbounder.communicator import LiveBudgetWait, SynergyAuthError
+from synergy_inbounder.logs import auth as log_auth
+from synergy_inbounder.logs import data as log_data
+from synergy_inbounder.logs import payload as log_payload
+from synergy_inbounder.logs import unexpected as log_unexpected
 from synergy_inbounder.live_clock import scoreboard_from_pbp_frame
 from synergy_inbounder.names import display_name
 from synergy_inbounder.settings import organization_for_league, season_ids_for_organization
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
-    applied_generation,
     get_cached_report,
     lookup_game_status,
-    note_applied,
     report_generation,
     report_refresh_state,
-    take_delay_paint,
     warmup_game_report,
 )
 
@@ -596,7 +597,8 @@ def _organization(league):
 def _triggered_id():
     try:
         return ctx.triggered_id
-    except Exception:
+    except Exception as exc:
+        log_data.debug('triggered id unavailable: %s', exc)
         return None
 
 
@@ -659,7 +661,8 @@ def _info_dict(org, game_id):
         dt = pd.to_datetime(dt_str)
         date_display = dt.strftime('%Y-%m-%d')
         time_display = dt.strftime('%H:%M')
-    except Exception:
+    except Exception as exc:
+        log_data.debug('fixture start time parse failed: %s', exc)
         date_display = dt_str
         time_display = ''
     home_id = row.get('teamIdHome')
@@ -679,27 +682,93 @@ def _info_dict(org, game_id):
     }
 
 
-def _keep_previous(previous, game_id=None):
+def _success_text(previous):
+    """Return the previous store text when it is a painted success."""
+    if previous is None:
+        return None
     kept = safe_loads(previous)
-    if kept.get('status') and kept.get('_ui') != 'error':
-        return previous if isinstance(previous, str) else json.dumps(kept)
-    if kept.get('qt_pts_df') and kept.get('_ui') != 'error':
-        return previous if isinstance(previous, str) else json.dumps(kept)
-    if kept.get('columns') and kept.get('_ui') != 'error':
-        return previous if isinstance(previous, str) else json.dumps(kept)
+    if not isinstance(kept, dict) or kept.get('_ui') in ('error', 'waiting'):
+        return None
+    useful = (
+        kept.get('status')
+        or kept.get('qt_pts_df')
+        or kept.get('columns')
+        or kept.get('frame')
+        or kept.get('pairs')
+        or kept.get('teams')
+        or kept.get('generation')
+        or any(str(key).isdigit() for key in kept)
+    )
+    if not useful:
+        return None
+    return previous if isinstance(previous, str) else json.dumps(kept)
+
+
+def _keep_previous(previous, game_id=None):
+    kept = _success_text(previous)
+    if kept is not None:
+        return kept
     return _error_store(game_id=game_id)
+
+
+def _waiting_store(game_id=None):
+    payload = {'_ui': 'waiting'}
+    if game_id is not None:
+        payload['game_id'] = game_id
+    return json.dumps(payload)
+
+
+def _keep_or_wait(previous, game_id=None):
+    kept = _success_text(previous)
+    if kept is not None:
+        return kept
+    return _waiting_store(game_id)
+
+
+def _already_painted(previous, generation, game_id, org):
+    if not generation:
+        return False
+    prev = safe_loads(previous)
+    if prev.get('game_id') and str(prev.get('game_id')) != str(game_id):
+        return False
+    if prev.get('_ui') in ('error', 'waiting') or prev.get('generation') != generation:
+        return False
+    state = report_refresh_state(game_id, org)
+    if state.get('delayed') and prev.get('delay_seen') != state.get('label'):
+        return False
+    return True
+
+
+def _with_generation(payload, generation, game_id, org):
+    if not generation:
+        return payload
+    state = report_refresh_state(game_id, org)
+    delay = state.get('label') if state.get('delayed') else None
+    data = safe_loads(payload)
+    if isinstance(data, dict) and 'columns' in data and 'data' in data:
+        wrapped = {
+            'generation': generation,
+            'game_id': game_id,
+            'frame': payload if isinstance(payload, str) else json.dumps(data),
+        }
+        if delay:
+            wrapped['delay_seen'] = delay
+        return json.dumps(wrapped)
+    if not isinstance(data, dict):
+        return payload
+    data['generation'] = generation
+    data['game_id'] = game_id
+    if delay:
+        data['delay_seen'] = delay
+    else:
+        data.pop('delay_seen', None)
+    return json.dumps(data)
 
 
 def _stale(game_id, org, generation):
     if not generation:
         return False
     return report_generation(game_id, org) != generation
-
-
-def _already_applied(game_id, org, slot, generation):
-    if not generation:
-        return False
-    return applied_generation(game_id, org, slot) == generation
 
 
 def _banner_time_and_scores(info):
@@ -731,21 +800,21 @@ def update_bs_store(n, game_id, league='plg', previous=None):
         return _error_store(game_id=game_id)
     try:
         status = _fixture_status(game_id, org)
-    except SynergyAuthError as exc:
-        print(f"Error loading box score: {exc}")
+    except SynergyAuthError:
+        log_auth.exception('box score status failed game=%s', game_id)
         return _error_store(game_id=game_id)
-    except Exception as exc:
-        print(f"Error loading box score: {exc}")
+    except Exception:
+        log_unexpected.exception('box score status failed game=%s', game_id)
         return _keep_previous(previous, game_id)
     if not is_live_play_status(status):
         return no_update
     try:
         report = _open_report(game_id, org)
-    except SynergyAuthError as exc:
-        print(f"Error loading box score: {exc}")
+    except LiveBudgetWait:
+        return _keep_or_wait(previous, game_id)
+    except SynergyAuthError:
         return _error_store(game_id=game_id)
-    except Exception as exc:
-        print(f"Error loading box score: {exc}")
+    except Exception:
         return _keep_previous(previous, game_id)
     generation = report_generation(game_id, org)
     if getattr(report, 'stats_failed', False):
@@ -759,22 +828,20 @@ def update_bs_store(n, game_id, league='plg', previous=None):
                 return no_update
             kept['stats_delayed'] = True
             kept['generation'] = generation
-            note_applied(game_id, org, 'bs', generation)
             return json.dumps(kept)
         return _error_store(game_id=game_id)
-    if _already_applied(game_id, org, 'bs', generation) and not take_delay_paint(game_id, org, 'bs'):
+    if _already_painted(previous, generation, game_id, org):
         return no_update
     if _stale(game_id, org, generation):
         return no_update
     try:
         payload = _box_payload(report, game_id)
-    except Exception as exc:
-        print(f"Error loading box score: {exc}")
+    except Exception:
+        log_payload.exception('box score payload failed game=%s', game_id)
         return _keep_previous(previous, game_id)
     if _stale(game_id, org, generation):
         return no_update
-    note_applied(game_id, org, 'bs', generation)
-    return payload
+    return _with_generation(payload, generation, game_id, org)
 
 @callback(
     Output('match_info_store', 'data', allow_duplicate=True),
@@ -792,11 +859,11 @@ def update_match_info_store(n, game_id, league='plg', previous=None):
         return _error_store(game_id=game_id)
     try:
         info = _info_dict(org, game_id)
-    except SynergyAuthError as exc:
-        print(f"Error loading match info: {exc}")
+    except SynergyAuthError:
+        log_auth.exception('match info failed game=%s', game_id)
         return _error_store(game_id=game_id)
-    except Exception as exc:
-        print(f"Error loading match info: {exc}")
+    except Exception:
+        log_unexpected.exception('match info failed game=%s', game_id)
         return _keep_previous(previous, game_id)
     if not info:
         return json.dumps({})
@@ -806,12 +873,14 @@ def update_match_info_store(n, game_id, league='plg', previous=None):
         return json.dumps(info, ensure_ascii=False)
     try:
         report = _open_report(game_id, org)
-    except SynergyAuthError as exc:
-        print(f"Error loading match info: {exc}")
+    except LiveBudgetWait:
+        kept = _success_text(previous)
+        return kept if kept is not None else json.dumps(info, ensure_ascii=False)
+    except SynergyAuthError:
         return _error_store(game_id=game_id)
-    except Exception as exc:
-        print(f"Error loading match info: {exc}")
-        return _keep_previous(previous, game_id)
+    except Exception:
+        kept = _success_text(previous)
+        return kept if kept is not None else json.dumps(info, ensure_ascii=False)
     generation = report_generation(game_id, org)
     previous_info = safe_loads(previous)
     if (
@@ -879,15 +948,13 @@ def toggle_report_tab(match_info_store, active_tab):
         return style, 'tab-bs'
     return style, no_update
 
-def _live_report(game_id, org, slot):
+def _live_report(game_id, org):
     """Return ``(report, generation)`` while the fixture is still live."""
     status = _fixture_status(game_id, org)
     if not is_live_play_status(status):
         return None, None
     report = _open_report(game_id, org)
     generation = report_generation(game_id, org)
-    if _already_applied(game_id, org, slot, generation) and not take_delay_paint(game_id, org, slot):
-        return None, generation
     if _stale(game_id, org, generation):
         return None, generation
     return report, generation
@@ -925,12 +992,12 @@ def publish_finished_snapshot(n, game_id, league='plg'):
         return hold
     try:
         status = _fixture_status(game_id, org)
-    except SynergyAuthError as exc:
-        print(f"Error loading finished game: {exc}")
+    except SynergyAuthError:
+        log_auth.exception('finished game status failed game=%s', game_id)
         err = _error_store(game_id=game_id)
         return (err, err, err, err, err, err)
-    except Exception as exc:
-        print(f"Error loading finished game: {exc}")
+    except Exception:
+        log_unexpected.exception('finished game status failed game=%s', game_id)
         return hold
     if is_live_play_status(status):
         return hold
@@ -939,12 +1006,11 @@ def publish_finished_snapshot(n, game_id, league='plg'):
             warmup_game_report(game_id, organization_id=org)
         report = _open_report(game_id, org)
         info = _info_dict(org, game_id)
-    except SynergyAuthError as exc:
-        print(f"Error loading finished game: {exc}")
+    except SynergyAuthError:
         err = _error_store(game_id=game_id)
         return (err, err, err, err, err, err)
-    except Exception as exc:
-        print(f"Error loading finished game: {exc}")
+    except Exception:
+        log_unexpected.exception('finished game load failed game=%s', game_id)
         if report_generation(game_id, org):
             return hold
         err = _error_store(game_id=game_id)
@@ -953,8 +1019,8 @@ def publish_finished_snapshot(n, game_id, league='plg'):
         return hold
     try:
         return _finish_outputs(game_id, org, report, info)
-    except Exception as exc:
-        print(f"Error loading finished game: {exc}")
+    except Exception:
+        log_payload.exception('finished game payload failed game=%s', game_id)
         return hold
 
 
@@ -963,66 +1029,70 @@ def publish_finished_snapshot(n, game_id, league='plg'):
     Input('interval-component', 'n_intervals'),
     Input('game_id', 'children'),
     Input('game_league', 'children'),
+    State('pbp_store', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def update_pbp_store(n, game_id, league='plg'):
+def update_pbp_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     try:
-        report, generation = _live_report(game_id, org, 'pbp')
-    except SynergyAuthError as exc:
-        print(f"Error loading play-by-play: {exc}")
-        return _error_store()
-    except Exception as exc:
-        print(f"Error loading play-by-play: {exc}")
-        return _error_store()
+        report, generation = _live_report(game_id, org)
+    except LiveBudgetWait:
+        return _keep_or_wait(previous, game_id)
+    except SynergyAuthError:
+        return _error_store(game_id=game_id)
+    except Exception:
+        return _keep_previous(previous, game_id)
     if report is None:
+        return no_update
+    if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
         payload = report.get_play_by_play_df().to_json(date_format='iso', orient='split')
-    except Exception as exc:
-        print(f"Error loading play-by-play: {exc}")
-        return no_update
+    except Exception:
+        log_payload.exception('play-by-play payload failed game=%s', game_id)
+        return _keep_previous(previous, game_id)
     if _stale(game_id, org, generation):
         return no_update
-    note_applied(game_id, org, 'pbp', generation)
-    return payload
+    return _with_generation(payload, generation, game_id, org)
 
 @callback(
     Output('lineup_store', 'data', allow_duplicate=True),
     Input('interval-component', 'n_intervals'),
     Input('game_id', 'children'),
     Input('game_league', 'children'),
+    State('lineup_store', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def update_lineup_store(n, game_id, league='plg'):
+def update_lineup_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     try:
-        report, generation = _live_report(game_id, org, 'lineup')
-    except SynergyAuthError as exc:
-        print(f"Error loading lineup: {exc}")
-        return _error_store()
-    except Exception as exc:
-        print(f"Error loading lineup: {exc}")
-        return _error_store()
+        report, generation = _live_report(game_id, org)
+    except LiveBudgetWait:
+        return _keep_or_wait(previous, game_id)
+    except SynergyAuthError:
+        return _error_store(game_id=game_id)
+    except Exception:
+        return _keep_previous(previous, game_id)
     if report is None:
+        return no_update
+    if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
         payload = _lineup_payload(report)
-    except Exception as exc:
-        print(f"Error loading lineup: {exc}")
-        return no_update
+    except Exception:
+        log_payload.exception('lineup payload failed game=%s', game_id)
+        return _keep_previous(previous, game_id)
     if _stale(game_id, org, generation):
         return no_update
-    note_applied(game_id, org, 'lineup', generation)
-    return payload
+    return _with_generation(payload, generation, game_id, org)
 
 @callback(
     Output('matchup_store', 'data', allow_duplicate=True),
@@ -1030,9 +1100,10 @@ def update_lineup_store(n, game_id, league='plg'):
     Input('game_id', 'children'),
     Input('match_info_store', 'data'),
     Input('game_league', 'children'),
+    State('matchup_store', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def update_matchup_store(n, game_id, match_info_store, league='plg'):
+def update_matchup_store(n, game_id, match_info_store, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
@@ -1041,34 +1112,35 @@ def update_matchup_store(n, game_id, match_info_store, league='plg'):
     try:
         if not is_live_play_status(_fixture_status(game_id, org)):
             return no_update
-    except SynergyAuthError as exc:
-        print(f"Error loading matchups: {exc}")
-        return _error_store()
-    except Exception as exc:
-        print(f"Error loading matchups: {exc}")
-        return no_update
+    except SynergyAuthError:
+        log_auth.exception('matchups status failed game=%s', game_id)
+        return _error_store(game_id=game_id)
+    except Exception:
+        log_unexpected.exception('matchups status failed game=%s', game_id)
+        return _keep_previous(previous, game_id)
     info = safe_loads(match_info_store)
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
-        report, generation = _live_report(game_id, org, 'matchup')
-    except SynergyAuthError as exc:
-        print(f"Error loading matchups: {exc}")
-        return _error_store()
-    except Exception as exc:
-        print(f"Error loading matchups: {exc}")
-        return _error_store()
+        report, generation = _live_report(game_id, org)
+    except LiveBudgetWait:
+        return _keep_or_wait(previous, game_id)
+    except SynergyAuthError:
+        return _error_store(game_id=game_id)
+    except Exception:
+        return _keep_previous(previous, game_id)
     if report is None:
+        return no_update
+    if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
         payload = _matchup_payload(report, info)
-    except Exception as exc:
-        print(f"Error loading matchups: {exc}")
-        return no_update
+    except Exception:
+        log_payload.exception('matchups payload failed game=%s', game_id)
+        return _keep_previous(previous, game_id)
     if _stale(game_id, org, generation):
         return no_update
-    note_applied(game_id, org, 'matchup', generation)
-    return payload
+    return _with_generation(payload, generation, game_id, org)
 
 @callback(
     Output('rotation_store', 'data', allow_duplicate=True),
@@ -1076,34 +1148,38 @@ def update_matchup_store(n, game_id, match_info_store, league='plg'):
     Input('game_id', 'children'),
     Input('match_info_store', 'data'),
     Input('game_league', 'children'),
+    State('rotation_store', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def update_rotation_store(n, game_id, match_info_store, league='plg'):
+def update_rotation_store(n, game_id, match_info_store, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     info = safe_loads(match_info_store)
+    if not info.get('home_team_id') or not info.get('away_team_id'):
+        return no_update
     try:
-        report, generation = _live_report(game_id, org, 'rotation')
-    except SynergyAuthError as exc:
-        print(f"Error loading rotation: {exc}")
-        return _error_store()
-    except Exception as exc:
-        print(f"Error loading rotation: {exc}")
-        return _error_store()
+        report, generation = _live_report(game_id, org)
+    except LiveBudgetWait:
+        return _keep_or_wait(previous, game_id)
+    except SynergyAuthError:
+        return _error_store(game_id=game_id)
+    except Exception:
+        return _keep_previous(previous, game_id)
     if report is None:
+        return no_update
+    if _already_painted(previous, generation, game_id, org):
         return no_update
     try:
         payload = _rotation_payload(report, info)
-    except Exception as exc:
-        print(f"Error loading rotation: {exc}")
-        return no_update
+    except Exception:
+        log_payload.exception('rotation payload failed game=%s', game_id)
+        return _keep_previous(previous, game_id)
     if _stale(game_id, org, generation):
         return no_update
-    note_applied(game_id, org, 'rotation', generation)
-    return payload
+    return _with_generation(payload, generation, game_id, org)
 
 def safe_loads(val):
     if val is None:
@@ -1113,7 +1189,8 @@ def safe_loads(val):
     if isinstance(val, str):
         try:
             parsed = json.loads(val)
-        except Exception:
+        except Exception as exc:
+            log_data.debug('store json parse failed: %s', exc)
             return {}
         if isinstance(parsed, (dict, list)):
             return parsed
@@ -1144,8 +1221,7 @@ def _last_update_span(game_id=None, organization_id=None, box=False):
             label = state.get('label')
             delayed = bool(state.get('delayed'))
     if not label:
-        when = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))
-        label = f'Last Update: {when}'
+        label = 'Last Update: —'
     line = dmc.Text(
         label,
         size="sm",
@@ -1186,32 +1262,34 @@ def _parse_numeric_stat(val):
     if s.endswith('%'):
         try:
             return float(s[:-1])
-        except Exception:
+        except Exception as exc:
+            log_data.debug('percent parse failed: %s', exc)
             return None
     # If fraction e.g. "26-44" or "30-62 (48.4%)"
     if '(' in s and '%' in s:
         try:
             pct_part = s.split('(')[1].split('%')[0].strip()
             return float(pct_part)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_data.debug('fraction percent parse failed: %s', exc)
     if '-' in s and not s.startswith('-'):
         try:
             made_part = s.split('-')[0].strip()
             return float(made_part)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_data.debug('made-attempt parse failed: %s', exc)
     # If MM:SS
     if ':' in s:
         try:
             parts = s.split(':')
             return float(parts[0]) * 60 + float(parts[1])
-        except Exception:
-            pass
+        except Exception as exc:
+            log_data.debug('clock stat parse failed: %s', exc)
     # Standard float
     try:
         return float(s)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('stat parse failed: %s', exc)
         return None
 
 
@@ -1435,7 +1513,8 @@ LINEUP_COL_SIZES = {
 def _lineup_col_size(lineup_size):
     try:
         size = int(lineup_size)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('lineup size parse failed: %s', exc)
         size = 5
     return LINEUP_COL_SIZES.get(size, LINEUP_COL_SIZES[5])
 
@@ -2253,7 +2332,8 @@ def _bs_frames(bs_dict, period='all', match_info=None):
             adv_df = order_team_frame(
                 pd.read_json(io.StringIO(adv_raw), orient='split'), away_name, home_name,
             )
-        except Exception:
+        except Exception as exc:
+            log_data.debug('advanced frame parse failed: %s', exc)
             adv_df = pd.DataFrame()
     else:
         adv_df = pd.DataFrame()
@@ -2463,6 +2543,8 @@ def box_score_screen(bs_store, period='all', game_id=None, match_info=None):
     payload = bs_store if isinstance(bs_store, dict) else safe_loads(bs_store)
     if not isinstance(payload, dict):
         payload = {}
+    if payload.get('_ui') == 'waiting':
+        return {'mode': 'skeleton'}
     if game_id and payload.get('game_id') != game_id:
         return {'mode': 'skeleton'}
     if payload.get('_ui') == 'error':
@@ -2601,17 +2683,34 @@ def resolve_bs_period(triggered_id, control_value):
     return str(control_value)
 
 
+def _pbp_split_text(pbp_store):
+    if pbp_store is None:
+        return None
+    payload = pbp_store if isinstance(pbp_store, dict) else safe_loads(pbp_store)
+    if isinstance(payload, dict) and 'frame' in payload and 'generation' in payload:
+        frame = payload['frame']
+        return frame if isinstance(frame, str) else json.dumps(frame)
+    if isinstance(pbp_store, str):
+        return pbp_store
+    if isinstance(payload, dict):
+        return json.dumps(payload)
+    return None
+
+
 def _pbp_frame(pbp_store):
     if pbp_store is None:
         return 'loading', None
     payload = pbp_store if isinstance(pbp_store, dict) else safe_loads(pbp_store)
     if not isinstance(payload, dict) or not payload:
         return 'empty', None
+    if payload.get('_ui') == 'waiting':
+        return 'loading', None
     if payload.get('_ui') == 'error':
         return 'error', None
-    if 'columns' not in payload or 'data' not in payload:
+    raw = _pbp_split_text(pbp_store)
+    parsed = safe_loads(raw)
+    if not isinstance(parsed, dict) or 'columns' not in parsed or 'data' not in parsed:
         return 'empty', None
-    raw = pbp_store if isinstance(pbp_store, str) else json.dumps(payload)
     try:
         frame = pd.read_json(io.StringIO(raw), orient='split')
     except (ValueError, TypeError):
@@ -2786,7 +2885,11 @@ def _rotation_figure_from_view(payload, view, match_info_store=None):
 
 
 def render_rotation_children(rotation_store, view_store=None, match_info_store=None):
+    if rotation_store is None:
+        return [loading_skeleton('chart')]
     payload = safe_loads(rotation_store)
+    if payload.get('_ui') == 'waiting':
+        return [loading_skeleton('chart')]
     if payload.get('_ui') == 'error':
         return [_error_view(payload)]
     if not payload or not payload.get('teams'):
@@ -2925,12 +3028,18 @@ def apply_rotation_view_event(
 
 
 def render_pbp_children(pbp_store, game_id=None, organization_id=None):
+    if pbp_store is None:
+        return [loading_skeleton('table')]
     payload = safe_loads(pbp_store)
+    if payload.get('_ui') == 'waiting':
+        return [loading_skeleton('table')]
     if payload.get('_ui') == 'error':
         return [_error_view(payload)]
-    if not payload or 'columns' not in payload:
+    raw = _pbp_split_text(pbp_store)
+    parsed = safe_loads(raw)
+    if not parsed or 'columns' not in parsed:
         return [_empty_view()]
-    pbp_df = pd.read_json(io.StringIO(pbp_store), orient='split')
+    pbp_df = pd.read_json(io.StringIO(raw), orient='split')
     if pbp_df.empty:
         return [_empty_view()]
     team_name_list = pbp_df['Team'].dropna().unique() if 'Team' in pbp_df.columns else []
@@ -2965,9 +3074,12 @@ def render_pbp_children(pbp_store, game_id=None, organization_id=None):
 def render_lineup_children(lineup_store, lineup_size=5, show_opp=False, match_info=None):
     try:
         size_int = int(lineup_size)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('lineup size parse failed: %s', exc)
         size_int = 5
     payload = safe_loads(lineup_store)
+    if payload.get('_ui') == 'waiting':
+        return [loading_skeleton('table')]
     if payload.get('_ui') == 'error':
         return [_error_view(payload)]
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
@@ -3030,8 +3142,8 @@ def _report_rotation_figure_json(game_id, match_info):
         if not payload.get('teams'):
             return json.dumps({'_ui': 'empty'})
         return report_rotation_figure(payload).to_json()
-    except Exception as exc:
-        print(f"Error building report rotation: {exc}")
+    except Exception:
+        log_payload.exception('report rotation payload failed game=%s', game_id)
         return json.dumps({'_ui': 'error'})
 
 
@@ -3049,8 +3161,8 @@ def _report_shot_chart_json(game_id, match_info):
             info.get('home_team') or 'Home',
         )
         return json.dumps(payload, ensure_ascii=False)
-    except Exception as exc:
-        print(f"Error building report shot chart: {exc}")
+    except Exception:
+        log_payload.exception('report shot chart payload failed game=%s', game_id)
         return json.dumps({'_ui': 'error'})
 
 
@@ -3426,7 +3538,8 @@ def sync_matchup_team(match_info_store, _game_id, current):
         options.append({'label': info.get('home_team') or 'Home', 'value': home_id})
     try:
         triggered = ctx.triggered_id
-    except Exception:
+    except Exception as exc:
+        log_data.debug('matchup triggered id unavailable: %s', exc)
         triggered = None
     return options, matchup_team_value(current, away_id, home_id, triggered)
 
@@ -3457,7 +3570,7 @@ def update_matchup_rows(matchup_store, viewpoint, active_tab):
         return no_update, no_update, no_update
     payload = safe_loads(matchup_store)
     hidden = {'display': 'none'}
-    if not payload:
+    if not payload or payload.get('_ui') == 'waiting':
         return [], loading_skeleton('table'), hidden
     if payload.get('_ui') == 'error':
         return [], _error_view(payload), hidden
@@ -3510,9 +3623,13 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
         return no_update
     try:
         size_int = int(lineup_size)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('lineup size parse failed: %s', exc)
         size_int = 5
     show_opp = bool(show_opp)
+    meta = safe_loads(lineup_store)
+    if meta.get('_ui') in ('waiting', 'error'):
+        return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=match_info)
     lineup_dict = lineup_tables_for_size(lineup_store, size_int)
     if not lineup_dict and game_id:
         try:
@@ -3525,8 +3642,10 @@ def update_pane_lineup(lineup_size='5', active_tab='tab-lineup', lineup_store=No
                     show_opp=show_opp,
                     match_info=match_info,
                 )
-        except Exception as exc:
-            print(f"Error computing lineup size {lineup_size}: {exc}")
+        except LiveBudgetWait:
+            return [loading_skeleton('table')]
+        except Exception:
+            log_payload.exception('lineup size payload failed game=%s', game_id)
     return render_lineup_children(lineup_store, size_int, show_opp=show_opp, match_info=match_info)
 
 
@@ -3582,10 +3701,8 @@ def update_pane_report(
             match_info_store,
             game_id=game_id,
         )
-    except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        print(f"Error rendering report: {exc}")
+    except Exception:
+        log_payload.exception('report render failed')
         return [_error_view({'_ui': 'error', 'message': ERROR_GAME})]
 
 

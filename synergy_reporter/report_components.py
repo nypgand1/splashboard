@@ -8,6 +8,7 @@ import dash_mantine_components as dmc
 from asset_url import font_fetch_url
 from ui_kit import icon as dmc_icon
 
+from synergy_inbounder.logs import data as log_data
 from synergy_reporter.csv_table import CSV_IMPORT_LABEL, CSV_PLAY_TYPE_LABEL
 from synergy_reporter.report_layout import (
     HEADER_CREDIT,
@@ -19,28 +20,42 @@ from synergy_reporter.report_layout import (
 from synergy_reporter.team_order import order_team_split_json, side_names
 
 
+_LINEUP_META_KEYS = {'generation', 'game_id', 'delay_seen', '_ui'}
+
+
 def lineup_tables_for_size(lineup_store_data, lineup_size=5):
     """Pick one lineup-size table map from store data.
 
     New store shape: {"5": {team: json}, "4": ...}.
     Old store shape: {team: json}.
+    Paint stamps and waiting or error markers are not team tables.
     """
     if not lineup_store_data:
         return {}
     if isinstance(lineup_store_data, str):
         try:
             lineup_dict = json.loads(lineup_store_data)
-        except Exception:
+        except Exception as exc:
+            log_data.debug('lineup store parse failed: %s', exc)
             return {}
     else:
         lineup_dict = lineup_store_data
     if not isinstance(lineup_dict, dict) or not lineup_dict:
         return {}
-    inner = lineup_dict.get(str(lineup_size))
+    if lineup_dict.get('_ui') in ('waiting', 'error'):
+        return {}
+    body = {
+        key: value
+        for key, value in lineup_dict.items()
+        if key not in _LINEUP_META_KEYS
+    }
+    if not body:
+        return {}
+    inner = body.get(str(lineup_size))
     if isinstance(inner, dict):
         return inner
-    if all(not str(key).isdigit() for key in lineup_dict):
-        return lineup_dict
+    if all(not str(key).isdigit() for key in body):
+        return body
     return {}
 
 
@@ -62,7 +77,8 @@ def _df_from_split(payload):
         return None
     try:
         df = read_split_frame(payload)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('split frame parse failed: %s', exc)
         return None
     if df is None or df.empty:
         return None
@@ -129,7 +145,8 @@ def _without_opp_columns(payload):
         return payload
     try:
         parsed = json.loads(payload)
-    except Exception:
+    except Exception as exc:
+        log_data.debug('report column parse failed: %s', exc)
         return payload
     columns = parsed.get('columns') if isinstance(parsed, dict) else None
 
