@@ -17,10 +17,14 @@ from synergy_inbounder.possessions import annotate_possessions, possession_count
 from synergy_inbounder.pre_processing_func import (
     _flag_from_parsed,
     _parsed_option,
-    process_lineup_pbp,
     process_lineup_stats,
 )
-from synergy_reporter.rotation import build_rotation_payload, clock_to_seconds, period_label
+from synergy_reporter.rotation import (
+    build_rotation_payload,
+    clock_to_seconds,
+    period_label,
+    walk_lineup,
+)
 
 
 def _as_nonneg_int(value):
@@ -528,9 +532,7 @@ class PostGameReport():
             cached = self.__dict__.get('_lineup_frame_df')
             if cached is not None:
                 return cached
-            source = self.playbyplay_df
-            frame = source.copy() if source is not None else pd.DataFrame()
-            process_lineup_pbp(frame, self.starter_dict or {})
+            frame = walk_lineup(self.playbyplay_df, self.starter_dict or {})
             self._lineup_frame_df = annotate_possessions(frame)
             return self._lineup_frame_df
 

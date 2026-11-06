@@ -78,9 +78,24 @@
         setMode(pack, mode);
     }
 
+    function measureMatch(pack) {
+        var team = pack.querySelector(':scope > .filter-cluster-team');
+        var opponent = pack.querySelector(':scope > .filter-cluster-opp');
+        var gap = gapOf(pack);
+        var mode = 'wide';
+        if (sumWidths([contentWidth(team), contentWidth(opponent)], gap) > pack.clientWidth + 1) {
+            mode = 'split';
+        }
+        setMode(pack, mode);
+    }
+
     function measure(pack) {
         if (pack.classList.contains('filter-pack-scope')) {
             measureScope(pack);
+            return;
+        }
+        if (pack.classList.contains('filter-pack-match')) {
+            measureMatch(pack);
             return;
         }
         if (pack.classList.contains('filter-pack-place')) {

@@ -44,7 +44,9 @@ from synergy_reporter.rotation import clock_to_seconds, period_label
 from ui_kit import ERROR_GAME
 
 EMPTY_TEAM_STATS = 'No games in this view.'
-EMPTY_TEAM_STATS_NEXT = 'Switch Game Type, Opponent, Stadium, or Home/Away.'
+EMPTY_TEAM_STATS_NEXT = 'Switch Game Type, Team, Opponent, Stadium, or Home/Away.'
+TEAM_ALL = 'all'
+TEAM_ALL_LABEL = 'All Teams'
 OPPONENT_ALL = 'all'
 OPPONENT_ALL_LABEL = 'vs All Teams'
 STADIUM_ALL = 'all'
@@ -519,8 +521,7 @@ def _menu(found, all_label):
     return options, len(ordered) >= 2
 
 
-def opponent_menu(records, id_table):
-    """Named teams on this season's fixture list. Game type does not shrink it."""
+def _named_teams(records, id_table):
     found = {}
     for record in records or []:
         if not isinstance(record, dict):
@@ -530,7 +531,20 @@ def opponent_menu(records, id_table):
             if not entity or display_name(id_table, entity) == TEAM_TBD:
                 continue
             found.setdefault(entity, display_name(id_table, entity))
-    ordered = sorted(found.items(), key=lambda item: (item[1], item[0]))
+    return sorted(found.items(), key=lambda item: (item[1], item[0]))
+
+
+def team_menu(records, id_table):
+    """Named teams on this season's fixture list. The first option is All Teams."""
+    ordered = _named_teams(records, id_table)
+    options = [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}]
+    options.extend({'label': name, 'value': entity} for entity, name in ordered)
+    return options, len(ordered) >= 2
+
+
+def opponent_menu(records, id_table):
+    """Named teams on this season's fixture list. Game type does not shrink it."""
+    ordered = _named_teams(records, id_table)
     options = [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}]
     options.extend(
         {'label': 'vs ' + name, 'value': entity} for entity, name in ordered
@@ -606,9 +620,71 @@ def _game_passes(record, entity_id, opponent, stadium, site):
     return True
 
 
+def _other_side(record, entity_id):
+    home, away = _sides(record)
+    own = str(entity_id)
+    if home == own:
+        return away
+    if away == own:
+        return home
+    return ''
+
+
+def _mark_summary(rows):
+    for row in rows:
+        row['summary'] = True
+    return rows
+
+
+def _collect_side(
+    entity, game_ids, label, opp_label, totals, periods, pbp_by_fixture,
+    period, id_table, minutes, summary=False,
+):
+    pieces = []
+    for fixture_id in game_ids:
+        matched = _slice_rows(totals, periods, fixture_id, entity, period)
+        if matched is not None and len(matched):
+            pieces.append(matched)
+    summed = _combine(pieces, entity)
+    possessions = _possessions(
+        entity, game_ids, totals, periods, pbp_by_fixture, period,
+    )
+    leaves = _leaves(entity, game_ids, pbp_by_fixture, period)
+    pace, advanced = _pace_and_advanced(entity, summed, possessions, id_table, minutes)
+    team, key, pace_row, advanced_row = _stat_rows(
+        label, len(game_ids), summed, leaves, pace, advanced,
+    )
+    opp_summed, opp_poss, opp_leaves = _opponent_inputs(
+        entity, game_ids, totals, periods, pbp_by_fixture, period,
+    )
+    opp_pace, opp_advanced = _pace_and_advanced(
+        entity, opp_summed, opp_poss, id_table, minutes,
+    )
+    opp_team, opp_key, opp_pace_row, opp_advanced_row = _stat_rows(
+        label, len(game_ids), opp_summed, opp_leaves, opp_pace, opp_advanced,
+        opp=True, opp_label=opp_label,
+    )
+    if summary:
+        _mark_summary((
+            team, key, pace_row, advanced_row,
+            opp_team, opp_key, opp_pace_row, opp_advanced_row,
+        ))
+    return (
+        team, key, pace_row, advanced_row,
+        opp_team, opp_key, opp_pace_row, opp_advanced_row,
+    )
+
+
+def _paint_pair(rows, opp_rows, columns):
+    _paint_winners([row for row in rows if not row.get('summary')], columns)
+    _paint_winners(
+        [row for row in opp_rows if not row.get('summary')], columns, 'opp_best',
+    )
+
+
 def build_team_cards(
     fixtures, totals, periods, pbp_by_fixture, id_table, minutes, game_type, period,
-    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL,
+    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL, team=TEAM_ALL,
 ):
     """Pure card payload for fixtures and stats already in memory."""
     schedule = _records(fixtures) if not isinstance(fixtures, list) else list(fixtures)
@@ -616,13 +692,23 @@ def build_team_cards(
     selected_type = choose_game_type(options, game_type)
     included = _finished_rows(schedule, selected_type) if selected_type else []
     opponent_options, opponent_visible = opponent_menu(schedule, id_table)
+    team_options, team_visible = team_menu(schedule, id_table)
     stadium_options, stadium_visible = stadium_menu(included, id_table)
     selected_opponent = _coerce_menu(opponent, opponent_options, opponent_visible)
+    selected_team = _coerce_menu(team, team_options, team_visible, TEAM_ALL)
+    if selected_team != TEAM_ALL and selected_team == selected_opponent:
+        selected_opponent = OPPONENT_ALL
     selected_stadium = _coerce_menu(stadium, stadium_options, stadium_visible)
     selected_site = _coerce_site(site)
     chip_rows = _rows_for_chips(included, selected_stadium, selected_opponent)
+    if selected_team != TEAM_ALL:
+        chip_rows = [row for row in chip_rows if selected_team in _sides(row)]
     fixture_ids = [str(row.get('fixtureId')) for row in chip_rows]
     by_fixture = {str(row.get('fixtureId')): row for row in chip_rows}
+    shown_opponents = [
+        item for item in opponent_options
+        if item['value'] == OPPONENT_ALL or item['value'] != selected_team
+    ]
     # Menu labels are "vs {name}". The Opp cell keeps the bare name.
     opp_label = 'Opp'
     if selected_opponent != OPPONENT_ALL:
@@ -646,70 +732,71 @@ def build_team_cards(
         named.append(entity)
     named.sort(key=lambda entity: (_raw_name(id_table, entity), str(entity)))
 
-    team_rows = []
-    key_rows = []
-    pace_rows = []
-    advanced_rows = []
-    opp_team_rows = []
-    opp_key_rows = []
-    opp_pace_rows = []
-    opp_advanced_rows = []
-    for entity in named:
-        if selected_opponent != OPPONENT_ALL and str(entity) == selected_opponent:
-            continue
-        game_ids = [
+    buckets = [[] for _ in range(8)]
+
+    def _push(parts):
+        for bucket, part in zip(buckets, parts):
+            bucket.append(part)
+
+    if selected_team == TEAM_ALL:
+        for entity in named:
+            if selected_opponent != OPPONENT_ALL and str(entity) == selected_opponent:
+                continue
+            game_ids = [
+                fixture_id for fixture_id in _game_ids_for_team(
+                    entity, fixture_ids, totals, periods, selected_period,
+                )
+                if _game_passes(
+                    by_fixture.get(str(fixture_id)), entity,
+                    selected_opponent, selected_stadium, selected_site,
+                )
+            ]
+            if not game_ids:
+                continue
+            _push(_collect_side(
+                entity, game_ids, display_name(id_table, entity), opp_label,
+                totals, periods, pbp_by_fixture, selected_period, id_table, minutes,
+            ))
+    else:
+        own_name = display_name(id_table, selected_team)
+        played = [
             fixture_id for fixture_id in _game_ids_for_team(
-                entity, fixture_ids, totals, periods, selected_period,
+                selected_team, fixture_ids, totals, periods, selected_period,
             )
             if _game_passes(
-                by_fixture.get(str(fixture_id)), entity,
+                by_fixture.get(str(fixture_id)), selected_team,
                 selected_opponent, selected_stadium, selected_site,
             )
         ]
-        games = len(game_ids)
-        if games <= 0:
-            continue
-        pieces = []
-        for fixture_id in game_ids:
-            matched = _slice_rows(totals, periods, fixture_id, entity, selected_period)
-            if matched is not None and len(matched):
-                pieces.append(matched)
-        summed = _combine(pieces, entity)
-        label = display_name(id_table, entity)
-        possessions = _possessions(
-            entity, game_ids, totals, periods, pbp_by_fixture, selected_period,
+        groups = {}
+        for fixture_id in played:
+            other = _other_side(by_fixture.get(str(fixture_id)), selected_team)
+            if not other or display_name(id_table, other) == TEAM_TBD:
+                continue
+            groups.setdefault(other, []).append(fixture_id)
+        ordered = sorted(
+            groups.items(),
+            key=lambda item: (_raw_name(id_table, item[0]), str(item[0])),
         )
-        leaves = _leaves(entity, game_ids, pbp_by_fixture, selected_period)
-        pace, advanced = _pace_and_advanced(entity, summed, possessions, id_table, minutes)
-        team, key, pace_row, advanced_row = _stat_rows(
-            label, games, summed, leaves, pace, advanced,
-        )
-        team_rows.append(team)
-        key_rows.append(key)
-        pace_rows.append(pace_row)
-        advanced_rows.append(advanced_row)
-        opp_summed, opp_poss, opp_leaves = _opponent_inputs(
-            entity, game_ids, totals, periods, pbp_by_fixture, selected_period,
-        )
-        opp_pace, opp_advanced = _pace_and_advanced(
-            entity, opp_summed, opp_poss, id_table, minutes,
-        )
-        opp_team, opp_key, opp_pace, opp_advanced = _stat_rows(
-            label, games, opp_summed, opp_leaves, opp_pace, opp_advanced,
-            opp=True, opp_label=opp_label,
-        )
-        opp_team_rows.append(opp_team)
-        opp_key_rows.append(opp_key)
-        opp_pace_rows.append(opp_pace)
-        opp_advanced_rows.append(opp_advanced)
-    _paint_winners(team_rows, _TEAM_COLUMNS)
-    _paint_winners(key_rows, _KEY_COLUMNS)
-    _paint_winners(pace_rows, _PACE_COLUMNS)
-    _paint_winners(advanced_rows, _ADVANCED_COLUMNS)
-    _paint_winners(opp_team_rows, _TEAM_COLUMNS, 'opp_best')
-    _paint_winners(opp_key_rows, _KEY_COLUMNS, 'opp_best')
-    _paint_winners(opp_pace_rows, _PACE_COLUMNS, 'opp_best')
-    _paint_winners(opp_advanced_rows, _ADVANCED_COLUMNS, 'opp_best')
+        if selected_opponent == OPPONENT_ALL and played:
+            _push(_collect_side(
+                selected_team, played, own_name, 'Opp',
+                totals, periods, pbp_by_fixture, selected_period, id_table, minutes,
+                summary=True,
+            ))
+        for other, game_ids in ordered:
+            _push(_collect_side(
+                selected_team, game_ids, own_name + ' vs', display_name(id_table, other),
+                totals, periods, pbp_by_fixture, selected_period, id_table, minutes,
+            ))
+    (
+        team_rows, key_rows, pace_rows, advanced_rows,
+        opp_team_rows, opp_key_rows, opp_pace_rows, opp_advanced_rows,
+    ) = buckets
+    _paint_pair(team_rows, opp_team_rows, _TEAM_COLUMNS)
+    _paint_pair(key_rows, opp_key_rows, _KEY_COLUMNS)
+    _paint_pair(pace_rows, opp_pace_rows, _PACE_COLUMNS)
+    _paint_pair(advanced_rows, opp_advanced_rows, _ADVANCED_COLUMNS)
     visible = bool(team_rows)
     return {
         'game_types': options,
@@ -719,8 +806,13 @@ def build_team_cards(
         'period_chips': chips if visible else [],
         'period_visible': visible and bool(chips),
         'empty': not visible,
+        'team': selected_team,
+        'team_options': team_options,
+        'team_visible': team_visible,
+        'show_opp_locked': selected_team != TEAM_ALL,
         'opponent': selected_opponent,
-        'opponent_options': opponent_options,
+        'opponent_options': shown_opponents,
+        'opponent_width_labels': [item['label'] for item in opponent_options],
         'opponent_visible': opponent_visible,
         'stadium': selected_stadium,
         'stadium_options': stadium_options,
@@ -960,8 +1052,13 @@ def _error_payload(league, season_id, seasons):
         'period': 'all',
         'period_chips': [],
         'period_visible': False,
+        'team': TEAM_ALL,
+        'team_options': [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}],
+        'team_visible': False,
+        'show_opp_locked': False,
         'opponent': OPPONENT_ALL,
         'opponent_options': [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}],
+        'opponent_width_labels': [OPPONENT_ALL_LABEL],
         'opponent_visible': False,
         'stadium': STADIUM_ALL,
         'stadium_options': [{'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL}],
@@ -973,7 +1070,7 @@ def _error_payload(league, season_id, seasons):
 
 def team_stats_payload(
     league, season_id=None, game_type=None, period='all', reason='scope',
-    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL,
+    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL, team=TEAM_ALL,
 ):
     """Load one season view and return the four Box Score team cards.
 
@@ -998,6 +1095,7 @@ def team_stats_payload(
         opponent = OPPONENT_ALL
         stadium = STADIUM_ALL
         site = SITE_ALL
+        team = TEAM_ALL
     try:
         with _bundle_lock:
             had_bundle = (org_id, selected_season) in _bundles
@@ -1027,6 +1125,7 @@ def team_stats_payload(
             opponent=opponent,
             stadium=stadium,
             site=site,
+            team=team,
         )
     except SynergyAuthError:
         log_auth.exception('team stats load auth failed %s %s', key, selected_season)
@@ -1048,8 +1147,13 @@ def team_stats_payload(
         'period': built['period'],
         'period_chips': built['period_chips'],
         'period_visible': built['period_visible'],
+        'team': built['team'],
+        'team_options': built['team_options'],
+        'team_visible': built['team_visible'],
+        'show_opp_locked': built['show_opp_locked'],
         'opponent': built['opponent'],
         'opponent_options': built['opponent_options'],
+        'opponent_width_labels': built['opponent_width_labels'],
         'opponent_visible': built['opponent_visible'],
         'stadium': built['stadium'],
         'stadium_options': built['stadium_options'],
@@ -1060,3 +1164,79 @@ def team_stats_payload(
         'card_order': ['pace', 'advanced', 'key', 'team'],
     }
     return payload
+
+
+def rotation_games(league, season_id, game_type, opponent, stadium, site, team):
+    """Finished games for one club after the shared filters.
+
+    Uses the season bundle already loaded for Box Score. A slice reason does
+    not refetch when that bundle is warm.
+    """
+    key = str(league or '').strip().upper()
+    org_id = organization_for_league(key)
+    minutes = regulation_minutes(season_id) if season_id else None
+    empty = {
+        'ok': True,
+        'select_team': True,
+        'empty': False,
+        'games': [],
+        'minutes': minutes,
+        'id_table': {},
+        'org_id': org_id,
+        'team': TEAM_ALL,
+        'opponent': OPPONENT_ALL,
+    }
+    if org_id is None or minutes is None or not season_id:
+        empty['ok'] = False
+        return empty
+    if not team or team == TEAM_ALL:
+        return empty
+    try:
+        bundle = _load_bundle(org_id, season_id, 'slice')
+        schedule = bundle.get('schedule') or []
+        selected_type = choose_game_type(fixture_type_options(schedule), game_type)
+        included = _finished_rows(schedule, selected_type) if selected_type else []
+        menu, visible = opponent_menu(schedule, bundle.get('id_table'))
+        chosen_opponent = _coerce_menu(opponent, menu, visible)
+        if str(chosen_opponent) == str(team):
+            chosen_opponent = OPPONENT_ALL
+        chosen_stadium = _entity_text(stadium) or STADIUM_ALL
+        chosen_site = _coerce_site(site)
+        rows = []
+        for record in included:
+            if str(team) not in _sides(record):
+                continue
+            if not _game_passes(record, team, chosen_opponent, chosen_stadium, chosen_site):
+                continue
+            rows.append(record)
+        _ensure_pbp(org_id, rows)
+        pbp = _pbp_map(org_id, rows)
+        games = []
+        for record in rows:
+            fixture_id = str(record.get('fixtureId'))
+            games.append({
+                'fixture_id': fixture_id,
+                'status': record.get('status'),
+                'home': _entity_text(record.get('teamIdHome')),
+                'away': _entity_text(record.get('teamIdAway')),
+                'pbp': pbp.get(fixture_id),
+            })
+    except SynergyAuthError:
+        log_auth.exception('team rotation load auth failed %s %s', key, season_id)
+        empty['ok'] = False
+        return empty
+    except Exception:
+        log_unexpected.exception('team rotation load failed %s %s', key, season_id)
+        empty['ok'] = False
+        return empty
+    return {
+        'ok': True,
+        'select_team': False,
+        'empty': not games,
+        'games': games,
+        'minutes': minutes,
+        'id_table': bundle.get('id_table') or {},
+        'org_id': org_id,
+        'team': str(team),
+        'opponent': chosen_opponent,
+    }

@@ -7,6 +7,7 @@ import pandas as pd
 
 from synergy_inbounder.names import person_name, player_label
 from synergy_inbounder.possessions import annotate_possessions
+from synergy_inbounder.pre_processing_func import process_lineup_pbp
 
 CLOCK_RE = re.compile(r'PT(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', re.IGNORECASE)
 KILL_COLOR = '#e63946'
@@ -700,6 +701,38 @@ def visible_players(team, show_dnp=False):
 
 
 
+def walk_lineup(frame, starter_dict):
+    """Copy ``frame`` and run the Game page substitution walk.
+
+    ``process_lineup_pbp`` seeds each team from ``starter_dict`` and then
+    applies substitution rows. A sub-out row can list 4 players and a sub-in
+    row can list 6. Callers keep that frame. On-court time is decided later
+    by ``build_rotation_payload``, which ignores a zero-length gap.
+    """
+    if frame is None:
+        walked = pd.DataFrame()
+    else:
+        walked = frame.copy()
+    process_lineup_pbp(walked, starter_dict or {})
+    return walked
+
+
+def team_on_court_seconds(payload, team_id):
+    """Seconds ``build_rotation_payload`` gave ``team_id``. DNP rows are omitted."""
+    if not payload or team_id is None:
+        return 0.0
+    for side in payload.get('teams') or []:
+        if not _same_id(side.get('team_id'), team_id):
+            continue
+        total = 0.0
+        for player in side.get('players') or []:
+            if player.get('dnp'):
+                continue
+            total += float(player.get('seconds') or 0)
+        return total
+    return 0.0
+
+
 def build_rotation_payload(
     pbp_df,
     starter_dict,
@@ -707,6 +740,7 @@ def build_rotation_payload(
     home_team_id,
     away_team_id,
     roster=None,
+    marks=True,
 ):
     id_table = id_table or {}
     starter_dict = starter_dict or {}
@@ -899,8 +933,12 @@ def build_rotation_payload(
         score_events.append((game_end, curr_h, curr_a))
 
     halftime = next((period['end'] for period in periods if period.get('id') == 2), None)
-    runs = detect_runs(score_events, min_delta=8, halftime=halftime)
-    kills = detect_kills(possession_trips(df, periods), home_team_id, away_team_id)
+    if marks:
+        runs = detect_runs(score_events, min_delta=8, halftime=halftime)
+        kills = detect_kills(possession_trips(df, periods), home_team_id, away_team_id)
+    else:
+        runs = []
+        kills = []
 
 
     # Function to query net score margin diff between two timestamps for stint +/-

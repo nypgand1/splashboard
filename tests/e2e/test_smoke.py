@@ -1096,7 +1096,7 @@ def test_shot_chart_tab(page, e2e_server):
             const padTop = parseFloat(style.paddingTop) || 0;
             const padBottom = parseFloat(style.paddingBottom) || 0;
             const heights = options.map((node) => node.getBoundingClientRect().height);
-            const plan = window.splashboardShotMenuPlan(
+            const plan = window.splashboardSelectMenuPlan(
                 input.getBoundingClientRect(), window.innerHeight, heights, heights.length, padTop, padBottom
             );
             const drop = dropdown.getBoundingClientRect();
@@ -1115,11 +1115,11 @@ def test_shot_chart_tab(page, e2e_server):
     )
     assert page.evaluate(
         '''() => {
-            const fit = window.splashboardShotMenuPlan({top: 100, bottom: 140}, 800, 32, 10);
-            const up = window.splashboardShotMenuPlan({top: 700, bottom: 740}, 800, 32, 10);
-            const tiny = window.splashboardShotMenuPlan({top: 10, bottom: 40}, 80, 32, 2);
-            const padded = window.splashboardShotMenuPlan({top: 100, bottom: 140}, 800, 32, 10, 4, 4);
-            const snapped = window.splashboardShotMenuPlan({top: 500, bottom: 540}, 700, 32, 20, 4, 4);
+            const fit = window.splashboardSelectMenuPlan({top: 100, bottom: 140}, 800, 32, 10);
+            const up = window.splashboardSelectMenuPlan({top: 700, bottom: 740}, 800, 32, 10);
+            const tiny = window.splashboardSelectMenuPlan({top: 10, bottom: 40}, 80, 32, 2);
+            const padded = window.splashboardSelectMenuPlan({top: 100, bottom: 140}, 800, 32, 10, 4, 4);
+            const snapped = window.splashboardSelectMenuPlan({top: 500, bottom: 540}, 700, 32, 20, 4, 4);
             return fit.side === 'bottom' && fit.height === 320 && fit.inner === 320
                 && up.side === 'top' && up.height === 320
                 && tiny.side === 'bottom' && tiny.height === 128

@@ -1,8 +1,18 @@
-/* Player menu side and height. Keep the numbers aligned with shot_menu_plan. */
+/* Select menu side and height. Keep the numbers aligned with select_menu_plan. */
 (function () {
   var GAP = 12;
   var ROW_FALLBACK = 32;
   var MENU_GAP = 4;
+  var FIELDS = [
+    "#shot-chart-player-away",
+    "#shot-chart-player-home",
+    "#home-team",
+    "#home-season",
+    "#ts-team",
+    "#ts-opponent",
+    "#ts-stadium",
+    "#ts-season"
+  ].join(", ");
 
   function px(value) {
     return Math.ceil(value - 1e-9);
@@ -72,7 +82,7 @@
     return planFor(rect, viewportHeight, heights, +padTop || 0, +padBottom || 0);
   }
 
-  window.splashboardShotMenuPlan = menuPlan;
+  window.splashboardSelectMenuPlan = menuPlan;
 
   function paint(node, pixels) {
     if (!node || !node.style || !node.style.maxHeight) {
@@ -147,7 +157,7 @@
     if (!field) {
       return null;
     }
-    return field.querySelector("#shot-chart-player-away, #shot-chart-player-home");
+    return field.querySelector(FIELDS);
   }
 
   function schedule(event) {

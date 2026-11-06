@@ -100,10 +100,35 @@ class Parser:
         player_stats_df = pd.DataFrame(player_stats_list)
 
         team_id_list = team_stats_df['entityId'].to_list() if not team_stats_df.empty else []
-        starter_dict = {team_id: [p['personId'] for p in player_stats_list if p.get('starter') and p.get('entityId') == team_id]
-                for team_id in team_id_list}
+        starter_dict = Parser.starter_dict_from_rows(player_stats_list, team_id_list)
 
         return team_stats_df, team_stats_periods_df, player_stats_df, starter_dict
+
+    @staticmethod
+    def starter_dict_from_rows(rows, team_ids=None):
+        """Map team id to starter person ids.
+
+        Pass ``team_ids`` to keep a key for every team, including an empty
+        list. Omit it to keep only teams that have a starter. Game page
+        bundles and Team Stats player-stat fetches both use this.
+        """
+        people = [
+            row for row in rows or []
+            if isinstance(row, dict) and row.get('personId')
+        ]
+        if team_ids is None:
+            team_ids = []
+            for row in people:
+                entity = row.get('entityId')
+                if row.get('starter') and entity is not None and entity not in team_ids:
+                    team_ids.append(entity)
+        return {
+            team_id: [
+                row['personId'] for row in people
+                if row.get('starter') and row.get('entityId') == team_id
+            ]
+            for team_id in team_ids
+        }
 
     @staticmethod
     def _shirt_number(person):
@@ -262,10 +287,7 @@ class Parser:
         )
         if roster:
             team_ids = team_stats_df['entityId'].to_list() if not team_stats_df.empty else []
-            roster_starters = {
-                team_id: [row['personId'] for row in roster if row.get('starter') and row.get('entityId') == team_id]
-                for team_id in team_ids
-            }
+            roster_starters = Parser.starter_dict_from_rows(roster, team_ids)
             if any(roster_starters.values()):
                 starter_dict = roster_starters
         player_periods_df = Parser._player_periods_from_json(player_periods_json)

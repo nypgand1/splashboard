@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import dash_mantine_components as dmc
@@ -32,18 +34,80 @@ def _names(node, found=None):
     return found
 
 
+def _walk(node, found=None):
+    found = [] if found is None else found
+    found.append(node)
+    pending = []
+    spinner = getattr(node, 'custom_spinner', None)
+    if spinner is not None:
+        pending.append(spinner)
+    children = getattr(node, 'children', None)
+    if isinstance(children, (list, tuple)):
+        pending.extend(children)
+    elif children is not None and not isinstance(children, (str, int, float, dict)):
+        pending.append(children)
+    for child in pending:
+        _walk(child, found)
+    return found
+
+
+class TeamStatsChromeTests(unittest.TestCase):
+    def test_rotation_pane_is_not_wrapped_in_loading(self):
+        from dash import dcc
+
+        layout = team_stats_page.layout()
+        self.assertFalse(any(isinstance(node, dcc.Loading) for node in _walk(layout)))
+        pane = next(node for node in _walk(layout) if getattr(node, 'id', None) == 'ts-rotation')
+        self.assertIsNone(pane.children)
+
+    def test_chart_skeleton_is_written_on_intent_and_slice_changes(self):
+        text = Path('pages/team_stats.py').read_text(encoding='utf-8')
+        self.assertIn("Output('ts-rotation', 'children', allow_duplicate=True)", text)
+        self.assertIn("current.team !== 'all'", text)
+        self.assertIn('loading_skeleton(\'chart\')', text)
+        listed = _callbacks('ts-rotation.children')
+        clientside = [item for item in listed if item.get('clientside_function')]
+        self.assertGreaterEqual(len(clientside), 2)
+
+    def test_select_menus_use_the_shared_plan(self):
+        text = Path('assets/select_menu.js').read_text(encoding='utf-8')
+        self.assertFalse(Path('assets/shot_chart_menu.js').exists())
+        for field in (
+            '#shot-chart-player-away',
+            '#shot-chart-player-home',
+            '#home-team',
+            '#home-season',
+            '#ts-team',
+            '#ts-opponent',
+            '#ts-stadium',
+            '#ts-season',
+        ):
+            self.assertIn(field, text)
+        self.assertIn('splashboardSelectMenuPlan', text)
+        self.assertNotIn('splashboardShotMenuPlan', text)
+
+
 class TeamStatsCallbackTests(unittest.TestCase):
     def test_skeleton_follows_intent_and_scope_only(self):
         listed = _callbacks('ts-body.children')
         clientside = [item for item in listed if item.get('clientside_function')]
         server = [item for item in listed if not item.get('clientside_function')]
-        self.assertEqual(len(clientside), 1)
+        self.assertEqual(len(clientside), 2)
         self.assertEqual(len(server), 2)
-        self.assertEqual(_pairs(clientside[0]['inputs']), [('ts-intent', 'data')])
-        self.assertTrue(clientside[0]['prevent_initial_call'])
-        self.assertNotIn('ts-league', {item['id'] for item in clientside[0]['inputs']})
-        self.assertNotIn('ts-game-type', {item['id'] for item in clientside[0]['inputs']})
-        self.assertNotIn('ts-period', {item['id'] for item in clientside[0]['inputs']})
+        intent_body = next(
+            item for item in clientside
+            if _pairs(item['inputs']) == [('ts-intent', 'data')]
+        )
+        self.assertTrue(intent_body['prevent_initial_call'])
+        self.assertNotIn('ts-league', {item['id'] for item in intent_body['inputs']})
+        self.assertNotIn('ts-game-type', {item['id'] for item in intent_body['inputs']})
+        self.assertNotIn('ts-period', {item['id'] for item in intent_body['inputs']})
+        slice_body = next(
+            item for item in clientside
+            if ('ts-team', 'value') in _pairs(item['inputs'])
+        )
+        self.assertIn(('ts-slice', 'data'), _pairs(slice_body['state']))
+        self.assertTrue(slice_body['prevent_initial_call'])
 
         bridge = _callbacks('ts-intent.data')
         self.assertEqual(len(bridge), 1)
@@ -71,6 +135,7 @@ class TeamStatsCallbackTests(unittest.TestCase):
                 ('ts-opponent', 'value'),
                 ('ts-stadium', 'value'),
                 ('ts-site', 'value'),
+                ('ts-team', 'value'),
             ],
         )
         self.assertEqual(
@@ -81,9 +146,9 @@ class TeamStatsCallbackTests(unittest.TestCase):
                 ('ts-game-type', 'value'),
             ],
         )
-        self.assertNotIn('ts-opponent', {item['id'] for item in clientside[0]['inputs']})
-        self.assertNotIn('ts-stadium', {item['id'] for item in clientside[0]['inputs']})
-        self.assertNotIn('ts-site', {item['id'] for item in clientside[0]['inputs']})
+        self.assertNotIn('ts-opponent', {item['id'] for item in intent_body['inputs']})
+        self.assertNotIn('ts-stadium', {item['id'] for item in intent_body['inputs']})
+        self.assertNotIn('ts-site', {item['id'] for item in intent_body['inputs']})
         self.assertIn('ts-applied.data', render[0]['output'])
         self.assertFalse(render[0]['prevent_initial_call'])
         self.assertEqual(_pairs(download[0]['inputs']), [('ts-job', 'data')])
@@ -92,6 +157,7 @@ class TeamStatsCallbackTests(unittest.TestCase):
         self.assertIn(('ts-opponent', 'value'), _pairs(download[0]['state']))
         self.assertIn(('ts-stadium', 'value'), _pairs(download[0]['state']))
         self.assertIn(('ts-site', 'value'), _pairs(download[0]['state']))
+        self.assertIn(('ts-team', 'value'), _pairs(download[0]['state']))
         self.assertIn('ts-applied.data', download[0]['output'])
         self.assertNotIn('ts-job.data', download[0]['output'])
         self.assertTrue(download[0]['prevent_initial_call'])
@@ -139,7 +205,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         payload = _payload('easl-season', 'REGULAR')
         with patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch:
             result = team_stats_page.render_team_stats(
-                intent, '1', 'b', 'v1', 'home', 'EASL', 'plg-season', None,
+                intent, '1', 'b', 'v1', 'home', 'all', 'EASL', 'plg-season', None,
             )
         self.assertEqual(fetch.call_args.kwargs['reason'], 'scope')
         self.assertIsNone(fetch.call_args.kwargs['game_type'])
@@ -147,6 +213,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs['opponent'], 'all')
         self.assertEqual(fetch.call_args.kwargs['stadium'], 'all')
         self.assertEqual(fetch.call_args.kwargs['site'], 'all')
+        self.assertEqual(fetch.call_args.kwargs['team'], 'all')
         self.assertEqual(result[3], 'easl-season')
         self.assertEqual(result[5], 'REGULAR')
         self.assertEqual(result[8], 'all')
@@ -158,7 +225,56 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[12], 'all')
         self.assertEqual(result[15], 'all')
         self.assertEqual(result[17], 'all')
-        self.assertIs(result[18], no_update)
+        self.assertIs(result[23], no_update)
+
+    def test_intent_click_ignores_stale_control_state(self):
+        intent = {
+            'league': 'EASL',
+            'season': 'easl-season',
+            'game_type': None,
+            'skeleton': True,
+            'nonce': 4,
+        }
+        payload = _payload('easl-season', 'REGULAR')
+        with patch.object(team_stats_page, '_triggered_id', return_value='ts-intent'), \
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch:
+            result = team_stats_page.render_team_stats(
+                intent, '1', 'b', 'v1', 'home', 'kept', 'PLG', 'plg-season', 'PLAYOFF',
+            )
+        self.assertEqual(fetch.call_args.args[0], 'EASL')
+        self.assertEqual(fetch.call_args.kwargs['season_id'], 'easl-season')
+        self.assertIsNone(fetch.call_args.kwargs['game_type'])
+        self.assertEqual(fetch.call_args.kwargs['reason'], 'scope')
+        self.assertEqual(fetch.call_args.kwargs['team'], 'all')
+        self.assertEqual(result[10], {
+            'league': 'EASL',
+            'season': 'easl-season',
+            'game_type': 'REGULAR',
+        })
+
+    def test_intent_game_type_ignores_stale_control_state(self):
+        intent = {
+            'league': 'PLG',
+            'season': 's',
+            'game_type': 'PLAYOFF',
+            'skeleton': False,
+            'nonce': 8,
+        }
+        payload = _payload('s', 'PLAYOFF')
+        with patch.object(team_stats_page, '_triggered_id', return_value='ts-intent'), \
+                patch.object(team_stats_page, 'type_needs_download', return_value=False), \
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
+                patch.object(team_stats_page, '_view', return_value='cards'):
+            result = team_stats_page.render_team_stats(
+                intent, '2', 'all', 'all', 'away', 'club', 'EASL', 'other', 'REGULAR',
+            )
+        self.assertEqual(fetch.call_args.args[0], 'PLG')
+        self.assertEqual(fetch.call_args.kwargs['season_id'], 's')
+        self.assertEqual(fetch.call_args.kwargs['game_type'], 'PLAYOFF')
+        self.assertEqual(fetch.call_args.kwargs['team'], 'club')
+        self.assertEqual(result[10]['league'], 'PLG')
+        self.assertEqual(result[10]['season'], 's')
+        self.assertEqual(result[10]['game_type'], 'PLAYOFF')
 
     def test_cached_game_type_swaps_cards_without_a_job(self):
         intent = {
@@ -174,7 +290,7 @@ class TeamStatsRenderTests(unittest.TestCase):
                 patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
                 patch.object(team_stats_page, '_view', return_value='cards'):
             result = team_stats_page.render_team_stats(
-                intent, '2', 'all', 'all', 'away', 'PLG', 's', 'PLAYOFF',
+                intent, '2', 'all', 'all', 'away', 'all', 'PLG', 's', 'PLAYOFF',
             )
         self.assertEqual(result[0], 'cards')
         self.assertEqual(fetch.call_args.kwargs['reason'], 'type')
@@ -184,7 +300,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[10]['game_type'], 'PLAYOFF')
         self.assertEqual(fetch.call_args.kwargs['site'], 'away')
         self.assertIs(result[17], no_update)
-        self.assertIs(result[18], no_update)
+        self.assertIs(result[23], no_update)
 
     def test_missing_play_by_play_returns_the_skeleton_and_arms_the_job(self):
         intent = {
@@ -197,7 +313,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         with patch.object(team_stats_page, 'type_needs_download', return_value=True), \
                 patch.object(team_stats_page, 'team_stats_payload') as fetch:
             result = team_stats_page.render_team_stats(
-                intent, '2', 'b', 'v1', 'home', 'PLG', 's', 'PLAYOFF',
+                intent, '2', 'b', 'v1', 'home', 'all', 'PLG', 's', 'PLAYOFF',
             )
         fetch.assert_not_called()
         self.assertIn('Skeleton', _names(result[0]))
@@ -206,8 +322,8 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[8], 'all')
         self.assertIs(result[9], no_update)
         self.assertIs(result[10], no_update)
-        self.assertTrue(all(item is no_update for item in result[11:18]))
-        self.assertEqual(result[18], intent)
+        self.assertTrue(all(item is no_update for item in result[11:23]))
+        self.assertEqual(result[23], intent)
 
     def test_period_chip_keeps_applied_and_does_not_arm_a_job(self):
         payload = _payload('s', 'REGULAR', '1')
@@ -224,6 +340,7 @@ class TeamStatsRenderTests(unittest.TestCase):
                 'all',
                 'all',
                 'all',
+                'all',
                 'PLG',
                 's',
                 'REGULAR',
@@ -234,7 +351,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs['period'], '1')
         self.assertIs(result[8], no_update)
         self.assertIs(result[10], no_update)
-        self.assertIs(result[18], no_update)
+        self.assertIs(result[23], no_update)
 
     def test_download_paints_the_armed_type_and_drops_a_stale_job(self):
         job = {
@@ -250,7 +367,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             result = team_stats_page.render_team_stats_download(
                 job, dict(job), 'PLG', 's', 'REGULAR', '2',
             )
-        self.assertEqual(len(result), 18)
+        self.assertEqual(len(result), 23)
         self.assertEqual(result[0], 'cards')
         self.assertEqual(fetch.call_args.kwargs['reason'], 'type')
         self.assertEqual(fetch.call_args.kwargs['game_type'], 'PLAYOFF')
@@ -271,7 +388,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             team_stats_page, 'team_stats_payload', side_effect=RuntimeError('secret'),
         ):
             result = team_stats_page.render_team_stats(
-                None, 'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+                None, 'all', 'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
             )
         self.assertEqual(result[0].title, 'Error')
         self.assertIn(ERROR_GAME, str(result[0].children))
@@ -281,7 +398,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             'season': 's',
             'game_type': None,
         })
-        self.assertIs(result[18], no_update)
+        self.assertIs(result[23], no_update)
         self.assertNotIn('secret', str(result[0]))
 
     def test_slice_keeps_the_period_and_does_not_ask_for_a_download(self):
@@ -303,6 +420,7 @@ class TeamStatsRenderTests(unittest.TestCase):
                 'b',
                 'all',
                 'home',
+                'a',
                 'PLG',
                 's',
                 'REGULAR',
@@ -312,9 +430,10 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs['period'], '1')
         self.assertEqual(fetch.call_args.kwargs['opponent'], 'b')
         self.assertEqual(fetch.call_args.kwargs['site'], 'home')
+        self.assertEqual(fetch.call_args.kwargs['team'], 'a')
         self.assertIs(result[8], no_update)
         self.assertIs(result[10], no_update)
-        self.assertIs(result[18], no_update)
+        self.assertIs(result[23], no_update)
 
 
 def _walk(node):
@@ -352,8 +471,25 @@ class TeamStatsShowOppTests(unittest.TestCase):
         self.assertEqual(scope_classes, [
             'filter-cluster filter-cluster-league',
             'filter-cluster filter-cluster-type',
+        ])
+        match = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-match-pack')
+        self.assertIn('filter-pack-match', match.className)
+        self.assertEqual([child.className for child in match.children], [
+            'filter-cluster filter-cluster-team',
             'filter-cluster filter-cluster-opp',
         ])
+        team = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-team')
+        self.assertIsInstance(team, dmc.Select)
+        self.assertEqual(team.value, 'all')
+        self.assertEqual(team.data[0]['label'], 'All Teams')
+        self.assertFalse(team.searchable)
+        self.assertFalse(team.clearable)
+        self.assertFalse(team.allowDeselect)
+        tabs = [
+            node.value for node in _walk(tree)
+            if isinstance(node, dmc.TabsTab)
+        ]
+        self.assertEqual(tabs, ['tab-bs', 'tab-rotation'])
         opponent = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-opponent')
         self.assertIsInstance(opponent, dmc.Select)
         self.assertEqual(opponent.value, 'all')
@@ -482,3 +618,121 @@ class TeamStatsShowOppTests(unittest.TestCase):
             'braves-group-end' in ((th.className or '').split())
             for th in _walk(advanced) if isinstance(th, dmc.TableTh)
         ))
+
+
+class TeamStatsMatchupLabelTests(unittest.TestCase):
+    def test_long_names_keep_vs_on_the_first_phone_line(self):
+        long_name = 'Anyang Jung Kwan Jang Red Boosters'
+        cell = lambda text: {'text': text, 'winner': False, 'opp_best': False}
+        paper = team_stats_page._paper({
+            'id': 'team',
+            'columns': ['Team', 'GP'],
+            'rows': [
+                {'Team': cell(long_name), 'GP': cell('4'), 'summary': True},
+                {'Team': cell(long_name + ' vs'), 'GP': cell('2')},
+            ],
+            'opp_rows': [
+                {'Team': cell('Opp'), 'GP': cell(''), 'opp': True, 'summary': True},
+                {'Team': cell(long_name), 'GP': cell(''), 'opp': True},
+            ],
+        })
+        body = next(node for node in _walk(paper) if isinstance(node, dmc.TableTbody))
+        summary, summary_opp, matchup, opp = body.children
+        self.assertIn('braves-summary-row', summary.className)
+        self.assertNotIn('braves-summary-end', summary.className)
+        self.assertIn('braves-summary-end', summary_opp.className)
+        full = next(
+            node for node in _walk(summary.children[0])
+            if getattr(node, 'className', None) == 'ts-team-full'
+        )
+        self.assertEqual(full.children, long_name)
+        match_lines = [
+            node.children for node in _walk(matchup.children[0])
+            if getattr(node, 'className', None) in ('ts-team-line1', 'ts-team-line2')
+        ]
+        self.assertEqual(match_lines, [
+            'Anyang Jung Kwan Jang vs',
+            'Red Boosters',
+        ])
+        opp_lines = [
+            node.children for node in _walk(opp.children[0])
+            if getattr(node, 'className', None) in ('ts-team-line1', 'ts-team-line2')
+        ]
+        self.assertEqual(opp_lines, ['Anyang Jung Kwan Jang', 'Red Boosters'])
+        self.assertEqual(summary_opp.children[0].children, 'Opp')
+
+
+class TeamStatsShowOppLockTests(unittest.TestCase):
+    def test_single_team_forces_show_opp_and_remembers_the_old_choice(self):
+        checked, disabled, memory = team_stats_page.lock_show_opp('aces', False, False, None)
+        self.assertTrue(checked)
+        self.assertTrue(disabled)
+        self.assertIs(memory, False)
+
+    def test_another_team_does_not_overwrite_the_remembered_choice(self):
+        checked, disabled, memory = team_stats_page.lock_show_opp('braves', True, True, False)
+        self.assertIs(checked, no_update)
+        self.assertIs(disabled, no_update)
+        self.assertIs(memory, no_update)
+
+    def test_all_teams_restores_the_remembered_choice(self):
+        checked, disabled, memory = team_stats_page.lock_show_opp('all', True, True, False)
+        self.assertIs(checked, False)
+        self.assertIs(disabled, False)
+        self.assertIs(memory, no_update)
+
+
+class TeamStatsRotationTests(unittest.TestCase):
+    def test_rotation_waits_until_that_tab_is_open(self):
+        with self.assertRaises(PreventUpdate):
+            team_stats_page.render_team_rotation(
+                'tab-bs', {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'aces', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            )
+
+    def test_all_teams_asks_for_one_team_without_a_fetch(self):
+        with patch.object(team_stats_page, 'rotation_games') as fetch:
+            view = team_stats_page.render_team_rotation(
+                'tab-rotation',
+                {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            )
+        fetch.assert_not_called()
+        self.assertIn('Select a team.', str(view))
+        self.assertIn('Choose one team.', str(view))
+
+    def test_no_games_uses_the_filter_empty_copy(self):
+        source = {'ok': True, 'select_team': False, 'empty': True, 'games': []}
+        with patch.object(team_stats_page, 'rotation_games', return_value=source):
+            view = team_stats_page.render_team_rotation(
+                'tab-rotation',
+                {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'aces', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            )
+        self.assertIn('No games in this view.', str(view))
+        self.assertIn('Team', str(view))
+
+    def test_no_usable_lineup_is_empty_not_an_error(self):
+        source = {
+            'ok': True, 'select_team': False, 'empty': False,
+            'games': [{'fixture_id': 'g1'}], 'team': 'aces', 'id_table': {},
+        }
+        with patch.object(team_stats_page, 'rotation_games', return_value=source), \
+                patch.object(team_stats_page, 'season_aggregate', return_value={'n': 0, 'players': []}):
+            view = team_stats_page.render_team_rotation(
+                'tab-rotation',
+                {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'aces', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            )
+        self.assertIn('No rotation chart for this view.', str(view))
+        self.assertNotIn('Traceback', str(view))
+
+    def test_unpainted_scope_keeps_the_chart_skeleton(self):
+        view = team_stats_page.render_team_rotation(
+            'tab-rotation',
+            {'league': 'PLG', 'season': 'old', 'game_type': 'REGULAR'},
+            'aces', 'all', 'all', 'all', 'PLG', 'old', 'REGULAR',
+            {'league': 'EASL', 'season': 'new', 'game_type': None, 'nonce': 1},
+        )
+        self.assertIn('Skeleton', _names(view))
+        self.assertNotIn('Select a team.', str(view))

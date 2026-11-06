@@ -19,18 +19,32 @@ import dash_mantine_components as dmc
 
 from synergy_inbounder.logs import data as log_data
 from synergy_inbounder.logs import unexpected as log_unexpected
+from synergy_inbounder.names import display_name
 from synergy_inbounder.settings import (
     EASL_SEASON_ID,
     SYNERGY_SEASON_ID,
     selectable_seasons,
 )
+from synergy_reporter.rotation import period_label
+from synergy_reporter.team_rotation import (
+    ROTATION_EMPTY,
+    ROTATION_SELECT,
+    ROTATION_SELECT_NEXT,
+    build_team_rotation_figure,
+    season_aggregate,
+)
 from synergy_reporter.team_season import (
+    EMPTY_TEAM_STATS,
+    EMPTY_TEAM_STATS_NEXT,
     OPPONENT_ALL,
     OPPONENT_ALL_LABEL,
     SITE_ALL,
     SITE_OPTIONS,
     STADIUM_ALL,
     STADIUM_ALL_LABEL,
+    TEAM_ALL,
+    TEAM_ALL_LABEL,
+    rotation_games,
     team_stats_payload,
     type_needs_download,
 )
@@ -40,6 +54,8 @@ from ui_kit import (
     error_alert,
     filter_control,
     icon,
+    loading_skeleton,
+    team_name_lines,
 )
 
 register_page(
@@ -324,6 +340,23 @@ def _header_rows(card_id, columns):
     return rows
 
 
+def _team_label(text, keep_vs=False):
+    raw = '' if text is None else str(text)
+    name = raw[:-3] if keep_vs and raw.endswith(' vs') else raw
+    first, second = team_name_lines(name)
+    if not second:
+        return raw
+    suffix = ' vs' if keep_vs else ''
+    return html.Span(
+        [
+            html.Span(name + suffix, className='ts-team-full'),
+            html.Span(first + suffix, className='ts-team-line1'),
+            html.Span(second, className='ts-team-line2'),
+        ],
+        className='ts-team-label is-split',
+    )
+
+
 def _body_rows(card):
     columns = card.get('columns') or []
     edges = _edge_columns(card.get('id'), columns)
@@ -357,8 +390,20 @@ def _body_rows(card):
                 kwargs['style'] = style
             if classes:
                 kwargs['className'] = ' '.join(classes)
-            cells.append(dmc.TableTd(text, **kwargs))
+            content = text
+            if column == 'Team':
+                content = _team_label(
+                    text,
+                    keep_vs=(
+                        not opp
+                        and not (isinstance(record, dict) and record.get('summary'))
+                        and text.endswith(' vs')
+                    ),
+                )
+            cells.append(dmc.TableTd(content, **kwargs))
         class_name = 'braves-clean-row braves-opp-row' if opp else 'braves-clean-row'
+        if isinstance(record, dict) and record.get('summary'):
+            class_name += ' braves-summary-end' if opp else ' braves-summary-row'
         rows.append(dmc.TableTr(cells, className=class_name))
     return rows
 
@@ -418,6 +463,10 @@ def _view(payload):
     return _cards_view(payload['cards'])
 
 
+def _rotation_pane():
+    return html.Div(id='ts-rotation', style={'display': 'none'})
+
+
 def layout():
     league = 'PLG'
     season_id = _default_season(league)
@@ -447,6 +496,13 @@ def layout():
         radius='md',
         size='xs',
     )
+    team_control = _sized_select(
+        'ts-team',
+        'ts-team-probes',
+        TEAM_ALL_LABEL,
+        [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}],
+        TEAM_ALL,
+    )
     opponent_control = _sized_select(
         'ts-opponent',
         'ts-opponent-probes',
@@ -472,18 +528,34 @@ def layout():
         [
             dcc.Store(id='ts-filter-pack-sync'),
             dcc.Store(id='ts-sizer-sync'),
+            dcc.Store(id='ts-show-opp-memory'),
+            dcc.Store(id='ts-opponent-width', data=[OPPONENT_ALL_LABEL]),
             dcc.Store(
                 id='ts-applied',
                 data={'league': league, 'season': season_id, 'game_type': 'REGULAR'},
             ),
             dcc.Store(id='ts-intent'),
             dcc.Store(id='ts-job'),
+            dcc.Store(
+                id='ts-slice',
+                data={
+                    'team': TEAM_ALL,
+                    'opponent': OPPONENT_ALL,
+                    'stadium': STADIUM_ALL,
+                    'site': SITE_ALL,
+                },
+            ),
             dmc.Tabs(
                 dmc.TabsList([
                     dmc.TabsTab(
                         'Box Score',
                         value='tab-bs',
                         leftSection=icon('tabler:table', width=14),
+                    ),
+                    dmc.TabsTab(
+                        'Rotation',
+                        value='tab-rotation',
+                        leftSection=icon('tabler:chart-bar', width=14),
                     ),
                 ]),
                 id='ts-tabs',
@@ -507,6 +579,18 @@ def layout():
                             visible=False,
                         ),
                     ]),
+                ],
+                id='ts-filter-pack',
+                className='filter-pack filter-pack-scope',
+            ),
+            dmc.Box(
+                [
+                    _cluster(
+                        'team',
+                        [filter_control('', team_control)],
+                        cluster_id='ts-team-cluster',
+                        style={'display': 'none'},
+                    ),
                     _cluster(
                         'opp',
                         [filter_control('', opponent_control)],
@@ -514,8 +598,8 @@ def layout():
                         style={'display': 'none'},
                     ),
                 ],
-                id='ts-filter-pack',
-                className='filter-pack filter-pack-scope',
+                id='ts-match-pack',
+                className='filter-pack filter-pack-match',
             ),
             dmc.Box(
                 [
@@ -562,12 +646,14 @@ def layout():
                 w='100%',
             ),
             html.Div(_loading_body(), id='ts-body'),
+            _rotation_pane(),
         ],
         gap='md',
     )
 
 
 _LOADING_BODY = json.dumps(_jsonable(_loading_body()))
+_CHART_LOADING = json.dumps(_jsonable(loading_skeleton('chart')))
 
 clientside_callback(
     """
@@ -628,6 +714,59 @@ clientside_callback(
 
 clientside_callback(
     """
+    function(intent) {
+        if (!intent || intent.nonce == null) {
+            return window.dash_clientside.no_update;
+        }
+        return __CHART_LOADING__;
+    }
+    """.replace('__CHART_LOADING__', _CHART_LOADING),
+    Output('ts-rotation', 'children', allow_duplicate=True),
+    Input('ts-intent', 'data'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(team, opponent, stadium, site, painted) {
+        var current = painted || {};
+        function same(left, right) {
+            var a = left == null ? null : left;
+            var b = right == null ? null : right;
+            return a == b;
+        }
+        if (
+            same(team, current.team)
+            && same(opponent, current.opponent)
+            && same(stadium, current.stadium)
+            && same(site, current.site)
+        ) {
+            return [
+                window.dash_clientside.no_update,
+                window.dash_clientside.no_update
+            ];
+        }
+        var cards = window.dash_clientside.no_update;
+        if (current.team && current.team !== 'all' && (team === 'all' || team == null)) {
+            cards = __LOADING_BODY__;
+        }
+        return [cards, __CHART_LOADING__];
+    }
+    """.replace('__LOADING_BODY__', _LOADING_BODY).replace('__CHART_LOADING__', _CHART_LOADING),
+    Output('ts-body', 'children', allow_duplicate=True),
+    Output('ts-rotation', 'children', allow_duplicate=True),
+    Input('ts-team', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    State('ts-slice', 'data'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
     function() {
         var api = window.dash_clientside && window.dash_clientside.filter_pack;
         if (api && api.sync) {
@@ -639,6 +778,7 @@ clientside_callback(
     Output('ts-filter-pack-sync', 'data'),
     Input('ts-body', 'children'),
     Input('ts-game-type', 'data'),
+    Input('ts-team', 'data'),
     Input('ts-opponent', 'data'),
     Input('ts-stadium', 'data'),
 )
@@ -646,7 +786,7 @@ clientside_callback(
 
 clientside_callback(
     """
-    function(opponentOptions, stadiumOptions) {
+    function(teamOptions, opponentLabels, stadiumOptions) {
         function fill(id, options, fallback) {
             var host = document.getElementById(id);
             if (!host) {
@@ -656,6 +796,8 @@ clientside_callback(
             (options || []).forEach(function (item) {
                 if (item && item.label) {
                     labels.push(String(item.label));
+                } else if (typeof item === 'string' && item) {
+                    labels.push(item);
                 }
             });
             if (!labels.length) {
@@ -672,7 +814,8 @@ clientside_callback(
                 host.appendChild(span);
             });
         }
-        fill('ts-opponent-probes', opponentOptions, 'vs All Teams');
+        fill('ts-team-probes', teamOptions, 'All Teams');
+        fill('ts-opponent-probes', opponentLabels, 'vs All Teams');
         fill('ts-stadium-probes', stadiumOptions, 'All Stadiums');
         var api = window.dash_clientside && window.dash_clientside.filter_pack;
         if (api && api.sync) {
@@ -683,8 +826,27 @@ clientside_callback(
     }
     """,
     Output('ts-sizer-sync', 'data'),
-    Input('ts-opponent', 'data'),
+    Input('ts-team', 'data'),
+    Input('ts-opponent-width', 'data'),
     Input('ts-stadium', 'data'),
+)
+
+
+clientside_callback(
+    """
+    function(tab) {
+        var rotation = tab === 'tab-rotation';
+        var hidden = {display: 'none'};
+        return rotation
+            ? [hidden, hidden, null]
+            : [null, null, hidden];
+    }
+    """,
+    Output('ts-period-bar', 'style'),
+    Output('ts-body', 'style'),
+    Output('ts-rotation', 'style'),
+    Input('ts-tabs', 'value'),
+    prevent_initial_call=True,
 )
 
 
@@ -707,7 +869,10 @@ def _menu_value(payload, key, options, fallback):
     return selected
 
 
-def _load(league, season_id, game_type, period, reason, opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL):
+def _load(
+    league, season_id, game_type, period, reason,
+    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL, team=TEAM_ALL,
+):
     try:
         return team_stats_payload(
             league or 'PLG',
@@ -718,6 +883,7 @@ def _load(league, season_id, game_type, period, reason, opponent=OPPONENT_ALL, s
             opponent=opponent,
             stadium=stadium,
             site=site,
+            team=team,
         )
     except Exception:
         log_unexpected.exception('team stats page load failed')
@@ -743,7 +909,7 @@ def _load(league, season_id, game_type, period, reason, opponent=OPPONENT_ALL, s
         }
 
 
-def _paint(payload, league, season_id, game_type, period, opponent, stadium, site):
+def _paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL):
     seasons = payload.get('seasons') or _season_data(league or 'PLG')
     selected_season = payload.get('season_id') or season_id
     types = payload.get('game_types') or []
@@ -765,16 +931,25 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
     selected_site = payload.get('site') or SITE_ALL
     if selected_site not in ('all', 'away', 'home'):
         selected_site = SITE_ALL
+    team_options = payload.get('team_options') or [
+        {'label': TEAM_ALL_LABEL, 'value': TEAM_ALL},
+    ]
+    selected_team = _menu_value(payload, 'team', team_options, TEAM_ALL)
+    width_labels = payload.get('opponent_width_labels') or [
+        item.get('label') for item in opponent_options if item.get('label')
+    ]
     type_style = None if payload.get('game_type_visible') else {'display': 'none'}
     period_style = None if payload.get('period_visible') else {'display': 'none'}
     opponent_style = None if payload.get('opponent_visible') else {'display': 'none'}
     stadium_style = None if payload.get('stadium_visible') else {'display': 'none'}
+    team_style = None if payload.get('team_visible') else {'display': 'none'}
     season_out = no_update if _same(selected_season, season_id) else selected_season
     type_out = no_update if _same(selected_type, game_type) else selected_type
     period_out = no_update if _same(selected_period, period) else selected_period
     opponent_out = no_update if _same(selected_opponent, opponent) else selected_opponent
     stadium_out = no_update if _same(selected_stadium, stadium) else selected_stadium
     site_out = no_update if _same(selected_site, site) else selected_site
+    team_out = no_update if _same(selected_team, team) else selected_team
     # Same response as any select correction, so the bridge's applied State
     # already matches and that echo does not fetch again.
     applied = {
@@ -801,6 +976,16 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
         stadium_out,
         stadium_style,
         site_out,
+        team_options,
+        team_out,
+        team_style,
+        width_labels,
+        {
+            'team': selected_team,
+            'opponent': selected_opponent,
+            'stadium': selected_stadium,
+            'site': selected_site,
+        },
     )
 
 
@@ -824,11 +1009,17 @@ def _view_outputs():
         Output('ts-stadium', 'value', allow_duplicate=True),
         Output('ts-stadium-cluster', 'style', allow_duplicate=True),
         Output('ts-site', 'value', allow_duplicate=True),
+        Output('ts-team', 'data', allow_duplicate=True),
+        Output('ts-team', 'value', allow_duplicate=True),
+        Output('ts-team-cluster', 'style', allow_duplicate=True),
+        Output('ts-opponent-width', 'data', allow_duplicate=True),
+        Output('ts-slice', 'data', allow_duplicate=True),
     )
 
 
 def _keep_slice():
-    return (no_update, no_update, no_update, no_update, no_update, no_update, no_update)
+    # Opponent, stadium, site, team, and the painted slice stay until download.
+    return (no_update,) * 12
 
 
 def _skeleton_job(intent, period):
@@ -843,8 +1034,10 @@ def _skeleton_job(intent, period):
     ) + _keep_slice() + (intent,)
 
 
-def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site):
-    painted = _paint(payload, league, season_id, game_type, period, opponent, stadium, site)
+def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL):
+    painted = _paint(
+        payload, league, season_id, game_type, period, opponent, stadium, site, team,
+    )
     # applied stays. The slice outputs follow it. The job slot is the caller's.
     return painted[:10] + (no_update,) + painted[11:]
 
@@ -857,16 +1050,25 @@ def _local_paint(payload, league, season_id, game_type, period, opponent, stadiu
     Input('ts-opponent', 'value'),
     Input('ts-stadium', 'value'),
     Input('ts-site', 'value'),
+    Input('ts-team', 'value'),
     State('ts-league', 'value'),
     State('ts-season', 'value'),
     State('ts-game-type', 'value'),
     prevent_initial_call='initial_duplicate',
 )
-def render_team_stats(intent, period, opponent, stadium, site, league, season_id, game_type):
+def render_team_stats(intent, period, opponent, stadium, site, team, league, season_id, game_type):
     triggered = _triggered_id()
+    # The click lives on ts-intent. Control State can still be the previous
+    # value when this callback runs, so a league, season, or game-type click
+    # loads from the store.
+    if triggered == 'ts-intent' and isinstance(intent, dict):
+        if intent.get('league'):
+            league = intent.get('league')
+        if intent.get('season') is not None:
+            season_id = intent.get('season')
     if triggered == 'ts-period':
         reason = 'chip'
-    elif triggered in ('ts-opponent', 'ts-stadium', 'ts-site'):
+    elif triggered in ('ts-opponent', 'ts-stadium', 'ts-site', 'ts-team'):
         reason = 'slice'
     elif isinstance(intent, dict) and not intent.get('skeleton'):
         reason = 'type'
@@ -888,21 +1090,26 @@ def render_team_stats(intent, period, opponent, stadium, site, league, season_id
             }
             return _skeleton_job(job, period)
         payload = _load(
-            league, season_id, requested_type, 'all', 'type', opponent, stadium, site,
+            league, season_id, requested_type, 'all', 'type',
+            opponent, stadium, site, team,
         )
         return _paint(
-            payload, league, season_id, game_type, period, opponent, stadium, site,
+            payload, league, season_id, game_type, period, opponent, stadium, site, team,
         ) + (no_update,)
     if reason in ('chip', 'slice'):
         payload = _load(
-            league, season_id, game_type, period or 'all', reason, opponent, stadium, site,
+            league, season_id, game_type, period or 'all', reason,
+            opponent, stadium, site, team,
         )
         return _local_paint(
-            payload, league, season_id, game_type, period, opponent, stadium, site,
+            payload, league, season_id, game_type, period, opponent, stadium, site, team,
         ) + (no_update,)
-    payload = _load(league, season_id, None, 'all', 'scope', OPPONENT_ALL, STADIUM_ALL, SITE_ALL)
+    payload = _load(
+        league, season_id, None, 'all', 'scope',
+        OPPONENT_ALL, STADIUM_ALL, SITE_ALL, TEAM_ALL,
+    )
     return _paint(
-        payload, league, season_id, game_type, period, opponent, stadium, site,
+        payload, league, season_id, game_type, period, opponent, stadium, site, team,
     ) + (no_update,)
 
 
@@ -917,11 +1124,12 @@ def render_team_stats(intent, period, opponent, stadium, site, league, season_id
     State('ts-opponent', 'value'),
     State('ts-stadium', 'value'),
     State('ts-site', 'value'),
+    State('ts-team', 'value'),
     prevent_initial_call=True,
 )
 def render_team_stats_download(
     job, intent, league, season_id, game_type, period,
-    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL,
+    opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL, team=TEAM_ALL,
 ):
     if not isinstance(job, dict) or not isinstance(intent, dict):
         raise PreventUpdate
@@ -932,6 +1140,139 @@ def render_team_stats_download(
         season_id = job.get('season')
     requested_type = job.get('game_type') if isinstance(job, dict) else game_type
     payload = _load(
-        league, season_id, requested_type, 'all', 'type', opponent, stadium, site,
+        league, season_id, requested_type, 'all', 'type', opponent, stadium, site, team,
     )
-    return _paint(payload, league, season_id, game_type, period, opponent, stadium, site)
+    return _paint(
+        payload, league, season_id, game_type, period, opponent, stadium, site, team,
+    )
+
+
+@callback(
+    Output('ts-show-opp', 'checked'),
+    Output('ts-show-opp', 'disabled'),
+    Output('ts-show-opp-memory', 'data'),
+    Input('ts-team', 'value'),
+    State('ts-show-opp', 'checked'),
+    State('ts-show-opp', 'disabled'),
+    State('ts-show-opp-memory', 'data'),
+    prevent_initial_call=True,
+)
+def lock_show_opp(team, checked, disabled, memory):
+    """A single team forces Show Opp on and restores the All Teams choice."""
+    single = bool(team) and team != TEAM_ALL
+    if single:
+        if disabled:
+            return no_update, no_update, no_update
+        return True, True, bool(checked)
+    restored = False if memory is None else bool(memory)
+    if bool(checked) == restored and not disabled:
+        return no_update, no_update, no_update
+    return restored, False, no_update
+
+
+def _rotation_caption(aggregate):
+    parts = ['{0} games'.format(int(aggregate.get('n') or 0))]
+    seen = set()
+    for column, sample in zip(aggregate.get('columns') or [], aggregate.get('counts') or []):
+        period = column.get('period')
+        if period in (1, 2, 3, 4) or period in seen or column.get('minute') != 0:
+            continue
+        seen.add(period)
+        parts.append('{0} {1}'.format(period_label(period), sample))
+    return ' · '.join(parts)
+
+
+def _rotation_chart(figure, aggregate):
+    height = int(getattr(figure.layout, 'height', None) or 520)
+    return dmc.Paper(
+        [
+            dmc.Text(_rotation_caption(aggregate), size='sm', c='dimmed', mb=8),
+            dcc.Graph(
+                id='ts-rotation-graph',
+                figure=figure,
+                config={'displayModeBar': False, 'responsive': True},
+                style={'width': '100%', 'height': '{0}px'.format(height)},
+            ),
+        ],
+        withBorder=True,
+        radius='md',
+        p='sm',
+        shadow='xs',
+        className='braves-card-wrapper',
+    )
+
+
+def _scope_pending(intent, applied):
+    """True while a league, season, or game-type click has not painted yet."""
+    if not isinstance(intent, dict):
+        return False
+    applied = applied if isinstance(applied, dict) else {}
+    league = intent.get('league')
+    if league and league != applied.get('league'):
+        return True
+    season = intent.get('season')
+    if season is not None and season != applied.get('season'):
+        return True
+    game_type = intent.get('game_type')
+    if game_type and game_type != applied.get('game_type'):
+        return True
+    return False
+
+
+@callback(
+    Output('ts-rotation', 'children'),
+    Input('ts-tabs', 'value'),
+    Input('ts-applied', 'data'),
+    Input('ts-team', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-intent', 'data'),
+    prevent_initial_call=True,
+)
+def render_team_rotation(
+    tab, applied, team, opponent, stadium, site, league, season_id, game_type,
+    intent=None,
+):
+    if tab != 'tab-rotation':
+        raise PreventUpdate
+    applied = applied if isinstance(applied, dict) else {}
+    if _scope_pending(intent, applied):
+        return loading_skeleton('chart')
+    league = applied.get('league') or league or 'PLG'
+    if applied.get('season') is not None:
+        season_id = applied.get('season')
+    if applied.get('game_type') is not None:
+        game_type = applied.get('game_type')
+    if not team or team == TEAM_ALL:
+        return empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)
+    try:
+        source = rotation_games(
+            league, season_id, game_type, opponent, stadium, site, team,
+        )
+    except Exception:
+        log_unexpected.exception('team rotation page load failed')
+        return error_alert(ERROR_GAME)
+    if not source.get('ok'):
+        return error_alert(source.get('message') or ERROR_GAME)
+    if source.get('select_team'):
+        return empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)
+    if source.get('empty') or not source.get('games'):
+        return empty_state(EMPTY_TEAM_STATS, EMPTY_TEAM_STATS_NEXT)
+    try:
+        aggregate = season_aggregate(source)
+    except Exception:
+        log_unexpected.exception('team rotation aggregate failed')
+        return error_alert(ERROR_GAME)
+    if not aggregate.get('n') or not aggregate.get('players'):
+        return empty_state(ROTATION_EMPTY, EMPTY_TEAM_STATS_NEXT)
+    names = source.get('id_table') or {}
+    opponent_id = aggregate.get('opponent')
+    opponent_name = display_name(names, opponent_id) if opponent_id else None
+    figure = build_team_rotation_figure(
+        aggregate, display_name(names, source.get('team')), opponent_name,
+    )
+    return _rotation_chart(figure, aggregate)

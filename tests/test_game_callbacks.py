@@ -1348,3 +1348,72 @@ class LivePaintTests(unittest.TestCase):
         self.assertTrue(all(json.loads(item)['_ui'] == 'error' for item in auth))
 
 
+def _walk(node):
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            yield from _walk(item)
+        return
+    if node is None or isinstance(node, (str, int, float, bool)):
+        return
+    yield node
+    children = getattr(node, 'children', None)
+    if children is not None:
+        yield from _walk(children)
+
+
+class DuplicateOutputKeyTests(unittest.TestCase):
+    def test_renderer_output_keys_are_unique(self):
+        from collections import Counter
+
+        from dash._callback import GLOBAL_CALLBACK_LIST
+        from dash._utils import split_callback_id
+
+        keys = []
+        for spec in GLOBAL_CALLBACK_LIST:
+            parts = split_callback_id(spec['output'])
+            items = parts if isinstance(parts, list) else [parts]
+            for item in items:
+                keys.append(f"{item['id']}.{item['property']}")
+        duplicates = {key: count for key, count in Counter(keys).items() if count > 1}
+        self.assertEqual(duplicates, {})
+
+    def test_finished_snapshot_uses_the_sentinel_and_live_writers_do_not(self):
+        from dash._callback import GLOBAL_CALLBACK_LIST
+
+        finished = [
+            item for item in GLOBAL_CALLBACK_LIST
+            if any(dep['id'] == 'finished-snapshot-sentinel' for dep in item['inputs'])
+        ]
+        self.assertEqual(len(finished), 1)
+        self.assertEqual(
+            [(item['id'], item['property']) for item in finished[0]['inputs']],
+            [
+                ('interval-component', 'n_intervals'),
+                ('game_id', 'children'),
+                ('game_league', 'children'),
+                ('finished-snapshot-sentinel', 'data'),
+            ],
+        )
+        self.assertEqual(finished[0]['state'], [])
+        live = [
+            item for item in GLOBAL_CALLBACK_LIST
+            if item['output'].startswith('rotation_store.data@')
+        ]
+        self.assertEqual(len(live), 1)
+        self.assertNotIn(
+            'finished-snapshot-sentinel',
+            {item['id'] for item in live[0]['inputs']},
+        )
+        self.assertNotIn(live[0]['output'], finished[0]['output'])
+
+    def test_sentinel_store_is_a_constant_on_the_game_layout(self):
+        matches = [
+            node for node in _walk(game_page.layout('g1', 'plg'))
+            if getattr(node, 'id', None) == 'finished-snapshot-sentinel'
+        ]
+        self.assertEqual(len(matches), 1)
+        store = matches[0]
+        self.assertEqual(store.data, 'finished')
+        self.assertEqual(store.storage_type, 'memory')
+
+

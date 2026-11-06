@@ -582,6 +582,13 @@ def layout(game_id=None, league='plg'):
             'finished_reset': False,
         }),
         dcc.Store(id='match_info_store'),
+        # Dash hashes allow_duplicate outputs from Inputs only. Nothing writes
+        # this store; it keeps the finished publisher off the live callbacks' hash.
+        dcc.Store(
+            id='finished-snapshot-sentinel',
+            data='finished',
+            storage_type='memory',
+        ),
         dcc.Store(id='report-pane-ready', data=''),
         
         # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
@@ -1127,9 +1134,10 @@ def _finish_outputs(game_id, org, report, info):
     Input('interval-component', 'n_intervals'),
     Input('game_id', 'children'),
     Input('game_league', 'children'),
+    Input('finished-snapshot-sentinel', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def publish_finished_snapshot(n, game_id, league='plg'):
+def publish_finished_snapshot(n, game_id, league='plg', _sentinel='finished'):
     hold = (no_update, no_update, no_update, no_update, no_update, no_update)
     if not game_id:
         return hold

@@ -4,6 +4,7 @@ import unittest
 import pandas as pd
 
 from synergy_reporter.post_game_report import PostGameReport
+from synergy_reporter.select_menu import select_menu_plan
 from synergy_reporter.shot_chart import (
     COLD,
     HOT,
@@ -15,7 +16,6 @@ from synergy_reporter.shot_chart import (
     format_fg_percent,
     period_chips,
     player_options,
-    shot_menu_plan,
     zone_appearance,
 )
 
@@ -284,31 +284,31 @@ class CourtZoneTests(unittest.TestCase):
 
     def test_menu_opens_toward_the_side_that_fits_every_name(self):
         self.assertEqual(
-            shot_menu_plan(100, 140, 800, 10, 32),
+            select_menu_plan(100, 140, 800, 10, 32),
             {"side": "bottom", "height": 320, "inner": 320},
         )
         self.assertEqual(
-            shot_menu_plan(700, 740, 800, 10, 32),
+            select_menu_plan(700, 740, 800, 10, 32),
             {"side": "top", "height": 320, "inner": 320},
         )
         self.assertEqual(
-            shot_menu_plan(500, 540, 700, 20, 32),
+            select_menu_plan(500, 540, 700, 20, 32),
             {"side": "top", "height": 480, "inner": 480},
         )
         self.assertEqual(
-            shot_menu_plan(10, 40, 80, 2, 32),
+            select_menu_plan(10, 40, 80, 2, 32),
             {"side": "bottom", "height": 128, "inner": 128},
         )
         self.assertEqual(
-            shot_menu_plan(100, 140, 800, 10, 32, 4, 4),
+            select_menu_plan(100, 140, 800, 10, 32, 4, 4),
             {"side": "bottom", "height": 328, "inner": 320},
         )
         self.assertEqual(
-            shot_menu_plan(500, 540, 700, 20, 32, 4, 4),
+            select_menu_plan(500, 540, 700, 20, 32, 4, 4),
             {"side": "top", "height": 488, "inner": 480},
         )
         self.assertEqual(
-            shot_menu_plan(10, 40, 80, 2, 32, 4, 4),
+            select_menu_plan(10, 40, 80, 2, 32, 4, 4),
             {"side": "bottom", "height": 136, "inner": 128},
         )
 

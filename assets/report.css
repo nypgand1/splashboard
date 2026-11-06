@@ -1253,6 +1253,37 @@ body {
     display: none;
 }
 
+.ts-team-line1,
+.ts-team-line2 {
+    display: none;
+}
+
+.ts-team-label {
+    display: inline-block;
+    vertical-align: middle;
+    line-height: 1.15;
+}
+
+tr.braves-summary-row > td:first-child {
+    font-weight: 700;
+}
+
+tr.braves-summary-end > td {
+    border-bottom: 2px solid #cbd5e1;
+}
+
+@media (max-width: 768px) {
+    .ts-team-label.is-split .ts-team-full {
+        display: none;
+    }
+
+    .ts-team-label.is-split .ts-team-line1,
+    .ts-team-label.is-split .ts-team-line2 {
+        display: block;
+        white-space: nowrap;
+    }
+}
+
 .braves-clean-table tbody tr.braves-clean-row:hover td:first-child,
 .braves-clean-table tbody tr.braves-opp-row:hover td {
     background-color: var(--row-hover) !important;
@@ -1750,7 +1781,7 @@ a.home-schedule-row {
     flex-basis: 100%;
 }
 
-.filter-pack-scope > .filter-cluster-opp {
+.filter-pack-match[data-mode="split"] > .filter-cluster-opp {
     flex-basis: 100%;
 }
 

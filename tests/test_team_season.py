@@ -37,6 +37,7 @@ from synergy_reporter.post_game_report import PostGameReport
 from synergy_reporter.team_season import (
     EMPTY_TEAM_STATS,
     EMPTY_TEAM_STATS_NEXT,
+    _paint_pair,
     build_team_cards,
     choose_game_type,
     _finished_rows,
@@ -463,7 +464,7 @@ class TeamCardTests(unittest.TestCase):
         self.assertEqual(EMPTY_TEAM_STATS, 'No games in this view.')
         self.assertEqual(
             EMPTY_TEAM_STATS_NEXT,
-            'Switch Game Type, Opponent, Stadium, or Home/Away.',
+            'Switch Game Type, Team, Opponent, Stadium, or Home/Away.',
         )
 
     def test_chips_do_not_use_a_person_period_gate(self):
@@ -511,6 +512,7 @@ class SliceFilterTests(unittest.TestCase):
             opponent=kwargs.get('opponent', 'all'),
             stadium=kwargs.get('stadium', 'all'),
             site=kwargs.get('site', 'all'),
+            team=kwargs.get('team', 'all'),
         )
 
     def test_opponent_drops_that_team_and_renames_opp(self):
@@ -582,8 +584,59 @@ class SliceFilterTests(unittest.TestCase):
         )
         self.assertFalse(built['opponent_visible'])
         self.assertEqual(built['opponent'], 'all')
+        self.assertFalse(built['team_visible'])
         self.assertFalse(built['stadium_visible'])
         self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Team'), 'Opp')
+
+    def test_one_team_pins_a_summary_then_each_opponent(self):
+        built = self._built(team='a')
+        rows = built['cards']['team']['rows']
+        opp = built['cards']['team']['opp_rows']
+        self.assertEqual([row['Team']['text'] for row in rows], [
+            'Aces', 'Aces vs', 'Aces vs',
+        ])
+        self.assertEqual([row['Team']['text'] for row in opp], [
+            'Opp', 'Braves', 'Clippers',
+        ])
+        self.assertTrue(rows[0]['summary'])
+        self.assertFalse(rows[1].get('summary'))
+        self.assertEqual(_text(built['cards'], 'team', 'Aces', 'GP'), '3')
+        self.assertEqual(_text(built['cards'], 'team', 'Aces vs', 'GP'), '2')
+        self.assertTrue(built['show_opp_locked'])
+        self.assertNotIn('a', [item['value'] for item in built['opponent_options']])
+        self.assertIn('vs Aces', built['opponent_width_labels'])
+        self.assertIn('3', [item['value'] for item in built['period_chips']])
+
+    def test_named_opponent_is_one_matchup_without_a_summary(self):
+        built = self._built(team='a', opponent='b')
+        rows = built['cards']['team']['rows']
+        self.assertEqual([row['Team']['text'] for row in rows], ['Aces vs'])
+        self.assertFalse(rows[0].get('summary'))
+        self.assertEqual(built['cards']['team']['opp_rows'][0]['Team']['text'], 'Braves')
+        self.assertEqual(_text(built['cards'], 'team', 'Aces vs', 'GP'), '2')
+
+    def test_one_opponent_keeps_the_summary_beside_that_matchup(self):
+        built = self._built(team='a', stadium='v2')
+        rows = built['cards']['team']['rows']
+        self.assertEqual([row['Team']['text'] for row in rows], ['Aces', 'Aces vs'])
+        self.assertTrue(rows[0]['summary'])
+        self.assertEqual(rows[0]['PTS']['text'], rows[1]['PTS']['text'])
+        self.assertFalse(rows[0]['PTS']['winner'])
+        self.assertFalse(rows[1]['PTS']['winner'])
+
+    def test_summary_does_not_take_column_best(self):
+        summary = {'PTS': {'text': '30.0', 'winner': False}, 'summary': True}
+        low = {'PTS': {'text': '10.0', 'winner': False}}
+        high = {'PTS': {'text': '12.0', 'winner': False}}
+        _paint_pair([summary, low, high], [], ['PTS'])
+        self.assertFalse(summary['PTS']['winner'])
+        self.assertFalse(low['PTS']['winner'])
+        self.assertTrue(high['PTS']['winner'])
+
+    def test_team_chips_ignore_home_away(self):
+        home = self._built(team='a', site='home')
+        self.assertIn('3', [item['value'] for item in home['period_chips']])
+        self.assertEqual(_text(home['cards'], 'team', 'Aces', 'GP'), '2')
 
 
 class ColumnWinnerTests(unittest.TestCase):

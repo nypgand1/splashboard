@@ -205,6 +205,128 @@
         }
     }
 
+    function teamNode() {
+        return document.querySelector('#ts-rotation-graph .js-plotly-plot')
+            || document.querySelector('#ts-rotation-graph .plotly-graph-div');
+    }
+
+    function axisKeys(layout) {
+        var keys = [];
+        var key;
+        for (key in layout) {
+            if (Object.prototype.hasOwnProperty.call(layout, key) && /^yaxis\d*$/.test(key)) {
+                keys.push(key);
+            }
+        }
+        return keys;
+    }
+
+    function isRight(axis) {
+        return !!(axis && axis.side === 'right');
+    }
+
+    function isNameAxis(axis) {
+        return !!(axis && axis.categoryarray && axis.categoryarray.length && !isRight(axis));
+    }
+
+    function teamLaneMatches(gd, narrow) {
+        var layout = gd.layout;
+        if (!layout) {
+            return true;
+        }
+        var keys = axisKeys(layout);
+        var rights = [];
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            if (isRight(layout[keys[i]])) {
+                rights.push(keys[i]);
+            }
+        }
+        if (!rights.length) {
+            return true;
+        }
+        var margin = layout.margin || {};
+        if (margin.r !== (narrow ? NARROW_R : WIDE_R)) {
+            return false;
+        }
+        if (margin.l !== (narrow ? NARROW_L : WIDE_L)) {
+            return false;
+        }
+        for (i = 0; i < rights.length; i++) {
+            if (narrow ? !hidden(layout[rights[i]]) : hidden(layout[rights[i]])) {
+                return false;
+            }
+        }
+        for (i = 0; i < keys.length; i++) {
+            if (isNameAxis(layout[keys[i]]) && !sameTicks(layout[keys[i]], narrow)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function teamLaneUpdate(gd, narrow) {
+        var update = {
+            'margin.r': narrow ? NARROW_R : WIDE_R,
+            'margin.l': narrow ? NARROW_L : WIDE_L
+        };
+        var keys = axisKeys(gd.layout || {});
+        var i;
+        var axis;
+        for (i = 0; i < keys.length; i++) {
+            axis = gd.layout[keys[i]];
+            if (isRight(axis)) {
+                update[keys[i] + '.visible'] = !narrow;
+            } else if (isNameAxis(axis)) {
+                update[keys[i] + '.automargin'] = false;
+                update[keys[i] + '.tickvals'] = axisLabels(axis);
+                update[keys[i] + '.ticktext'] = wantedTicks(axis, narrow);
+            }
+        }
+        return update;
+    }
+
+    function teamFinish(retry) {
+        window._teamRotationLanePending = false;
+        if (window._teamRotationLaneAgain) {
+            window._teamRotationLaneAgain = false;
+            teamApply(false);
+            return;
+        }
+        var again = teamNode();
+        if (again && !teamLaneMatches(again, wantsNarrow()) && !retry) {
+            teamApply(true);
+        }
+    }
+
+    function teamApply(retry) {
+        var gd = teamNode();
+        if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
+            return;
+        }
+        var narrow = wantsNarrow();
+        if (teamLaneMatches(gd, narrow)) {
+            return;
+        }
+        if (window._teamRotationLanePending) {
+            window._teamRotationLaneAgain = true;
+            return;
+        }
+        window._teamRotationLanePending = true;
+        var result;
+        try {
+            result = window.Plotly.relayout(gd, teamLaneUpdate(gd, narrow));
+        } catch (err) {
+            teamFinish(retry);
+            return;
+        }
+        if (result && typeof result.then === 'function') {
+            result.then(function () { teamFinish(retry); }, function () { teamFinish(retry); });
+        } else {
+            teamFinish(retry);
+        }
+    }
+
     function bind() {
         if (window._rotationRightLaneBound) {
             return;
@@ -212,12 +334,24 @@
         window._rotationRightLaneBound = true;
         var mq = window.matchMedia(NARROW);
         if (typeof mq.addEventListener === 'function') {
-            mq.addEventListener('change', function () { apply(false); });
+            mq.addEventListener('change', function () {
+                apply(false);
+                teamApply(false);
+            });
         } else if (typeof mq.addListener === 'function') {
-            mq.addListener(function () { apply(false); });
+            mq.addListener(function () {
+                apply(false);
+                teamApply(false);
+            });
         }
-        document.addEventListener('plotly_afterplot', function () { apply(false); }, true);
-        window.setInterval(function () { apply(false); }, 200);
+        document.addEventListener('plotly_afterplot', function () {
+            apply(false);
+            teamApply(false);
+        }, true);
+        window.setInterval(function () {
+            apply(false);
+            teamApply(false);
+        }, 200);
     }
 
     if (document.readyState === 'loading') {
