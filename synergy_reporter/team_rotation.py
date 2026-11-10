@@ -25,6 +25,14 @@ TITLE_COLOR = '#1e293b'
 LABEL_COLOR = '#334155'
 FIGURE_MARGIN = {'l': 112, 'r': 112, 't': 40, 'b': 48}
 ROW_PX = 22
+MARGIN_BUDGET = 180
+FIGURE_CHROME = 200
+MIN_FIGURE_HEIGHT = 520
+SEAM = 0.06
+BAND_MIN = 0.25
+BAND_MAX = 0.45
+MARGIN_MIN = 0.18
+PERIOD_RULE = '#94a3b8'
 ROTATION_EMPTY = 'No rotation chart for this view.'
 ROTATION_SELECT = 'Select a team.'
 ROTATION_SELECT_NEXT = 'Choose one team.'
@@ -390,12 +398,15 @@ def _segments(margin):
     return segments
 
 
-def _signed_runs(points):
-    """Split one margin polyline at zero. Positive stays above the line."""
+def _step_runs(points):
+    """Split an hv step at zero. The jump stays on the later x.
+
+    The value holds flat from the left sample. A sign change is the vertical
+    jump at the next sample, split at zero. No point is placed between the
+    two x values.
+    """
     if len(points) < 2:
         return []
-    runs = []
-    chunk = [points[0]]
 
     def kind(value):
         if value > 0:
@@ -404,25 +415,85 @@ def _signed_runs(points):
             return 'neg'
         return 'zero'
 
-    current = kind(points[0][1])
-    for nxt in points[1:]:
-        nxt_kind = kind(nxt[1])
-        prev = chunk[-1]
-        if nxt_kind == 'zero' or current in ('zero', nxt_kind):
-            chunk.append(nxt)
-            if nxt_kind != 'zero':
-                current = nxt_kind
-            continue
-        ratio = (0 - prev[1]) / (nxt[1] - prev[1])
-        cross = (prev[0] + ratio * (nxt[0] - prev[0]), 0)
-        chunk.append(cross)
-        if current != 'zero' and len(chunk) >= 2:
-            runs.append((current, chunk))
-        chunk = [cross, nxt]
-        current = nxt_kind
-    if current != 'zero' and len(chunk) >= 2:
-        runs.append((current, chunk))
+    runs = []
+    chunk = None
+    chunk_kind = None
+
+    def emit():
+        nonlocal chunk, chunk_kind
+        if chunk_kind in ('pos', 'neg') and chunk and len(chunk) >= 2:
+            runs.append((chunk_kind, chunk))
+        chunk = None
+        chunk_kind = None
+
+    for prev, nxt in zip(points, points[1:]):
+        x1, y1 = nxt
+        held = kind(prev[1])
+        landed = kind(y1)
+        if held in ('pos', 'neg'):
+            if chunk_kind != held or not chunk:
+                emit()
+                chunk_kind = held
+                chunk = [prev]
+            elif chunk[-1] != prev:
+                chunk.append(prev)
+            if landed == held or landed == 'zero':
+                chunk.append(nxt)
+            else:
+                chunk.append((x1, 0))
+                emit()
+                chunk_kind = landed
+                chunk = [(x1, 0), (x1, y1)]
+        elif landed in ('pos', 'neg'):
+            if chunk_kind == landed and chunk:
+                chunk.append(nxt)
+            else:
+                emit()
+                chunk_kind = landed
+                chunk = [(x1, 0), (x1, y1)]
+        else:
+            emit()
+    emit()
     return runs
+
+
+def _band_layout(top_n, bot_n):
+    """Figure height and subplot weights. One band skips the 0.25–0.45 clamp."""
+    top_n = max(1, int(top_n))
+    bot_n = max(0, int(bot_n))
+    height = max(MIN_FIGURE_HEIGHT, top_n * ROW_PX + bot_n * ROW_PX + FIGURE_CHROME)
+    if bot_n:
+        denom = float(top_n * ROW_PX + bot_n * ROW_PX + MARGIN_BUDGET)
+        top_w = max(BAND_MIN, min(BAND_MAX, (top_n * ROW_PX) / denom))
+        bot_w = max(BAND_MIN, min(BAND_MAX, (bot_n * ROW_PX) / denom))
+        mid_w = max(MARGIN_MIN, 1.0 - top_w - bot_w)
+        return height, [top_w, mid_w, bot_w]
+    denom = float(top_n * ROW_PX + MARGIN_BUDGET)
+    top_w = (top_n * ROW_PX) / denom
+    return height, [top_w, 1.0 - top_w]
+
+
+def _period_axis(columns):
+    """Midpoint ticks, and rules at each later period plus the right edge."""
+    columns = list(columns or [])
+    if not columns:
+        return [], [], []
+    groups = []
+    start = 0
+    for pos, column in enumerate(columns):
+        if pos and column['period'] != columns[pos - 1]['period']:
+            groups.append((start, pos - 1, columns[start]['period']))
+            start = pos
+    groups.append((start, len(columns) - 1, columns[start]['period']))
+    vals = [(first + last) / 2.0 for first, last, _period in groups]
+    text = [period_label(period) for _first, _last, period in groups]
+    rules = [
+        pos - 0.5
+        for pos in range(1, len(columns))
+        if columns[pos]['period'] != columns[pos - 1]['period']
+    ]
+    rules.append(len(columns) - 0.5)
+    return vals, text, rules
 
 
 def _player_sort_key(row):
@@ -467,15 +538,7 @@ def build_team_rotation_figure(aggregate, selected_name, opponent_name=None):
     opponent_players = aggregate.get('opponent_players') or []
     opponent = aggregate.get('opponent')
     lengths = aggregate.get('lengths') or {}
-    tick_vals = []
-    tick_text = []
-    seen = set()
-    for pos, column in enumerate(columns):
-        if column['period'] in seen:
-            continue
-        seen.add(column['period'])
-        tick_vals.append(pos)
-        tick_text.append(period_label(column['period']))
+    tick_vals, tick_text, period_rules = _period_axis(columns)
 
     def _heat(rows, color):
         z = []
@@ -514,22 +577,19 @@ def build_team_rotation_figure(aggregate, selected_name, opponent_name=None):
     top_rows = players or [{'label': '—', 'rates': [None] * len(columns)}]
     top_n = max(1, len(top_rows))
     bot_n = len(opponent_players) if show_opponent else 0
+    height, weights = _band_layout(top_n, bot_n)
     if show_opponent:
-        denom = float(top_n * ROW_PX + bot_n * ROW_PX + 180)
-        top_w = max(0.25, min(0.45, (top_n * ROW_PX) / denom))
-        bot_w = max(0.25, min(0.45, (bot_n * ROW_PX) / denom))
-        mid_w = max(0.18, 1.0 - top_w - bot_w)
         fig = make_subplots(
             rows=3, cols=1, shared_xaxes=True,
-            row_heights=[top_w, mid_w, bot_w],
-            vertical_spacing=0.08,
+            row_heights=weights,
+            vertical_spacing=SEAM,
             subplot_titles=(selected_name or '', '', opponent_name or ''),
         )
     else:
         fig = make_subplots(
             rows=2, cols=1, shared_xaxes=True,
-            row_heights=[0.82, 0.18],
-            vertical_spacing=0.08,
+            row_heights=weights,
+            vertical_spacing=SEAM,
             subplot_titles=(selected_name or '', ''),
         )
     top, top_y = _heat(top_rows, SELECTED_COLOR)
@@ -537,7 +597,8 @@ def build_team_rotation_figure(aggregate, selected_name, opponent_name=None):
     fig.update_yaxes(row=1, col=1, **_name_axis(top_y))
     margin_values = []
     for segment in _segments(aggregate.get('margin') or []):
-        for kind, run in _signed_runs(segment):
+        margin_values.extend(point[1] for point in segment)
+        for kind, run in _step_runs(segment):
             color, fill = (
                 (SELECTED_COLOR, SELECTED_FILL) if kind == 'pos'
                 else (OPPONENT_COLOR, OPPONENT_FILL)
@@ -546,13 +607,12 @@ def build_team_rotation_figure(aggregate, selected_name, opponent_name=None):
                 x=[point[0] for point in run],
                 y=[point[1] for point in run],
                 mode='lines',
-                line={'color': color, 'width': 2},
+                line={'color': color, 'width': 2, 'shape': 'hv'},
                 fill='tozeroy',
                 fillcolor=fill,
                 hovertemplate='Margin %{y:.1f}<extra></extra>',
                 showlegend=False,
             ), row=2, col=1)
-            margin_values.extend(point[1] for point in run)
     bottom_y = []
     if show_opponent:
         bottom, bottom_y = _heat(opponent_players, OPPONENT_COLOR)
@@ -577,17 +637,29 @@ def build_team_rotation_figure(aggregate, selected_name, opponent_name=None):
         title_text='',
         row=2, col=1,
     )
-    fig.update_xaxes(
-        tickmode='array', tickvals=tick_vals, ticktext=tick_text,
-        range=[-0.5, max(0, len(columns) - 0.5)],
-        row=3 if show_opponent else 2, col=1,
-    )
+    bottom_row = 3 if show_opponent else 2
+    x_end = max(0, len(columns) - 0.5)
+    for row in range(1, bottom_row + 1):
+        fig.update_xaxes(
+            range=[-0.5, x_end],
+            fixedrange=True,
+            tickmode='array',
+            tickvals=tick_vals,
+            ticktext=tick_text if row == bottom_row else [],
+            showticklabels=(row == bottom_row),
+            showgrid=False,
+            row=row, col=1,
+        )
+        fig.update_yaxes(fixedrange=True, row=row, col=1)
+    for rule in period_rules:
+        fig.add_vline(x=rule, line_width=1, line_color=PERIOD_RULE)
     fig.update_layout(
         margin=dict(FIGURE_MARGIN),
         paper_bgcolor='#ffffff',
         plot_bgcolor='#ffffff',
         font=dict(color=LABEL_COLOR, size=12),
-        height=max(520, top_n * ROW_PX + bot_n * ROW_PX + 200),
+        height=height,
+        dragmode=False,
     )
 
     def mirror_names(dest, overlay, anchor, labels):

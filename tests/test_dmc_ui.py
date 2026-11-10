@@ -288,7 +288,14 @@ class FourStateTests(unittest.TestCase):
         fig, graph_style, paper_style = game_page.update_rotation_graph(
             json.dumps(payload), {}, 'tab-rotation',
         )
-        self.assertIn(fig.layout.dragmode, ('pan', False))
+        self.assertIs(fig.layout.dragmode, False)
+        self.assertEqual(fig.layout.uirevision, 'roster')
+        self.assertIs(fig.layout.xaxis.fixedrange, True)
+        self.assertIs(fig.layout.yaxis.fixedrange, True)
+        dnp_fig, _, _ = game_page.update_rotation_graph(
+            json.dumps(payload), {'show_dnp': True}, 'tab-rotation',
+        )
+        self.assertEqual(dnp_fig.layout.uirevision, 'dnp')
         self.assertEqual(graph_style.get('width'), '100%')
         self.assertTrue(graph_style.get('height', '').endswith('px'))
         self.assertEqual(paper_style.get('overflow'), 'hidden')
@@ -297,7 +304,7 @@ class FourStateTests(unittest.TestCase):
     def test_rotation_callback_hosts_live_in_page_layout(self):
         tree = game_page.layout('g1')
         ids = {getattr(node, 'id', None) for node in walk(tree)}
-        self.assertIn('rotation-period', ids)
+        self.assertNotIn('rotation-period', ids)
         self.assertIn('rotation-show-dnp', ids)
         self.assertIn('rotation-graph', ids)
         self.assertIn('rotation-graph-paper', ids)
@@ -310,6 +317,35 @@ class FourStateTests(unittest.TestCase):
         self.assertTrue(find_type(tree, dmc.SegmentedControl))
         switches = [node for node in find_type(tree, dmc.Switch) if node.id == 'rotation-show-dnp']
         self.assertEqual(switches[0].label, 'Show DNP')
+        self.assertEqual(switches[0].size, 'sm')
+        self.assertEqual(switches[0].color, 'gray')
+        self.assertFalse(bool(switches[0].checked))
+        self.assertEqual(switches[0].ms, 'auto')
+        row = next(
+            node for node in walk(wrap)
+            if isinstance(node, dmc.Group)
+            and any(getattr(child, 'id', None) == 'rotation-live' for child in (node.children or []))
+            and any(getattr(child, 'id', None) == 'rotation-show-dnp' for child in (node.children or []))
+        )
+        self.assertEqual(row.justify, 'flex-start')
+        self.assertEqual(row.wrap, 'wrap')
+        self.assertEqual(row.w, '100%')
+        self.assertEqual(
+            [getattr(child, 'id', None) for child in row.children],
+            ['rotation-live', 'rotation-show-dnp'],
+        )
+        runs = game_page.render_rotation_children(json.dumps({
+            'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],
+            'teams': [{'team_id': 'h', 'team_name': 'Home', 'side': 'home', 'players': []}],
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 30.0, 'end': 60.0}],
+        }))
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].w, '100%')
+        self.assertTrue(all(
+            getattr(child, 'id', None) != 'rotation-show-dnp'
+            for child in runs[0].children
+        ))
+        self.assertFalse(any(isinstance(child, dmc.Switch) for child in runs[0].children))
         graphs = [node for node in walk(tree) if getattr(node, '_type', None) == 'Graph'
                   or node.__class__.__name__ == 'Graph']
         rotation_graph = next(node for node in graphs if getattr(node, 'id', None) == 'rotation-graph')

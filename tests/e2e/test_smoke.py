@@ -428,6 +428,37 @@ def _game_tab_strip(page):
     )
 
 
+def _rotation_dnp_place(page):
+    place = page.evaluate(
+        '''() => {
+            const sw = document.getElementById('rotation-show-dnp');
+            const wrap = document.getElementById('wrap-rotation');
+            const live = document.getElementById('rotation-live');
+            const run = document.querySelector('[id*="rotation-run"]');
+            if (!sw || !wrap) return null;
+            const sr = sw.getBoundingClientRect();
+            const wr = wrap.getBoundingClientRect();
+            const lr = live ? live.getBoundingClientRect() : null;
+            const rr = run ? run.getBoundingClientRect() : null;
+            const row = run && run.parentElement ? run.parentElement.getBoundingClientRect() : null;
+            return {
+                gap: wr.right - sr.right,
+                liveDisplay: live ? getComputedStyle(live).display : '',
+                liveLeft: lr ? lr.left : null,
+                switchLeft: sr.left,
+                runTop: rr ? rr.top : null,
+                switchBottom: sr.bottom,
+                rowWidth: row ? row.width : null,
+                wrapWidth: wr.width,
+            };
+        }'''
+    )
+    assert place, 'rotation Show DNP is missing'
+    assert place['gap'] < 24
+    assert place['gap'] > -1
+    return place
+
+
 def _rotation_right_lane(page):
     lane = page.evaluate('(' + _ROTATION_LANE_JS + ')()')
     assert lane, 'rotation plot layout not ready'
@@ -467,10 +498,15 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
             const runs = [...document.querySelectorAll('#wrap-rotation button')].filter(
                 (b) => (b.id || '').includes('rotation-run')
             );
+            const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+            const ticks = (gd && gd.layout && gd.layout.xaxis3 && gd.layout.xaxis3.ticktext) || [];
             return {
                 lastUpdate: !!(wrap && wrap.textContent.includes('Last Update')),
                 hasPaper: !!paper,
-                hasPeriod: !!(wrap && wrap.textContent.includes('All') && wrap.textContent.includes('1Q')),
+                hasPeriod: !!document.querySelector('#rotation-period'),
+                periodTicks: ticks.map((item) => String(item)),
+                dragmode: gd && gd.layout ? gd.layout.dragmode : null,
+                xFixed: !!(gd && gd.layout && gd.layout.xaxis && gd.layout.xaxis.fixedrange),
                 hasDnp: !!(wrap && wrap.textContent.includes('Show DNP')),
                 border: cs.borderTopWidth || '',
                 graphW: Math.round(rect.width),
@@ -485,7 +521,10 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert not rot.get('missing')
     assert rot['hasPaper'] is True
     assert rot['lastUpdate'] is True
-    assert rot['hasPeriod'] is True
+    assert rot['hasPeriod'] is False
+    assert '1Q' in rot['periodTicks']
+    assert rot['dragmode'] is False
+    assert rot['xFixed'] is True
     assert rot['hasDnp'] is True
     assert rot['tableScroll'] is False
     assert rot['runsCount'] >= 1
@@ -500,6 +539,10 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert wide_lane['rightKillShown'] is True
     assert wide_lane['keepsNames'] is True
     assert wide_lane['leftKillText'] == '3+ STOPS,3+ STOPS'
+    finished_wide = _rotation_dnp_place(page)
+    assert finished_wide['liveDisplay'] == 'none'
+    assert finished_wide['runTop'] >= finished_wide['switchBottom'] - 1
+    assert abs(finished_wide['rowWidth'] - finished_wide['wrapWidth']) < 24
 
     page.set_viewport_size({'width': 375, 'height': 812})
     page.wait_for_timeout(800)
@@ -525,6 +568,9 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert not narrow.get('missing')
     assert narrow['graphW'] != 1220
     assert narrow['graphW'] < 400
+    finished_narrow = _rotation_dnp_place(page)
+    assert finished_narrow['liveDisplay'] == 'none'
+    assert finished_narrow['runTop'] >= finished_narrow['switchBottom'] - 1
     page.wait_for_function(_ROTATION_LANE_NARROW)
     before_rev = page.evaluate(
         '''() => {
@@ -532,7 +578,7 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
             return (gd && gd.layout && gd.layout.uirevision) || '';
         }'''
     )
-    page.locator('#rotation-period').get_by_text('1Q', exact=True).click()
+    page.locator('#rotation-show-dnp').click()
     page.wait_for_function(
         '''(before) => {
             const gd = document.querySelector('#rotation-graph .js-plotly-plot');
@@ -630,6 +676,27 @@ def _click_rotation_time(page, t, yaxis='yaxis'):
     assert coords, 'rotation plot axes not ready'
     page.mouse.click(coords['x'], coords['y'])
     return coords
+
+
+def test_rotation_show_dnp_stays_right_while_live(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/plg/{LIVE_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Rotation')
+    _reveal_loading(page, 'wrap-rotation')
+    page.locator('#rotation-live').wait_for(state='visible', timeout=20000)
+    page.locator('#wrap-rotation .js-plotly-plot').wait_for(state='visible', timeout=20000)
+    wide = _rotation_dnp_place(page)
+    assert wide['liveDisplay'] != 'none'
+    assert wide['liveLeft'] < wide['switchLeft']
+    assert wide['runTop'] >= wide['switchBottom'] - 1
+
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.wait_for_timeout(400)
+    narrow = _rotation_dnp_place(page)
+    assert narrow['liveDisplay'] != 'none'
+    assert narrow['liveLeft'] < narrow['switchLeft']
+    assert narrow['runTop'] >= narrow['switchBottom'] - 1
 
 
 def test_rotation_playhead_follows_click_time(page, e2e_server):

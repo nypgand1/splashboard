@@ -48,7 +48,6 @@ from synergy_reporter.report_layout import (
     report_tab_is_visible,
 )
 from synergy_reporter.rotation import (
-    apply_camera_relayout,
     build_rotation_figure,
     format_run_label,
     live_playhead_t,
@@ -260,28 +259,14 @@ def _pane(wrap_id, pane_id, kind, hidden=False):
 def _rotation_controls():
     return dmc.Group(
         [
-            dmc.Group(
-                [
-                    dmc.Button(
-                        'Live',
-                        id='rotation-live',
-                        size='compact-xs',
-                        variant='filled',
-                        color='blue',
-                        radius='sm',
-                        style={'display': 'none'},
-                    ),
-                    dmc.SegmentedControl(
-                        id='rotation-period',
-                        data=[{'label': 'All', 'value': 'all'}],
-                        value='all',
-                        radius='md',
-                        size='xs',
-                    ),
-                ],
-                gap='sm',
-                align='center',
-                wrap='wrap',
+            dmc.Button(
+                'Live',
+                id='rotation-live',
+                size='compact-xs',
+                variant='filled',
+                color='blue',
+                radius='sm',
+                style={'display': 'none'},
             ),
             dmc.Switch(
                 id='rotation-show-dnp',
@@ -289,13 +274,15 @@ def _rotation_controls():
                 checked=False,
                 size='sm',
                 color='gray',
+                ms='auto',
             ),
         ],
-        justify='space-between',
+        justify='flex-start',
         align='center',
         mb='sm',
         wrap='wrap',
         gap='sm',
+        w='100%',
     )
 
 
@@ -570,13 +557,8 @@ def layout(game_id=None, league='plg'):
         dcc.Store(id='rotation-click-t'),
         html.Button(id='rotation-click-fire', n_clicks=0, style={'display': 'none'}),
         dcc.Store(id='rotation_view_store', data={
-            'period': 'all',
             't': None,
-            'x0': None,
-            'x1': None,
             'show_dnp': False,
-            'slice_width': None,
-            'axis_rev': 0,
             'follow_live': True,
             'saw_live': False,
             'finished_reset': False,
@@ -2811,13 +2793,8 @@ def box_score_sync_values(bs_store, period, game_id, active_tab, column_state, t
 
 
 DEFAULT_ROTATION_VIEW = {
-    'period': 'all',
     't': None,
-    'x0': None,
-    'x1': None,
     'show_dnp': False,
-    'slice_width': None,
-    'axis_rev': 0,
     'follow_live': True,
     'saw_live': False,
     'finished_reset': False,
@@ -2954,25 +2931,6 @@ def shot_chart_outputs(panel):
     )
 
 
-def _period_control_data(periods):
-    data = [{'label': 'All', 'value': 'all'}]
-    seen = {'all'}
-    for period in periods or []:
-        value = str(period.get('id'))
-        if value in seen:
-            continue
-        seen.add(value)
-        data.append({'label': period.get('label') or value, 'value': value})
-    return data
-
-
-def _find_period(periods, period_value):
-    for period in periods or []:
-        if str(period.get('id')) == str(period_value):
-            return period
-    return None
-
-
 def _rotation_chip(label, kind, index, side):
     return dmc.Button(
         label,
@@ -3005,6 +2963,7 @@ def _render_run_buttons(runs, periods):
         buttons,
         gap=6,
         mb='sm',
+        w='100%',
         style={'flexWrap': 'wrap'},
     )
 
@@ -3029,15 +2988,10 @@ def resolve_rotation_playhead(payload, view, match_info_store=None):
 
 def _rotation_figure_from_view(payload, view, match_info_store=None):
     playhead = resolve_rotation_playhead(payload, view, match_info_store)
-    x_range = None
-    if view.get('x0') is not None and view.get('x1') is not None:
-        x_range = (view['x0'], view['x1'])
-    width = (x_range[1] - x_range[0]) if x_range else None
-    uirevision = f"{width if width is not None else 'all'}:{int(view.get('axis_rev') or 0)}"
+    uirevision = 'dnp' if view.get('show_dnp') else 'roster'
     return build_rotation_figure(
         payload,
         playhead=playhead,
-        x_range=x_range,
         show_dnp=bool(view.get('show_dnp')),
         uirevision=uirevision,
     )
@@ -3063,7 +3017,6 @@ def render_rotation_children(rotation_store, view_store=None, match_info_store=N
 
 def apply_rotation_view_event(
     triggered_id,
-    period,
     show_dnp,
     run_clicks,
     click_t,
@@ -3071,7 +3024,6 @@ def apply_rotation_view_event(
     game_id,
     view_store,
     match_info_store,
-    relayout_data=None,
 ):
     view = _rotation_view(view_store)
     if triggered_id == 'game_id':
@@ -3079,40 +3031,10 @@ def apply_rotation_view_event(
     payload = safe_loads(rotation_store)
     periods = payload.get('periods') or []
     runs = payload.get('runs') or []
-    if triggered_id == 'rotation-graph.relayoutData':
-        updated = apply_camera_relayout(relayout_data, view, periods)
-        return updated if updated is not None else no_update
 
     if triggered_id == 'rotation-live':
         view['follow_live'] = True
         view['t'] = live_playhead_t(payload)
-        return view
-
-    if triggered_id == 'rotation-period':
-        if period == view.get('period'):
-            already_all = period in (None, 'all') and view.get('x0') is None
-            already_period = (
-                period not in (None, 'all')
-                and _find_period(periods, period)
-                and view.get('x0') == _find_period(periods, period)['start']
-                and view.get('x1') == _find_period(periods, period)['end']
-            )
-            if already_all or already_period:
-                return no_update
-        view['period'] = period or 'all'
-        if view['period'] == 'all':
-            view['x0'] = None
-            view['x1'] = None
-            view['slice_width'] = None
-        else:
-            found = _find_period(periods, view['period'])
-            if found:
-                view['x0'] = found['start']
-                view['x1'] = found['end']
-                view['slice_width'] = float(found['end'] - found['start'])
-                view['t'] = found['start']
-                view['follow_live'] = False
-        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
         return view
 
     if triggered_id == 'rotation-show-dnp':
@@ -3130,13 +3052,8 @@ def apply_rotation_view_event(
         if not isinstance(index, int) or index < 0 or index >= len(runs):
             return no_update
         run = runs[index]
-        view['period'] = 'all'
-        view['x0'] = None
-        view['x1'] = None
-        view['slice_width'] = None
         view['t'] = run['start']
         view['follow_live'] = False
-        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
         return view
 
     if triggered_id == 'rotation-click-t':
@@ -3174,12 +3091,7 @@ def apply_rotation_view_event(
         ):
             view['t'] = None
             view['follow_live'] = False
-            view['period'] = 'all'
-            view['x0'] = None
-            view['x1'] = None
-            view['slice_width'] = None
             view['finished_reset'] = True
-            view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
             return view
         return no_update
 
@@ -3471,15 +3383,6 @@ def update_pane_rotation(rotation_store, active_tab, view_store=None, match_info
 
 
 @callback(
-    Output('rotation-period', 'data'),
-    Input('rotation_store', 'data'),
-)
-def update_rotation_period_options(rotation_store):
-    payload = safe_loads(rotation_store)
-    return _period_control_data(payload.get('periods') or [])
-
-
-@callback(
     Output('shot-chart-period', 'data'),
     Output('shot-chart-period-bar', 'style'),
     Input('pbp_store', 'data'),
@@ -3578,14 +3481,11 @@ def update_rotation_graph(rotation_store, view_store, active_tab, match_info_sto
 
 @callback(
     Output('rotation_view_store', 'data'),
-    Output('rotation-period', 'value'),
     Output('rotation-show-dnp', 'checked'),
-    Input('rotation-period', 'value'),
     Input('rotation-show-dnp', 'checked'),
     Input({'type': 'rotation-run', 'index': ALL}, 'n_clicks'),
     Input('rotation-live', 'n_clicks'),
     Input('rotation-click-t', 'data'),
-    Input('rotation-graph', 'relayoutData'),
     Input('rotation_store', 'data'),
     Input('game_id', 'children'),
     State('rotation_view_store', 'data'),
@@ -3593,29 +3493,20 @@ def update_rotation_graph(rotation_store, view_store, active_tab, match_info_sto
     prevent_initial_call=True,
 )
 def update_rotation_view(
-    period,
     show_dnp,
     run_clicks,
     live_clicks,
     click_t,
-    relayout_data,
     rotation_store,
     game_id,
     view_store,
     match_info_store,
 ):
-    previous = _rotation_view(view_store)
     triggered_id = ctx.triggered_id
-    prop_id = ''
-    if ctx.triggered:
-        prop_id = ctx.triggered[0].get('prop_id') or ''
-    if isinstance(prop_id, str) and prop_id.endswith('relayoutData'):
-        triggered_id = 'rotation-graph.relayoutData'
     if triggered_id == 'rotation-live' and not live_clicks:
-        return no_update, no_update, no_update
+        return no_update, no_update
     result = apply_rotation_view_event(
         triggered_id,
-        period,
         show_dnp,
         run_clicks,
         click_t,
@@ -3623,24 +3514,12 @@ def update_rotation_view(
         game_id,
         view_store,
         match_info_store,
-        relayout_data=relayout_data,
     )
     if result is no_update:
-        return no_update, no_update, no_update
+        return no_update, no_update
     if triggered_id == 'game_id':
-        return result, 'all', False
-    chip = ctx.triggered_id if isinstance(ctx.triggered_id, dict) else None
-    if chip and chip.get('type') == 'rotation-run':
-        return result, 'all', no_update
-    if triggered_id == 'rotation-graph.relayoutData':
-        return result, result.get('period') or 'all', no_update
-    if (
-        isinstance(result, dict)
-        and result.get('finished_reset')
-        and not previous.get('finished_reset')
-    ):
-        return result, 'all', no_update
-    return result, no_update, no_update
+        return result, False
+    return result, no_update
 
 
 clientside_callback(

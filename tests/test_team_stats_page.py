@@ -887,6 +887,22 @@ class TeamStatsRotationTests(unittest.TestCase):
         self.assertIn('Select a team.', str(view))
         self.assertNotIn('Skeleton', _names(view))
 
+    def test_rotation_graph_locks_range_selection(self):
+        from plotly.graph_objects import Figure
+
+        chart = team_stats_page._rotation_chart(
+            Figure(), {'n': 1, 'columns': [], 'counts': []},
+        )
+        graph = next(
+            node for node in _walk(chart)
+            if getattr(node, 'id', None) == 'ts-rotation-graph'
+        )
+        self.assertFalse(graph.config.get('displayModeBar'))
+        self.assertTrue(graph.config.get('responsive'))
+        self.assertFalse(graph.config.get('scrollZoom'))
+        self.assertFalse(graph.config.get('doubleClick'))
+        self.assertNotIn('staticPlot', graph.config)
+
     def test_failed_schedule_shows_the_load_error(self):
         view = team_stats_page.render_team_rotation(
             'tab-rotation',

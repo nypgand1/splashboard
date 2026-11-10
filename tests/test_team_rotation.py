@@ -423,6 +423,129 @@ class FigureTests(unittest.TestCase):
         fills = [trace.fillcolor for trace in figure.data if getattr(trace, 'fill', None) == 'tozeroy']
         self.assertIn(SELECTED_FILL, fills)
         self.assertIn(OPPONENT_FILL, fills)
+        steps = [trace for trace in figure.data if getattr(trace, 'fill', None) == 'tozeroy']
+        self.assertTrue(steps)
+        self.assertTrue(all(trace.line.shape == 'hv' for trace in steps))
+        self.assertEqual(heats[0].xgap, 1)
+        self.assertEqual(heats[0].ygap, 1)
+        self.assertTrue(all(not ann.yshift for ann in titles))
+        self.assertIs(figure.layout.dragmode, False)
+        for name in (
+            'xaxis', 'xaxis2', 'xaxis3',
+            'yaxis', 'yaxis2', 'yaxis3', 'yaxis4', 'yaxis5', 'yaxis6',
+        ):
+            self.assertIs(figure.layout[name].fixedrange, True)
+
+    def test_period_labels_are_centered_and_rules_mark_later_edges(self):
+        columns = []
+        for period in (1, 2, 3, 4):
+            for minute in range(12):
+                columns.append({'period': period, 'minute': minute})
+        columns.append({'period': 11, 'minute': 0})
+        columns.append({'period': 11, 'minute': 1})
+        columns.append({'period': 11, 'minute': 2})
+        aggregate = {
+            'columns': columns,
+            'players': [{'label': '#4 Ann', 'rates': [1.0] * len(columns)}],
+            'opponent_players': [{'label': '#8 Bea', 'rates': [0.5] * len(columns)}],
+            'opponent': 'a',
+            'lengths': {1: 12, 2: 12, 3: 12, 4: 12, 11: 3},
+            'counts': [1] * len(columns),
+            'clock': lambda *_args: '1Q 12:00–11:00',
+            'margin': [
+                {
+                    'n': 1,
+                    'y': 2.0,
+                    'start': 1.0,
+                    'period': column['period'],
+                    'minute': column['minute'],
+                }
+                for column in columns
+            ],
+        }
+        figure = build_team_rotation_figure(aggregate, 'Aces', 'Braves')
+        self.assertEqual(list(figure.layout.xaxis3.ticktext), ['1Q', '2Q', '3Q', '4Q', 'OT'])
+        self.assertEqual(list(figure.layout.xaxis3.tickvals), [5.5, 17.5, 29.5, 41.5, 49.0])
+        self.assertFalse(figure.layout.xaxis.showticklabels)
+        self.assertFalse(figure.layout.xaxis2.showticklabels)
+        rules = sorted({
+            round(float(shape.x0), 3)
+            for shape in figure.layout.shapes or []
+            if abs(float(shape.x0) - float(shape.x1)) < 1e-6
+            and shape.line.color == '#94a3b8'
+            and shape.line.width == 1
+        })
+        self.assertEqual(rules, [11.5, 23.5, 35.5, 47.5, 50.5])
+        self.assertNotIn(-0.5, rules)
+        self.assertEqual(figure.layout.height, 520)
+
+    def test_one_band_skips_the_gantt_clamp(self):
+        from synergy_reporter.team_rotation import _band_layout, _step_runs
+
+        height, weights = _band_layout(12, 0)
+        self.assertEqual(height, 520)
+        self.assertAlmostEqual(weights[0], (12 * 22) / (12 * 22 + 180))
+        self.assertAlmostEqual(sum(weights), 1.0)
+        both_height, both = _band_layout(12, 12)
+        self.assertEqual(both_height, 12 * 22 + 12 * 22 + 200)
+        self.assertGreaterEqual(both[0], 0.25)
+        self.assertLessEqual(both[0], 0.45)
+        self.assertGreaterEqual(both[1], 0.18)
+        tall = {
+            'columns': [{'period': 1, 'minute': 0}],
+            'players': [
+                {'label': '#{0}'.format(index), 'rates': [1.0]}
+                for index in range(12)
+            ],
+            'opponent_players': [
+                {'label': 'O{0}'.format(index), 'rates': [1.0]}
+                for index in range(12)
+            ],
+            'opponent': 'a',
+            'lengths': {1: 1},
+            'counts': [1],
+            'clock': lambda *_args: '1Q 12:00–11:00',
+            'margin': [{'n': 1, 'y': 1.0, 'start': 0.0, 'period': 1, 'minute': 0}],
+        }
+        self.assertEqual(
+            build_team_rotation_figure(tall, 'Aces', 'Braves').layout.height,
+            both_height,
+        )
+        solo_players = [
+            {'label': '#{0}'.format(index), 'rates': [1.0]}
+            for index in range(15)
+        ]
+        solo = build_team_rotation_figure({
+            'columns': [{'period': 1, 'minute': 0}],
+            'players': solo_players,
+            'opponent_players': [],
+            'opponent': None,
+            'lengths': {1: 1},
+            'counts': [1],
+            'clock': lambda *_args: '1Q 12:00–11:00',
+            'margin': [{'n': 1, 'y': 1.0, 'start': 0.0, 'period': 1, 'minute': 0}],
+        }, 'Aces')
+        self.assertEqual(solo.layout.height, 15 * 22 + 200)
+        top_span = solo.layout.yaxis.domain[1] - solo.layout.yaxis.domain[0]
+        margin_span = solo.layout.yaxis2.domain[1] - solo.layout.yaxis2.domain[0]
+        self.assertAlmostEqual(
+            solo.layout.yaxis.domain[0] - solo.layout.yaxis2.domain[1],
+            0.06,
+        )
+        self.assertAlmostEqual(
+            top_span / (top_span + margin_span),
+            (15 * 22) / (15 * 22 + 180),
+            places=3,
+        )
+        runs = _step_runs([(0, 4.0), (1, -3.0)])
+        self.assertEqual(runs, [
+            ('pos', [(0, 4.0), (1, 0)]),
+            ('neg', [(1, 0), (1, -3.0)]),
+        ])
+        self.assertEqual(
+            _step_runs([(0, 4.0), (1, 0), (2, 2.0)]),
+            [('pos', [(0, 4.0), (1, 0), (2, 2.0)])],
+        )
 
 
 def _stats_rows():

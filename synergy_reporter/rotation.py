@@ -565,105 +565,6 @@ def detect_kills(trips, home_team_id, away_team_id):
     return kills
 
 
-def clamp_time_window(x0, x1, game_end, width):
-    game_end = float(game_end or 0)
-    if game_end <= 0:
-        return 0.0, 0.0
-    width = min(max(float(width), 0.0), game_end)
-    if width <= 0:
-        return 0.0, game_end
-    center = (float(x0) + float(x1)) / 2.0
-    start = center - width / 2.0
-    if start < 0:
-        start = 0.0
-    if start + width > game_end:
-        start = game_end - width
-    if start < 0:
-        start = 0.0
-    return start, start + width
-
-
-def period_for_window(x0, x1, periods, current=None):
-    window = max(1e-6, float(x1) - float(x0))
-    best_id = None
-    best_overlap = -1.0
-    for period in periods or []:
-        overlap = max(0.0, min(float(x1), period['end']) - max(float(x0), period['start']))
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_id = period.get('id')
-    if best_id is None:
-        return current
-    if best_overlap / window > 0.5:
-        return str(best_id)
-    if current is not None:
-        return str(current)
-    return str(best_id)
-
-
-def parse_xaxis_range(relayout):
-    if not isinstance(relayout, dict):
-        return None
-    if 'xaxis.range[0]' in relayout and 'xaxis.range[1]' in relayout:
-        return float(relayout['xaxis.range[0]']), float(relayout['xaxis.range[1]'])
-    range_val = relayout.get('xaxis.range')
-    if isinstance(range_val, (list, tuple)) and len(range_val) == 2:
-        return float(range_val[0]), float(range_val[1])
-    return None
-
-
-def apply_camera_relayout(relayout, view, periods):
-    parsed = parse_xaxis_range(relayout)
-    if parsed is None:
-        return None
-    if not periods:
-        return None
-    game_end = float(periods[-1]['end'])
-    view = dict(view or {})
-    slice_width = view.get('slice_width')
-    expected = float(slice_width) if slice_width else game_end
-    x0, x1 = clamp_time_window(parsed[0], parsed[1], game_end, expected)
-    if expected >= game_end - 1e-6:
-        period_value = 'all'
-        new_x0, new_x1 = None, None
-        new_slice = None
-    else:
-        period_value = period_for_window(x0, x1, periods, view.get('period'))
-        new_x0, new_x1 = x0, x1
-        new_slice = expected
-    prev_x0, prev_x1 = view.get('x0'), view.get('x1')
-    if new_x0 is None:
-        camera_same = (
-            prev_x0 is None
-            and prev_x1 is None
-            and view.get('period') in (None, 'all')
-            and abs(parsed[0] - 0.0) < 0.5
-            and abs(parsed[1] - game_end) < 0.5
-        )
-    else:
-        camera_same = (
-            prev_x0 is not None
-            and prev_x1 is not None
-            and abs(prev_x0 - new_x0) < 0.5
-            and abs(prev_x1 - new_x1) < 0.5
-            and str(view.get('period')) == str(period_value)
-        )
-    if camera_same:
-        return None
-    snapped = (
-        abs((parsed[1] - parsed[0]) - (x1 - x0)) > 0.5
-        or abs(parsed[0] - x0) > 0.5
-        or abs(parsed[1] - x1) > 0.5
-    )
-    if snapped:
-        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
-    view['period'] = period_value
-    view['x0'] = new_x0
-    view['x1'] = new_x1
-    view['slice_width'] = new_slice
-    return view
-
-
 def live_playhead_t(payload):
     times = []
     skip = {GAME_END_DESC, '比賽結束'}
@@ -1023,7 +924,7 @@ def build_rotation_payload(
     }
 
 
-def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, uirevision=None):
+def build_rotation_figure(payload, playhead=None, show_dnp=False, uirevision=None):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -1292,16 +1193,13 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     home_labels = add_gantt(home, 3, home_color, home_players, home_kills, 'top')
 
     view_start, view_end = 0, game_end
-    if x_range and len(x_range) == 2 and x_range[0] is not None and x_range[1] is not None:
-        view_start, view_end = x_range
     tickvals = [period['start'] + period['seconds'] / 2 for period in periods]
     ticktext = [period['label'] for period in periods]
 
     for axis_row in (1, 2, 3):
         fig.update_xaxes(
             range=[view_start, view_end],
-            minallowed=0,
-            maxallowed=game_end,
+            fixedrange=True,
             tickvals=tickvals,
             ticktext=ticktext if axis_row == 3 else [],
             showgrid=False,
@@ -1374,14 +1272,14 @@ def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, 
     fig.update_layout(
         height=total_height,
         autosize=True,
-        dragmode='pan',
+        dragmode=False,
         barmode='overlay',
         margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#334155', size=12),
         hovermode='closest',
-        uirevision=uirevision if uirevision is not None else f'{view_end - view_start:.3f}',
+        uirevision=uirevision if uirevision is not None else 'full',
     )
 
     def layout_axis(ref):
@@ -1584,7 +1482,6 @@ def report_rotation_figure(payload):
     fig = build_rotation_figure(
         payload,
         playhead=None,
-        x_range=None,
         show_dnp=False,
     )
     fig.update_layout(

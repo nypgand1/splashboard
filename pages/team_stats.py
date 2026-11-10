@@ -1262,7 +1262,12 @@ def _rotation_chart(figure, aggregate):
             dcc.Graph(
                 id='ts-rotation-graph',
                 figure=figure,
-                config={'displayModeBar': False, 'responsive': True},
+                config={
+                    'displayModeBar': False,
+                    'responsive': True,
+                    'scrollZoom': False,
+                    'doubleClick': False,
+                },
                 style={'width': '100%', 'height': '{0}px'.format(height)},
             ),
         ],
