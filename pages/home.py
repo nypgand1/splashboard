@@ -37,6 +37,7 @@ from synergy_inbounder.settings import (
     SYNERGY_SEASONS,
 )
 from synergy_inbounder.parser import Parser
+from synergy_reporter.schedule_menu import named_side_options
 from synergy_reporter.team_season import plain_fixture_type
 from synergy_inbounder.game_status import (
     format_score_display,
@@ -570,24 +571,13 @@ def _named_side(record, id_key, name_key):
 
 
 def team_menu(records):
-    found = {}
-    for record in records or []:
-        if not isinstance(record, dict):
-            continue
-        for pair in (
-            _named_side(record, 'teamIdHome', 'homeTeam'),
-            _named_side(record, 'teamIdAway', 'awayTeam'),
-        ):
-            if pair is None:
-                continue
-            entity_id, name = pair
-            found.setdefault(entity_id, name)
-    ordered = sorted(found.items(), key=lambda item: (item[1], item[0]))
-    options = [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}]
-    options.extend(
-        {'label': name, 'value': entity_id} for entity_id, name in ordered
-    )
-    return options, len(ordered) >= 2
+    """Named clubs on the rows this page passes. Home passes the whole season."""
+    def name_of(record, side):
+        if side == 'home':
+            return _named_side(record, 'teamIdHome', 'homeTeam')
+        return _named_side(record, 'teamIdAway', 'awayTeam')
+
+    return named_side_options(records, name_of, TEAM_ALL_LABEL, TEAM_ALL)
 
 
 def coerce_team(records, team):

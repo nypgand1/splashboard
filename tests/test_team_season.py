@@ -44,6 +44,7 @@ from synergy_reporter.team_season import (
     fixture_type_options,
     period_chips_for_ids,
     plain_fixture_type,
+    schedule_chrome,
     team_stats_payload,
     type_needs_download,
 )
@@ -529,9 +530,50 @@ class SliceFilterTests(unittest.TestCase):
         labels = [item['label'] for item in built['opponent_options']]
         self.assertEqual(labels[0], 'vs All Teams')
         self.assertEqual(labels[1:], [
-            'vs Aces', 'vs Braves', 'vs Clippers', 'vs Dragons', 'vs Eagles',
+            'vs Aces', 'vs Braves', 'vs Clippers', 'vs Eagles',
         ])
         self.assertTrue(built['opponent_visible'])
+
+    def test_game_type_menu_lists_unplayed_clubs_and_drops_other_types(self):
+        fixtures = [
+            _fixture('reg', 'REGULAR', 'FINISHED', venueId='v1', teamIdHome='a', teamIdAway='b'),
+            _fixture('fin-later', 'FINAL', 'SCHEDULED', venueId='v9', teamIdHome='a', teamIdAway='d'),
+            _fixture('fin-done', 'FINAL', 'CONFIRMED', venueId='v3', teamIdHome='d', teamIdAway='a'),
+        ]
+        names = {
+            'a': 'Aces', 'b': 'Braves', 'd': 'Dragons',
+            'v1': 'Arena One', 'v3': 'Arena Three', 'v9': 'Future Hall',
+        }
+        built = build_team_cards(
+            fixtures,
+            pd.DataFrame([
+                _total('fin-done', 'a', points=4),
+                _total('fin-done', 'd', points=2),
+            ]),
+            pd.DataFrame(),
+            {},
+            names,
+            48,
+            'FINAL',
+            'all',
+            team='b',
+        )
+        self.assertEqual(
+            [item['label'] for item in built['team_options']],
+            ['All Teams', 'Aces', 'Dragons'],
+        )
+        self.assertTrue(built['team_visible'])
+        self.assertEqual(built['team'], 'all')
+        self.assertEqual(
+            [item['label'] for item in built['opponent_options']],
+            ['vs All Teams', 'vs Aces', 'vs Dragons'],
+        )
+        self.assertEqual(
+            [item['label'] for item in built['stadium_options']],
+            ['All Stadiums', 'Arena Three'],
+        )
+        self.assertNotIn('Braves', [item['label'] for item in built['team_options']])
+        self.assertNotIn('Future Hall', [item['label'] for item in built['stadium_options']])
 
     def test_stadium_and_site_stack_and_site_does_not_change_chips(self):
         stadium = self._built(stadium='v1')
@@ -838,3 +880,15 @@ class PayloadCacheTests(unittest.TestCase):
         self.assertNotIn('secret', payload['message'])
         self.assertFalse(payload['period_visible'])
         clear_runtime_caches()
+
+    def test_schedule_chrome_skips_totals_and_play_by_play(self):
+        season_patch, totals_patch, periods_patch, pbp_patch = self._patches()
+        season_id = dict(SYNERGY_SEASONS)['2025-26']
+        with season_patch, totals_patch as totals, periods_patch as periods, pbp_patch:
+            chrome = schedule_chrome('PLG', season_id, reset=True)
+        self.assertTrue(chrome['ok'])
+        self.assertTrue(chrome['needs_cards'])
+        self.assertEqual(chrome['team'], 'all')
+        self.assertEqual(self.pbp_calls, [])
+        self.assertFalse(totals.called)
+        self.assertFalse(periods.called)

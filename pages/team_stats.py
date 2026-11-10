@@ -45,8 +45,8 @@ from synergy_reporter.team_season import (
     TEAM_ALL,
     TEAM_ALL_LABEL,
     rotation_games,
+    schedule_chrome,
     team_stats_payload,
-    type_needs_download,
 )
 from ui_kit import (
     ERROR_GAME,
@@ -654,6 +654,7 @@ def layout():
 
 _LOADING_BODY = json.dumps(_jsonable(_loading_body()))
 _CHART_LOADING = json.dumps(_jsonable(loading_skeleton('chart')))
+_ROTATION_PICK = json.dumps(_jsonable(empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)))
 
 clientside_callback(
     """
@@ -681,7 +682,7 @@ clientside_callback(
         var scope = !sameLeague || !sameSeason;
         return {
             league: leagueValue,
-            season: seasonValue,
+            season: sameLeague ? seasonValue : null,
             game_type: scope ? null : typeValue,
             skeleton: scope,
             nonce: Date.now()
@@ -751,9 +752,15 @@ clientside_callback(
         if (current.team && current.team !== 'all' && (team === 'all' || team == null)) {
             cards = __LOADING_BODY__;
         }
-        return [cards, __CHART_LOADING__];
+        var chart = __CHART_LOADING__;
+        if (team === 'all' || team == null) {
+            chart = __ROTATION_PICK__;
+        }
+        return [cards, chart];
     }
-    """.replace('__LOADING_BODY__', _LOADING_BODY).replace('__CHART_LOADING__', _CHART_LOADING),
+    """.replace('__LOADING_BODY__', _LOADING_BODY).replace(
+        '__CHART_LOADING__', _CHART_LOADING,
+    ).replace('__ROTATION_PICK__', _ROTATION_PICK),
     Output('ts-body', 'children', allow_duplicate=True),
     Output('ts-rotation', 'children', allow_duplicate=True),
     Input('ts-team', 'value'),
@@ -956,6 +963,7 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
         'league': league or 'PLG',
         'season': season_id if season_out is no_update else selected_season,
         'game_type': game_type if type_out is no_update else selected_type,
+        'ok': payload.get('ok') is not False,
     }
     return (
         _view(payload),
@@ -1017,29 +1025,102 @@ def _view_outputs():
     )
 
 
-def _keep_slice():
-    # Opponent, stadium, site, team, and the painted slice stay until download.
-    return (no_update,) * 12
-
-
-def _skeleton_job(intent, period):
-    # Reset the chip with the skeleton. This callback also listens to the
-    # chip, and Dash drops that echo, so the download callback paints All.
-    # Opponent, stadium, and site stay until that download paints.
-    period_out = no_update if _same(period, 'all') else 'all'
-    return (
-        _loading_body(),
-        no_update, no_update, no_update, no_update, no_update, no_update,
-        no_update, period_out, no_update, no_update,
-    ) + _keep_slice() + (intent,)
-
-
 def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL):
     painted = _paint(
         payload, league, season_id, game_type, period, opponent, stadium, site, team,
     )
     # applied stays. The slice outputs follow it. The job slot is the caller's.
     return painted[:10] + (no_update,) + painted[11:]
+
+
+def _menu_hold(payload, league, season_id, game_type, period, opponent, stadium, site, team, job):
+    """Schedule paint: menus and applied move, cards stay on the skeleton."""
+    painted = _paint(
+        payload, league, season_id, game_type, period, opponent, stadium, site, team,
+    )
+    return (_loading_body(), no_update) + painted[2:] + (job,)
+
+
+def _card_job(intent, league, season_id, game_type, team, opponent, stadium, site):
+    nonce = intent.get('nonce') if isinstance(intent, dict) else None
+    return {
+        'league': league,
+        'season': season_id,
+        'game_type': game_type,
+        'team': team,
+        'opponent': opponent,
+        'stadium': stadium,
+        'site': site,
+        'skeleton': False,
+        'phase': 'cards',
+        'nonce': nonce,
+    }
+
+
+def _paint_from_chrome(
+    reason, intent, league, season_id, game_type, period,
+    opponent, stadium, site, team,
+):
+    reset = reason == 'scope'
+    requested = None if reset else (
+        intent.get('game_type') if isinstance(intent, dict) else game_type
+    )
+    try:
+        chrome = schedule_chrome(
+            league,
+            season_id=season_id,
+            game_type=requested,
+            reset=reset,
+            team=TEAM_ALL if reset else team,
+            opponent=OPPONENT_ALL if reset else opponent,
+            stadium=STADIUM_ALL if reset else stadium,
+            site=SITE_ALL if reset else site,
+        )
+    except Exception:
+        log_unexpected.exception('team stats schedule chrome failed')
+        chrome = {
+            'ok': False,
+            'needs_cards': False,
+            'message': ERROR_GAME,
+            'stamp': 'Last Update: —',
+            'season_id': season_id,
+            'seasons': _season_data(league or 'PLG'),
+            'game_types': [],
+            'game_type': None,
+            'game_type_visible': False,
+            'period': 'all',
+            'period_visible': False,
+        }
+    if chrome.get('ok') is False:
+        return _paint(
+            chrome, league, season_id, game_type, period, opponent, stadium, site, team,
+        ) + (no_update,)
+    resolved_season = chrome.get('season_id') or season_id
+    if chrome.get('needs_cards'):
+        job = _card_job(
+            intent, league, resolved_season, chrome.get('game_type'),
+            chrome.get('team', TEAM_ALL),
+            chrome.get('opponent', OPPONENT_ALL),
+            chrome.get('stadium', STADIUM_ALL),
+            chrome.get('site', SITE_ALL),
+        )
+        return _menu_hold(
+            chrome, league, season_id, game_type, period, opponent, stadium, site, team, job,
+        )
+    if reason == 'scope':
+        payload = _load(
+            league, resolved_season, None, 'all', 'scope',
+            OPPONENT_ALL, STADIUM_ALL, SITE_ALL, TEAM_ALL,
+        )
+    else:
+        chosen_type = chrome.get('game_type') if chrome.get('game_type') is not None else requested
+        payload = _load(
+            league, resolved_season, chosen_type, 'all', 'type',
+            opponent, stadium, site, team,
+        )
+    return _paint(
+        payload, league, season_id, game_type, period, opponent, stadium, site, team,
+    ) + (no_update,)
 
 
 @callback(
@@ -1061,7 +1142,8 @@ def render_team_stats(intent, period, opponent, stadium, site, team, league, sea
     # The click lives on ts-intent. Control State can still be the previous
     # value when this callback runs, so a league, season, or game-type click
     # loads from the store.
-    if triggered == 'ts-intent' and isinstance(intent, dict):
+    clicked = triggered == 'ts-intent' and isinstance(intent, dict)
+    if clicked:
         if intent.get('league'):
             league = intent.get('league')
         if intent.get('season') is not None:
@@ -1074,28 +1156,11 @@ def render_team_stats(intent, period, opponent, stadium, site, team, league, sea
         reason = 'type'
     else:
         reason = 'scope'
-    if reason == 'type':
-        requested_type = intent.get('game_type') if isinstance(intent, dict) else game_type
-        try:
-            needs = type_needs_download(league, season_id, requested_type)
-        except Exception:
-            log_unexpected.exception('team stats type download check failed')
-            needs = True
-        if needs:
-            job = intent if isinstance(intent, dict) else {
-                'league': league,
-                'season': season_id,
-                'game_type': requested_type,
-                'skeleton': False,
-            }
-            return _skeleton_job(job, period)
-        payload = _load(
-            league, season_id, requested_type, 'all', 'type',
+    if reason == 'type' or (reason == 'scope' and clicked):
+        return _paint_from_chrome(
+            reason, intent, league, season_id, game_type, period,
             opponent, stadium, site, team,
         )
-        return _paint(
-            payload, league, season_id, game_type, period, opponent, stadium, site, team,
-        ) + (no_update,)
     if reason in ('chip', 'slice'):
         payload = _load(
             league, season_id, game_type, period or 'all', reason,
@@ -1139,8 +1204,15 @@ def render_team_stats_download(
     if job.get('season') is not None:
         season_id = job.get('season')
     requested_type = job.get('game_type') if isinstance(job, dict) else game_type
+    load_opponent, load_stadium, load_site, load_team = opponent, stadium, site, team
+    if job.get('phase') == 'cards':
+        load_opponent = job.get('opponent', opponent)
+        load_stadium = job.get('stadium', stadium)
+        load_site = job.get('site', site)
+        load_team = job.get('team', team)
     payload = _load(
-        league, season_id, requested_type, 'all', 'type', opponent, stadium, site, team,
+        league, season_id, requested_type, 'all', 'type',
+        load_opponent, load_stadium, load_site, load_team,
     )
     return _paint(
         payload, league, season_id, game_type, period, opponent, stadium, site, team,
@@ -1202,6 +1274,17 @@ def _rotation_chart(figure, aggregate):
     )
 
 
+def _season_on_menu(league, season):
+    """A season id from another league becomes that league's first season."""
+    options = selectable_seasons(league) if league else []
+    ids = [value for _label, value in options]
+    if season in ids:
+        return season
+    if ids:
+        return ids[0]
+    return season
+
+
 def _scope_pending(intent, applied):
     """True while a league, season, or game-type click has not painted yet."""
     if not isinstance(intent, dict):
@@ -1211,7 +1294,7 @@ def _scope_pending(intent, applied):
     if league and league != applied.get('league'):
         return True
     season = intent.get('season')
-    if season is not None and season != applied.get('season'):
+    if season is not None and _season_on_menu(league or applied.get('league'), season) != applied.get('season'):
         return True
     game_type = intent.get('game_type')
     if game_type and game_type != applied.get('game_type'):
@@ -1242,6 +1325,8 @@ def render_team_rotation(
     applied = applied if isinstance(applied, dict) else {}
     if _scope_pending(intent, applied):
         return loading_skeleton('chart')
+    if applied.get('ok') is False:
+        return error_alert(ERROR_GAME)
     league = applied.get('league') or league or 'PLG'
     if applied.get('season') is not None:
         season_id = applied.get('season')

@@ -618,3 +618,34 @@ class RotationDownloadTests(unittest.TestCase):
         sent = [row['fixtureId'] for row in ensure.call_args[0][1]]
         self.assertEqual(sent, ['mine'])
         self.assertEqual([game['fixture_id'] for game in result['games']], ['mine'])
+
+    def test_opponent_from_another_type_returns_to_all(self):
+        from unittest.mock import patch
+
+        from synergy_inbounder.settings import SYNERGY_SEASON_ID
+        from synergy_reporter import team_season
+
+        schedule = [
+            {
+                'fixtureId': 'reg', 'status': 'FINISHED', 'fixtureType': 'REGULAR',
+                'teamIdHome': 'h', 'teamIdAway': 'a', 'venueId': 'v',
+            },
+            {
+                'fixtureId': 'final', 'status': 'FINISHED', 'fixtureType': 'FINAL',
+                'teamIdHome': 'h', 'teamIdAway': 'z', 'venueId': 'v',
+            },
+        ]
+        bundle = {
+            'schedule': schedule,
+            'id_table': {'h': 'Home', 'a': 'Away', 'z': 'Zone', 'v': 'Venue'},
+        }
+        with patch.object(team_season, '_load_bundle', return_value=bundle), \
+                patch.object(team_season, '_ensure_pbp') as ensure, \
+                patch.object(team_season, '_pbp_map', return_value={}):
+            result = team_season.rotation_games(
+                'PLG', SYNERGY_SEASON_ID, 'FINAL', 'a', 'all', 'all', 'h',
+            )
+        self.assertEqual(result['opponent'], 'all')
+        self.assertEqual([game['fixture_id'] for game in result['games']], ['final'])
+        sent = [row['fixtureId'] for row in ensure.call_args[0][1]]
+        self.assertEqual(sent, ['final'])

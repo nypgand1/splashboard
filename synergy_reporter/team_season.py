@@ -41,6 +41,7 @@ from synergy_reporter.post_game_report import (
     shot_pct_display,
 )
 from synergy_reporter.rotation import clock_to_seconds, period_label
+from synergy_reporter.schedule_menu import named_side_options
 from ui_kit import ERROR_GAME
 
 EMPTY_TEAM_STATS = 'No games in this view.'
@@ -175,6 +176,20 @@ def _records(frame):
     if frame is None or getattr(frame, 'empty', True):
         return []
     return frame.to_dict('records')
+
+
+def _rows_of_type(records, game_type):
+    """Fixtures of one game type, any status."""
+    chosen = plain_fixture_type(game_type)
+    if not chosen:
+        return []
+    rows = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        if plain_fixture_type(record.get('fixtureType')) == chosen:
+            rows.append(record)
+    return rows
 
 
 def _finished_rows(records, game_type):
@@ -521,35 +536,32 @@ def _menu(found, all_label):
     return options, len(ordered) >= 2
 
 
-def _named_teams(records, id_table):
-    found = {}
-    for record in records or []:
-        if not isinstance(record, dict):
-            continue
-        for key in ('teamIdHome', 'teamIdAway'):
-            entity = _entity_text(record.get(key))
-            if not entity or display_name(id_table, entity) == TEAM_TBD:
-                continue
-            found.setdefault(entity, display_name(id_table, entity))
-    return sorted(found.items(), key=lambda item: (item[1], item[0]))
+def _club_namer(id_table):
+    def name_of(record, side):
+        key = 'teamIdHome' if side == 'home' else 'teamIdAway'
+        entity = _entity_text(record.get(key))
+        if not entity:
+            return None
+        name = display_name(id_table, entity)
+        if not name or name == TEAM_TBD:
+            return None
+        return entity, name
+    return name_of
 
 
 def team_menu(records, id_table):
-    """Named teams on this season's fixture list. The first option is All Teams."""
-    ordered = _named_teams(records, id_table)
-    options = [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}]
-    options.extend({'label': name, 'value': entity} for entity, name in ordered)
-    return options, len(ordered) >= 2
+    """Named clubs on ``records``. The first option is All Teams."""
+    return named_side_options(
+        records, _club_namer(id_table), TEAM_ALL_LABEL, TEAM_ALL,
+    )
 
 
 def opponent_menu(records, id_table):
-    """Named teams on this season's fixture list. Game type does not shrink it."""
-    ordered = _named_teams(records, id_table)
-    options = [{'label': OPPONENT_ALL_LABEL, 'value': OPPONENT_ALL}]
-    options.extend(
-        {'label': 'vs ' + name, 'value': entity} for entity, name in ordered
+    """Named clubs on ``records``. The first option is vs All Teams."""
+    return named_side_options(
+        records, _club_namer(id_table), OPPONENT_ALL_LABEL, OPPONENT_ALL,
+        prefix='vs ',
     )
-    return options, len(ordered) >= 2
 
 
 def stadium_menu(records, id_table):
@@ -582,6 +594,57 @@ def _coerce_site(value):
     if text in ('all', 'away', 'home'):
         return text
     return SITE_ALL
+
+
+def menus_from_schedule(
+    schedule, id_table, requested_type, team, opponent, stadium, site, reset=False,
+):
+    """Team, opponent, and stadium menus for one game type.
+
+    Team and opponent use every named club on that type, including games that
+    have not been played. Stadium stays on the finished games. ``reset`` puts
+    the four filters back to All.
+    """
+    options = fixture_type_options(schedule)
+    selected_type = choose_game_type(options, None if reset else requested_type)
+    type_rows = _rows_of_type(schedule, selected_type) if selected_type else []
+    finished = _finished_rows(schedule, selected_type) if selected_type else []
+    team_options, team_visible = team_menu(type_rows, id_table)
+    opponent_options, opponent_visible = opponent_menu(type_rows, id_table)
+    stadium_options, stadium_visible = stadium_menu(finished, id_table)
+    if reset:
+        selected_team = TEAM_ALL
+        selected_opponent = OPPONENT_ALL
+        selected_stadium = STADIUM_ALL
+        selected_site = SITE_ALL
+    else:
+        selected_team = _coerce_menu(team, team_options, team_visible, TEAM_ALL)
+        selected_opponent = _coerce_menu(opponent, opponent_options, opponent_visible)
+        if selected_team != TEAM_ALL and selected_team == selected_opponent:
+            selected_opponent = OPPONENT_ALL
+        selected_stadium = _coerce_menu(stadium, stadium_options, stadium_visible)
+        selected_site = _coerce_site(site)
+    shown_opponents = [
+        item for item in opponent_options
+        if item['value'] == OPPONENT_ALL or item['value'] != selected_team
+    ]
+    return {
+        'game_types': options,
+        'game_type': selected_type,
+        'game_type_visible': len(options) > 1,
+        'team': selected_team,
+        'team_options': team_options,
+        'team_visible': team_visible,
+        'opponent': selected_opponent,
+        'opponent_options': shown_opponents,
+        'opponent_width_labels': [item['label'] for item in opponent_options],
+        'opponent_visible': opponent_visible,
+        'stadium': selected_stadium,
+        'stadium_options': stadium_options,
+        'stadium_visible': stadium_visible,
+        'site': selected_site,
+        'finished': finished,
+    }
 
 
 def _sides(record):
@@ -688,27 +751,28 @@ def build_team_cards(
 ):
     """Pure card payload for fixtures and stats already in memory."""
     schedule = _records(fixtures) if not isinstance(fixtures, list) else list(fixtures)
-    options = fixture_type_options(schedule)
-    selected_type = choose_game_type(options, game_type)
-    included = _finished_rows(schedule, selected_type) if selected_type else []
-    opponent_options, opponent_visible = opponent_menu(schedule, id_table)
-    team_options, team_visible = team_menu(schedule, id_table)
-    stadium_options, stadium_visible = stadium_menu(included, id_table)
-    selected_opponent = _coerce_menu(opponent, opponent_options, opponent_visible)
-    selected_team = _coerce_menu(team, team_options, team_visible, TEAM_ALL)
-    if selected_team != TEAM_ALL and selected_team == selected_opponent:
-        selected_opponent = OPPONENT_ALL
-    selected_stadium = _coerce_menu(stadium, stadium_options, stadium_visible)
-    selected_site = _coerce_site(site)
+    menus = menus_from_schedule(
+        schedule, id_table, game_type, team, opponent, stadium, site,
+    )
+    options = menus['game_types']
+    selected_type = menus['game_type']
+    included = menus['finished']
+    team_options = menus['team_options']
+    team_visible = menus['team_visible']
+    shown_opponents = menus['opponent_options']
+    opponent_visible = menus['opponent_visible']
+    stadium_options = menus['stadium_options']
+    stadium_visible = menus['stadium_visible']
+    selected_team = menus['team']
+    selected_opponent = menus['opponent']
+    selected_stadium = menus['stadium']
+    selected_site = menus['site']
+    width_labels = menus['opponent_width_labels']
     chip_rows = _rows_for_chips(included, selected_stadium, selected_opponent)
     if selected_team != TEAM_ALL:
         chip_rows = [row for row in chip_rows if selected_team in _sides(row)]
     fixture_ids = [str(row.get('fixtureId')) for row in chip_rows]
     by_fixture = {str(row.get('fixtureId')): row for row in chip_rows}
-    shown_opponents = [
-        item for item in opponent_options
-        if item['value'] == OPPONENT_ALL or item['value'] != selected_team
-    ]
     # Menu labels are "vs {name}". The Opp cell keeps the bare name.
     opp_label = 'Opp'
     if selected_opponent != OPPONENT_ALL:
@@ -812,7 +876,7 @@ def build_team_cards(
         'show_opp_locked': selected_team != TEAM_ALL,
         'opponent': selected_opponent,
         'opponent_options': shown_opponents,
-        'opponent_width_labels': [item['label'] for item in opponent_options],
+        'opponent_width_labels': width_labels,
         'opponent_visible': opponent_visible,
         'stadium': selected_stadium,
         'stadium_options': stadium_options,
@@ -981,48 +1045,128 @@ def _pbp_map(org_id, rows):
     return found
 
 
-def _load_bundle(org_id, season_id, reason):
+def _bundle_complete(bundle):
+    if not isinstance(bundle, dict):
+        return False
+    return all(
+        bundle.get(key) is not None
+        for key in ('schedule', 'totals', 'periods', 'id_table')
+    )
+
+
+def _pin_schedule(org_id, season_id, schedule):
+    finished_ids = [
+        str(row.get('fixtureId'))
+        for row in schedule or []
+        if is_finished_status(row.get('status')) and row.get('fixtureId')
+    ]
+    frame_store.pin_season(org_id, season_id, finished_ids)
+
+
+def _store_bundle(org_id, season_id, entry):
+    with _bundle_lock:
+        _bundles[(org_id, season_id)] = entry
+    _pin_schedule(org_id, season_id, entry.get('schedule') or [])
+
+
+def _load_schedule(org_id, season_id, reuse=True):
+    """Fixture list and id table. Does not download totals or play-by-play.
+
+    A fresh partial list is reused. A complete bundle is reused until a scope
+    refresh asks for ``reuse=False``. That refresh keeps totals already stored
+    so the card paint can replace them without a second fixture-list call.
+    """
     key = (org_id, season_id)
     now = time.monotonic()
     with _bundle_lock:
         current = _bundles.get(key)
-    if current and reason in ('chip', 'type', 'slice'):
-        return current
-    if current and reason == 'scope' and (now - current['fetched_at']) < SHORT_CACHE_SECONDS:
+    has_list = (
+        isinstance(current, dict)
+        and current.get('schedule') is not None
+        and current.get('id_table') is not None
+    )
+    fresh = has_list and (now - current.get('fetched_at', 0)) < SHORT_CACHE_SECONDS
+    if reuse and has_list and (fresh or _bundle_complete(current)):
         return current
     box = []
     token = _cache_hits.set(box)
     try:
-        season_df, total_rows, period_rows, id_table = run_wave([
+        season_df, id_table = run_wave([
             lambda: Parser.parse_season_game_list_df(org_id, season_id),
-            lambda: Communicator_totals(org_id, season_id),
-            lambda: Communicator_periods(org_id, season_id),
             lambda: Parser.parse_id_tables(org_id),
         ])
     finally:
         _cache_hits.reset(token)
     schedule = _records(season_df)
-    totals = _normalize_items(total_rows, with_period=False)
-    periods = _normalize_items(period_rows, with_period=True)
-    _split_into_frames(org_id, schedule, totals, periods)
     network = any(not hit for hit in box)
-    stamp = current['stamp'] if current and not network else taipei_now_label()
+    previous_stamp = current.get('stamp') if isinstance(current, dict) else None
+    stamp = previous_stamp if previous_stamp and not network else taipei_now_label()
     entry = {
         'schedule': schedule,
-        'totals': totals,
-        'periods': periods,
         'id_table': id_table or {},
         'stamp': stamp,
         'fetched_at': time.monotonic(),
     }
+    if isinstance(current, dict):
+        if current.get('totals') is not None:
+            entry['totals'] = current['totals']
+        if current.get('periods') is not None:
+            entry['periods'] = current['periods']
+    _store_bundle(org_id, season_id, entry)
+    return entry
+
+
+def _needs_cards(org_id, bundle, game_type):
+    """True when the four cards still need totals or this type's play-by-play."""
+    if not _bundle_complete(bundle):
+        return True
+    chosen = plain_fixture_type(game_type)
+    if not chosen:
+        return False
+    return bool(_pbp_pending(org_id, _finished_rows(bundle.get('schedule') or [], chosen)))
+
+
+def _load_bundle(org_id, season_id, reason):
+    key = (org_id, season_id)
+    now = time.monotonic()
     with _bundle_lock:
-        _bundles[key] = entry
-    finished_ids = [
-        str(row.get('fixtureId'))
-        for row in schedule
-        if is_finished_status(row.get('status')) and row.get('fixtureId')
-    ]
-    frame_store.pin_season(org_id, season_id, finished_ids)
+        current = _bundles.get(key)
+    if _bundle_complete(current) and reason in ('chip', 'type', 'slice'):
+        return current
+    if (
+        _bundle_complete(current)
+        and reason == 'scope'
+        and (now - current['fetched_at']) < SHORT_CACHE_SECONDS
+    ):
+        return current
+    if _bundle_complete(current) and reason == 'scope':
+        schedule_entry = _load_schedule(org_id, season_id, reuse=False)
+    else:
+        schedule_entry = _load_schedule(org_id, season_id, reuse=True)
+    box = []
+    token = _cache_hits.set(box)
+    try:
+        total_rows, period_rows = run_wave([
+            lambda: Communicator_totals(org_id, season_id),
+            lambda: Communicator_periods(org_id, season_id),
+        ])
+    finally:
+        _cache_hits.reset(token)
+    schedule = schedule_entry.get('schedule') or []
+    totals = _normalize_items(total_rows, with_period=False)
+    periods = _normalize_items(period_rows, with_period=True)
+    _split_into_frames(org_id, schedule, totals, periods)
+    network = any(not hit for hit in box)
+    stamp = schedule_entry.get('stamp') if not network else taipei_now_label()
+    entry = {
+        'schedule': schedule,
+        'totals': totals,
+        'periods': periods,
+        'id_table': schedule_entry.get('id_table') or {},
+        'stamp': stamp,
+        'fetched_at': time.monotonic(),
+    }
+    _store_bundle(org_id, season_id, entry)
     return entry
 
 
@@ -1064,6 +1208,79 @@ def _error_payload(league, season_id, seasons):
         'stadium_options': [{'label': STADIUM_ALL_LABEL, 'value': STADIUM_ALL}],
         'stadium_visible': False,
         'site': SITE_ALL,
+        'cards': None,
+    }
+
+
+def _chrome_error(league, season_id, seasons):
+    payload = _error_payload(league, season_id, seasons)
+    payload['needs_cards'] = False
+    return payload
+
+
+def schedule_chrome(
+    league, season_id=None, game_type=None, reset=False,
+    team=TEAM_ALL, opponent=OPPONENT_ALL, stadium=STADIUM_ALL, site=SITE_ALL,
+):
+    """Menus from the fixture list. Play-by-play stays on the card paint."""
+    key = str(league or '').strip().upper()
+    seasons = [
+        {'label': label, 'value': value}
+        for label, value in selectable_seasons(key)
+    ]
+    org_id = organization_for_league(key)
+    if org_id is None or not seasons:
+        return _chrome_error(key or None, season_id, seasons)
+    selected_season = (
+        season_id if any(item['value'] == season_id for item in seasons)
+        else seasons[0]['value']
+    )
+    if regulation_minutes(selected_season) is None:
+        return _chrome_error(key, selected_season, seasons)
+    try:
+        bundle = _load_schedule(org_id, selected_season, reuse=True)
+        menus = menus_from_schedule(
+            bundle.get('schedule') or [],
+            bundle.get('id_table') or {},
+            game_type,
+            team, opponent, stadium, site,
+            reset=reset,
+        )
+    except SynergyAuthError:
+        log_auth.exception('team stats schedule auth failed %s %s', key, selected_season)
+        return _chrome_error(key, selected_season, seasons)
+    except Exception:
+        log_unexpected.exception('team stats schedule failed %s %s', key, selected_season)
+        return _chrome_error(key, selected_season, seasons)
+    chosen = menus['game_type']
+    return {
+        'ok': True,
+        'needs_cards': _needs_cards(org_id, bundle, chosen),
+        'empty': True,
+        'message': '',
+        'next_step': '',
+        'stamp': bundle.get('stamp'),
+        'league': key,
+        'season_id': selected_season,
+        'seasons': seasons,
+        'game_type': chosen,
+        'game_types': menus['game_types'],
+        'game_type_visible': menus['game_type_visible'],
+        'period': 'all',
+        'period_chips': [{'label': 'All', 'value': 'all'}],
+        'period_visible': False,
+        'team': menus['team'],
+        'team_options': menus['team_options'],
+        'team_visible': menus['team_visible'],
+        'show_opp_locked': menus['team'] != TEAM_ALL,
+        'opponent': menus['opponent'],
+        'opponent_options': menus['opponent_options'],
+        'opponent_width_labels': menus['opponent_width_labels'],
+        'opponent_visible': menus['opponent_visible'],
+        'stadium': menus['stadium'],
+        'stadium_options': menus['stadium_options'],
+        'stadium_visible': menus['stadium_visible'],
+        'site': menus['site'],
         'cards': None,
     }
 
@@ -1196,7 +1413,9 @@ def rotation_games(league, season_id, game_type, opponent, stadium, site, team):
         schedule = bundle.get('schedule') or []
         selected_type = choose_game_type(fixture_type_options(schedule), game_type)
         included = _finished_rows(schedule, selected_type) if selected_type else []
-        menu, visible = opponent_menu(schedule, bundle.get('id_table'))
+        menu, visible = opponent_menu(
+            _rows_of_type(schedule, selected_type), bundle.get('id_table'),
+        )
         chosen_opponent = _coerce_menu(opponent, menu, visible)
         if str(chosen_opponent) == str(team):
             chosen_opponent = OPPONENT_ALL

@@ -65,6 +65,7 @@ class TeamStatsChromeTests(unittest.TestCase):
         self.assertIn("Output('ts-rotation', 'children', allow_duplicate=True)", text)
         self.assertIn("current.team !== 'all'", text)
         self.assertIn('loading_skeleton(\'chart\')', text)
+        self.assertIn('sameLeague ? seasonValue : null', text)
         listed = _callbacks('ts-rotation.children')
         clientside = [item for item in listed if item.get('clientside_function')]
         self.assertGreaterEqual(len(clientside), 2)
@@ -221,6 +222,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             'league': 'EASL',
             'season': 'easl-season',
             'game_type': 'REGULAR',
+            'ok': True,
         })
         self.assertEqual(result[12], 'all')
         self.assertEqual(result[15], 'all')
@@ -236,11 +238,15 @@ class TeamStatsRenderTests(unittest.TestCase):
             'nonce': 4,
         }
         payload = _payload('easl-season', 'REGULAR')
+        chrome = {'ok': True, 'needs_cards': False, 'season_id': 'easl-season'}
         with patch.object(team_stats_page, '_triggered_id', return_value='ts-intent'), \
+                patch.object(team_stats_page, 'schedule_chrome', return_value=chrome) as listed, \
                 patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch:
             result = team_stats_page.render_team_stats(
                 intent, '1', 'b', 'v1', 'home', 'kept', 'PLG', 'plg-season', 'PLAYOFF',
             )
+        self.assertTrue(listed.call_args.kwargs['reset'])
+        self.assertEqual(listed.call_args.args[0], 'EASL')
         self.assertEqual(fetch.call_args.args[0], 'EASL')
         self.assertEqual(fetch.call_args.kwargs['season_id'], 'easl-season')
         self.assertIsNone(fetch.call_args.kwargs['game_type'])
@@ -250,6 +256,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             'league': 'EASL',
             'season': 'easl-season',
             'game_type': 'REGULAR',
+            'ok': True,
         })
 
     def test_intent_game_type_ignores_stale_control_state(self):
@@ -261,8 +268,9 @@ class TeamStatsRenderTests(unittest.TestCase):
             'nonce': 8,
         }
         payload = _payload('s', 'PLAYOFF')
+        chrome = {'ok': True, 'needs_cards': False, 'season_id': 's', 'game_type': 'PLAYOFF'}
         with patch.object(team_stats_page, '_triggered_id', return_value='ts-intent'), \
-                patch.object(team_stats_page, 'type_needs_download', return_value=False), \
+                patch.object(team_stats_page, 'schedule_chrome', return_value=chrome), \
                 patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
                 patch.object(team_stats_page, '_view', return_value='cards'):
             result = team_stats_page.render_team_stats(
@@ -286,7 +294,8 @@ class TeamStatsRenderTests(unittest.TestCase):
         }
         payload = _payload('s', 'PLAYOFF')
         payload['site'] = 'away'
-        with patch.object(team_stats_page, 'type_needs_download', return_value=False), \
+        chrome = {'ok': True, 'needs_cards': False, 'season_id': 's', 'game_type': 'PLAYOFF'}
+        with patch.object(team_stats_page, 'schedule_chrome', return_value=chrome), \
                 patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
                 patch.object(team_stats_page, '_view', return_value='cards'):
             result = team_stats_page.render_team_stats(
@@ -302,7 +311,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertIs(result[17], no_update)
         self.assertIs(result[23], no_update)
 
-    def test_missing_play_by_play_returns_the_skeleton_and_arms_the_job(self):
+    def test_missing_play_by_play_paints_menus_and_arms_the_card_job(self):
         intent = {
             'league': 'PLG',
             'season': 's',
@@ -310,20 +319,57 @@ class TeamStatsRenderTests(unittest.TestCase):
             'skeleton': False,
             'nonce': 9,
         }
-        with patch.object(team_stats_page, 'type_needs_download', return_value=True), \
+        chrome = {
+            'ok': True,
+            'needs_cards': True,
+            'season_id': 's',
+            'seasons': [{'label': '2025-26', 'value': 's'}],
+            'game_type': 'PLAYOFF',
+            'game_types': [{'label': 'Playoff', 'value': 'PLAYOFF'}],
+            'game_type_visible': True,
+            'period': 'all',
+            'period_chips': [{'label': 'All', 'value': 'all'}],
+            'period_visible': False,
+            'team': 'aces',
+            'team_options': [
+                {'label': 'All Teams', 'value': 'all'},
+                {'label': 'Aces', 'value': 'aces'},
+            ],
+            'team_visible': True,
+            'opponent': 'all',
+            'opponent_options': [{'label': 'vs All Teams', 'value': 'all'}],
+            'opponent_width_labels': ['vs All Teams', 'vs Aces'],
+            'opponent_visible': False,
+            'stadium': 'all',
+            'stadium_options': [{'label': 'All Stadiums', 'value': 'all'}],
+            'stadium_visible': False,
+            'site': 'home',
+            'empty': True,
+            'cards': None,
+            'stamp': 'Last Update: old',
+        }
+        with patch.object(team_stats_page, '_triggered_id', return_value='ts-intent'), \
+                patch.object(team_stats_page, 'schedule_chrome', return_value=chrome), \
                 patch.object(team_stats_page, 'team_stats_payload') as fetch:
             result = team_stats_page.render_team_stats(
-                intent, '2', 'b', 'v1', 'home', 'all', 'PLG', 's', 'PLAYOFF',
+                intent, '2', 'b', 'v1', 'home', 'aces', 'PLG', 's', 'REGULAR',
             )
         fetch.assert_not_called()
         self.assertIn('Skeleton', _names(result[0]))
         self.assertNotIn('Table', _names(result[0]))
-        self.assertTrue(all(item is no_update for item in result[1:8]))
+        self.assertIs(result[1], no_update)
+        self.assertEqual(result[5], 'PLAYOFF')
         self.assertEqual(result[8], 'all')
-        self.assertIs(result[9], no_update)
-        self.assertIs(result[10], no_update)
-        self.assertTrue(all(item is no_update for item in result[11:23]))
-        self.assertEqual(result[23], intent)
+        self.assertEqual(result[9], {'display': 'none'})
+        self.assertEqual(result[10]['league'], 'PLG')
+        self.assertEqual(result[10]['season'], 's')
+        self.assertEqual(result[10]['game_type'], 'PLAYOFF')
+        self.assertTrue(result[10]['ok'])
+        self.assertIs(result[19], no_update)
+        self.assertEqual(result[23]['phase'], 'cards')
+        self.assertEqual(result[23]['game_type'], 'PLAYOFF')
+        self.assertEqual(result[23]['team'], 'aces')
+        self.assertEqual(result[23]['nonce'], 9)
 
     def test_period_chip_keeps_applied_and_does_not_arm_a_job(self):
         payload = _payload('s', 'REGULAR', '1')
@@ -332,8 +378,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             {'label': '1Q', 'value': '1'},
         ]
         with patch.object(team_stats_page, '_triggered_id', return_value='ts-period'), \
-                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
-                patch.object(team_stats_page, 'type_needs_download') as needs:
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch:
             result = team_stats_page.render_team_stats(
                 {'skeleton': True, 'nonce': 1, 'game_type': None},
                 '1',
@@ -345,7 +390,6 @@ class TeamStatsRenderTests(unittest.TestCase):
                 's',
                 'REGULAR',
             )
-        needs.assert_not_called()
         self.assertEqual(fetch.call_args.kwargs['reason'], 'chip')
         self.assertEqual(fetch.call_args.kwargs['game_type'], 'REGULAR')
         self.assertEqual(fetch.call_args.kwargs['period'], '1')
@@ -397,6 +441,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             'league': 'PLG',
             'season': 's',
             'game_type': None,
+            'ok': False,
         })
         self.assertIs(result[23], no_update)
         self.assertNotIn('secret', str(result[0]))
@@ -412,8 +457,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         payload['stadium'] = 'all'
         payload['site'] = 'home'
         with patch.object(team_stats_page, '_triggered_id', return_value='ts-opponent'), \
-                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
-                patch.object(team_stats_page, 'type_needs_download') as needs:
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch:
             result = team_stats_page.render_team_stats(
                 {'skeleton': True, 'nonce': 4, 'game_type': 'REGULAR'},
                 '1',
@@ -425,7 +469,6 @@ class TeamStatsRenderTests(unittest.TestCase):
                 's',
                 'REGULAR',
             )
-        needs.assert_not_called()
         self.assertEqual(fetch.call_args.kwargs['reason'], 'slice')
         self.assertEqual(fetch.call_args.kwargs['period'], '1')
         self.assertEqual(fetch.call_args.kwargs['opponent'], 'b')
@@ -434,6 +477,96 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertIs(result[8], no_update)
         self.assertIs(result[10], no_update)
         self.assertIs(result[23], no_update)
+
+    def test_scope_click_holds_cards_until_the_card_paint(self):
+        intent = {
+            'league': 'EASL',
+            'season': None,
+            'game_type': None,
+            'skeleton': True,
+            'nonce': 11,
+        }
+        chrome = {
+            'ok': True,
+            'needs_cards': True,
+            'season_id': 'easl-season',
+            'seasons': [{'label': '2026-27', 'value': 'easl-season'}],
+            'game_type': 'REGULAR',
+            'game_types': [{'label': 'Regular', 'value': 'REGULAR'}],
+            'game_type_visible': False,
+            'period': 'all',
+            'period_chips': [{'label': 'All', 'value': 'all'}],
+            'period_visible': False,
+            'team': 'all',
+            'team_options': [
+                {'label': 'All Teams', 'value': 'all'},
+                {'label': 'Aces', 'value': 'aces'},
+            ],
+            'team_visible': True,
+            'opponent': 'all',
+            'opponent_options': [{'label': 'vs All Teams', 'value': 'all'}],
+            'opponent_width_labels': ['vs All Teams', 'vs Aces'],
+            'opponent_visible': False,
+            'stadium': 'all',
+            'stadium_options': [{'label': 'All Stadiums', 'value': 'all'}],
+            'stadium_visible': False,
+            'site': 'all',
+            'empty': True,
+            'cards': None,
+            'stamp': 'Last Update: old',
+        }
+        with patch.object(team_stats_page, '_triggered_id', return_value='ts-intent'), \
+                patch.object(team_stats_page, 'schedule_chrome', return_value=chrome) as listed, \
+                patch.object(team_stats_page, 'team_stats_payload') as fetch:
+            result = team_stats_page.render_team_stats(
+                intent, '1', 'b', 'v1', 'home', 'aces', 'PLG', 'plg-season', 'PLAYOFF',
+            )
+        fetch.assert_not_called()
+        self.assertEqual(listed.call_args.args[0], 'EASL')
+        self.assertEqual(listed.call_args.kwargs['season_id'], 'plg-season')
+        self.assertTrue(listed.call_args.kwargs['reset'])
+        self.assertIn('Skeleton', _names(result[0]))
+        self.assertIs(result[1], no_update)
+        self.assertEqual(result[3], 'easl-season')
+        self.assertEqual(result[8], 'all')
+        self.assertEqual(result[9], {'display': 'none'})
+        self.assertEqual(result[10]['league'], 'EASL')
+        self.assertEqual(result[10]['season'], 'easl-season')
+        self.assertEqual(result[10]['game_type'], 'REGULAR')
+        self.assertTrue(result[10]['ok'])
+        self.assertEqual(result[19], 'all')
+        self.assertEqual(result[23]['phase'], 'cards')
+        self.assertEqual(result[23]['season'], 'easl-season')
+        self.assertEqual(result[23]['game_type'], 'REGULAR')
+        self.assertEqual(result[23]['team'], 'all')
+        self.assertEqual(result[23]['nonce'], 11)
+
+    def test_card_job_downloads_the_chosen_type_without_scope_reset(self):
+        job = {
+            'league': 'EASL',
+            'season': 'easl-season',
+            'game_type': 'REGULAR',
+            'team': 'all',
+            'opponent': 'all',
+            'stadium': 'all',
+            'site': 'all',
+            'phase': 'cards',
+            'nonce': 11,
+        }
+        payload = _payload('easl-season', 'REGULAR')
+        payload['team'] = 'all'
+        with patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
+                patch.object(team_stats_page, '_view', return_value='cards'):
+            result = team_stats_page.render_team_stats_download(
+                job, dict(job), 'PLG', 'plg-season', 'PLAYOFF', '1',
+                'b', 'v1', 'home', 'aces',
+            )
+        self.assertEqual(result[0], 'cards')
+        self.assertEqual(fetch.call_args.kwargs['reason'], 'type')
+        self.assertEqual(fetch.call_args.kwargs['game_type'], 'REGULAR')
+        self.assertEqual(fetch.call_args.kwargs['team'], 'all')
+        self.assertEqual(fetch.call_args.kwargs['opponent'], 'all')
+        self.assertEqual(result[19], 'all')
 
 
 def _walk(node):
@@ -735,4 +868,34 @@ class TeamStatsRotationTests(unittest.TestCase):
             {'league': 'EASL', 'season': 'new', 'game_type': None, 'nonce': 1},
         )
         self.assertIn('Skeleton', _names(view))
+        self.assertNotIn('Select a team.', str(view))
+
+    def test_foreign_season_id_after_paint_asks_for_a_team(self):
+        with patch.object(
+            team_stats_page, 'selectable_seasons', return_value=[('2026-27', 'easl-season')],
+        ), patch.object(team_stats_page, 'rotation_games') as fetch:
+            view = team_stats_page.render_team_rotation(
+                'tab-rotation',
+                {
+                    'league': 'EASL', 'season': 'easl-season',
+                    'game_type': 'REGULAR', 'ok': True,
+                },
+                'all', 'all', 'all', 'all', 'EASL', 'easl-season', 'REGULAR',
+                {'league': 'EASL', 'season': 'plg-season', 'game_type': None},
+            )
+        fetch.assert_not_called()
+        self.assertIn('Select a team.', str(view))
+        self.assertNotIn('Skeleton', _names(view))
+
+    def test_failed_schedule_shows_the_load_error(self):
+        view = team_stats_page.render_team_rotation(
+            'tab-rotation',
+            {
+                'league': 'EASL', 'season': 'easl-season',
+                'game_type': 'REGULAR', 'ok': False,
+            },
+            'all', 'all', 'all', 'all', 'EASL', 'easl-season', 'REGULAR',
+            {'league': 'EASL', 'season': None, 'game_type': None},
+        )
+        self.assertIn(ERROR_GAME, str(view))
         self.assertNotIn('Select a team.', str(view))
