@@ -11,6 +11,7 @@ from synergy_inbounder.game_status import (
     status_bucket,
 )
 from synergy_inbounder.names import contains_cjk
+from synergy_reporter.shot_chart import COURT_CARD_STYLE, COURT_COLUMN_STYLE
 
 SCORE_COLOR = '#0077b6'
 SCORE_FZ = '22px'
@@ -74,6 +75,29 @@ def empty_state(message, next_step):
         gap=6,
         py='md',
     )
+
+
+def shot_court_column(children):
+    return dmc.Stack(
+        children,
+        gap='xs',
+        align='center',
+        style=dict(COURT_COLUMN_STYLE),
+    )
+
+
+def shot_chart_paper(children, card_id=None):
+    props = {
+        'withBorder': True,
+        'radius': 'md',
+        'shadow': 'xs',
+        'p': 'md',
+        'className': 'braves-card-wrapper',
+        'style': dict(COURT_CARD_STYLE),
+    }
+    if card_id is not None:
+        props['id'] = card_id
+    return dmc.Paper(children, **props)
 
 
 def filter_control(label, control, wrap_id=None, visible=True):

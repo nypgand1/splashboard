@@ -62,6 +62,7 @@ from synergy_reporter.team_order import (
     team_stripe,
 )
 from synergy_reporter.shot_chart import (
+    COURT_IMAGE_STYLE,
     court_data_uri,
     court_zones,
     period_chips as shot_period_chips,
@@ -80,6 +81,8 @@ from ui_kit import (
     game_banner,
     icon,
     loading_skeleton,
+    shot_chart_paper,
+    shot_court_column,
 )
 
 register_page(
@@ -323,29 +326,24 @@ def _rotation_wrap(hidden=True):
 
 
 def _shot_chart_court(side):
-    return dmc.Stack(
-        [
-            dmc.Text(id=f'shot-chart-name-{side}', fw=700, ta='center', size='sm'),
-            dmc.Select(
-                id=f'shot-chart-player-{side}',
-                data=[{'label': 'All', 'value': 'all'}],
-                value='all',
-                allowDeselect=False,
-                clearable=False,
-                size='xs',
-                radius='md',
-                w='100%',
-                comboboxProps={'withinPortal': True},
-            ),
-            html.Div(
-                id=f'shot-chart-court-{side}',
-                style={'width': '100%'},
-            ),
-        ],
-        gap='xs',
-        align='center',
-        style={'width': '100%', 'maxWidth': '380px', 'marginInline': 'auto'},
-    )
+    return shot_court_column([
+        dmc.Text(id=f'shot-chart-name-{side}', fw=700, ta='center', size='sm'),
+        dmc.Select(
+            id=f'shot-chart-player-{side}',
+            data=[{'label': 'All', 'value': 'all'}],
+            value='all',
+            allowDeselect=False,
+            clearable=False,
+            size='xs',
+            radius='md',
+            w='100%',
+            comboboxProps={'withinPortal': True},
+        ),
+        html.Div(
+            id=f'shot-chart-court-{side}',
+            style={'width': '100%'},
+        ),
+    ])
 
 
 def _shot_chart_wrap(hidden=True):
@@ -356,7 +354,7 @@ def _shot_chart_wrap(hidden=True):
     return html.Div(
         [
             html.Div(id='shot-chart-last-update', children=_last_update_span()),
-            dmc.Paper(
+            shot_chart_paper(
                 [
                 dmc.Box(
                     dmc.SegmentedControl(
@@ -379,13 +377,7 @@ def _shot_chart_wrap(hidden=True):
                 ),
                 pane,
                 ],
-                id='shot-chart-card',
-                withBorder=True,
-                radius='md',
-                shadow='xs',
-                p='md',
-                className='braves-card-wrapper',
-                style={'width': '100%', 'maxWidth': '808px', 'marginInline': 'auto'},
+                card_id='shot-chart-card',
             ),
         ],
         id='wrap-shot-chart',
@@ -2881,7 +2873,7 @@ def resolve_shot_chart_filters(triggered_id, period, away_player, home_player):
     return period or 'all', away_player or 'all', home_player or 'all'
 
 
-def shot_chart_panel(pbp_store, match_info, period, away_player, home_player):
+def shot_chart_panel(pbp_store, match_info, period, away_player, home_player, fixture_id=None):
     status, frame = _pbp_frame(pbp_store)
     info = safe_loads(match_info)
     if status == 'loading':
@@ -2895,10 +2887,12 @@ def shot_chart_panel(pbp_store, match_info, period, away_player, home_player):
         'away_name': info.get('away_team') or 'Away',
         'home_name': info.get('home_team') or 'Home',
         'away_src': court_data_uri(court_zones(
-            frame, info.get('away_team_id'), period=period or 'all', player_id=away_player or 'all',
+            frame, info.get('away_team_id'), period=period or 'all',
+            player_id=away_player or 'all', fixture_id=fixture_id,
         )),
         'home_src': court_data_uri(court_zones(
-            frame, info.get('home_team_id'), period=period or 'all', player_id=home_player or 'all',
+            frame, info.get('home_team_id'), period=period or 'all',
+            player_id=home_player or 'all', fixture_id=fixture_id,
         )),
     }
 
@@ -2907,7 +2901,7 @@ def _court_image(src, alt):
     return html.Img(
         src=src,
         alt=alt,
-        style={'width': '100%', 'height': 'auto', 'display': 'block'},
+        style=dict(COURT_IMAGE_STYLE),
     )
 
 
@@ -3230,6 +3224,7 @@ def _report_shot_chart_json(game_id, match_info):
             info.get('home_team_id'),
             info.get('away_team') or 'Away',
             info.get('home_team') or 'Home',
+            fixture_id=game_id,
         )
         return json.dumps(payload, ensure_ascii=False)
     except Exception:
@@ -3452,6 +3447,7 @@ def update_shot_chart(
         period,
         away_player,
         home_player,
+        fixture_id=game_id,
     ))
 
 

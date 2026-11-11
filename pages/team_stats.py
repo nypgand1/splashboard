@@ -19,13 +19,14 @@ import dash_mantine_components as dmc
 
 from synergy_inbounder.logs import data as log_data
 from synergy_inbounder.logs import unexpected as log_unexpected
-from synergy_inbounder.names import display_name
+from synergy_inbounder.names import TEAM_TBD, display_name
 from synergy_inbounder.settings import (
     EASL_SEASON_ID,
     SYNERGY_SEASON_ID,
     selectable_seasons,
 )
 from synergy_reporter.rotation import period_label
+from synergy_reporter.shot_chart import COURT_IMAGE_STYLE, court_data_uri, season_zones
 from synergy_reporter.team_rotation import (
     ROTATION_EMPTY,
     ROTATION_SELECT,
@@ -55,6 +56,8 @@ from ui_kit import (
     filter_control,
     icon,
     loading_skeleton,
+    shot_chart_paper,
+    shot_court_column,
     team_name_lines,
 )
 
@@ -467,6 +470,80 @@ def _rotation_pane():
     return html.Div(id='ts-rotation', style={'display': 'none'})
 
 
+def _shot_pane():
+    return html.Div(
+        shot_chart_paper(
+            [
+                dmc.Box(
+                    dmc.SegmentedControl(
+                        id='ts-shot-period',
+                        data=[{'label': 'All', 'value': 'all'}],
+                        value='all',
+                        radius='md',
+                        size='xs',
+                    ),
+                    id='ts-shot-period-bar',
+                    mb='sm',
+                    style={'display': 'none'},
+                ),
+                html.Div(id='ts-shot-body'),
+            ],
+            card_id='ts-shot-card',
+        ),
+        id='ts-shot',
+        style={'display': 'none'},
+    )
+
+
+def _opp_chart_name(opponent, id_table):
+    if not opponent or opponent == OPPONENT_ALL:
+        return 'Opp'
+    bare = display_name(id_table, opponent)
+    if bare == TEAM_TBD:
+        return 'Opp'
+    return bare
+
+
+def _shot_column(name, zones):
+    return shot_court_column([
+        dmc.Text(name, fw=700, ta='center', size='sm'),
+        html.Img(
+            src=court_data_uri(zones),
+            alt='{0} shot chart'.format(name),
+            style=dict(COURT_IMAGE_STYLE),
+        ),
+    ])
+
+
+def _shot_courts(team_name, team_zones, opp_name, opp_zones):
+    return dmc.SimpleGrid(
+        cols={'base': 1, 'sm': 2},
+        spacing='16px',
+        children=[
+            _shot_column(team_name, team_zones),
+            _shot_column(opp_name, opp_zones),
+        ],
+    )
+
+
+def _shot_skeleton_column():
+    return shot_court_column([
+        dmc.Skeleton(height=14, width=160, radius='sm'),
+        dmc.Skeleton(
+            radius='md',
+            style={'width': '100%', 'aspectRatio': '380.05 / 400.51'},
+        ),
+    ])
+
+
+def shot_chart_skeleton():
+    return dmc.SimpleGrid(
+        cols={'base': 1, 'sm': 2},
+        spacing='16px',
+        children=[_shot_skeleton_column(), _shot_skeleton_column()],
+    )
+
+
 def layout():
     league = 'PLG'
     season_id = _default_season(league)
@@ -556,6 +633,11 @@ def layout():
                         'Rotation',
                         value='tab-rotation',
                         leftSection=icon('tabler:chart-bar', width=14),
+                    ),
+                    dmc.TabsTab(
+                        'Shot Chart',
+                        value='tab-shot-chart',
+                        leftSection=icon('tabler:ball-basketball', width=14),
                     ),
                 ]),
                 id='ts-tabs',
@@ -647,6 +729,7 @@ def layout():
             ),
             html.Div(_loading_body(), id='ts-body'),
             _rotation_pane(),
+            _shot_pane(),
         ],
         gap='md',
     )
@@ -654,6 +737,7 @@ def layout():
 
 _LOADING_BODY = json.dumps(_jsonable(_loading_body()))
 _CHART_LOADING = json.dumps(_jsonable(loading_skeleton('chart')))
+_SHOT_LOADING = json.dumps(_jsonable(shot_chart_skeleton()))
 _ROTATION_PICK = json.dumps(_jsonable(empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)))
 
 clientside_callback(
@@ -716,13 +800,17 @@ clientside_callback(
 clientside_callback(
     """
     function(intent) {
+        var skip = window.dash_clientside.no_update;
         if (!intent || intent.nonce == null) {
-            return window.dash_clientside.no_update;
+            return [skip, skip];
         }
-        return __CHART_LOADING__;
+        return [__CHART_LOADING__, __SHOT_LOADING__];
     }
-    """.replace('__CHART_LOADING__', _CHART_LOADING),
+    """.replace('__CHART_LOADING__', _CHART_LOADING).replace(
+        '__SHOT_LOADING__', _SHOT_LOADING,
+    ),
     Output('ts-rotation', 'children', allow_duplicate=True),
+    Output('ts-shot-body', 'children', allow_duplicate=True),
     Input('ts-intent', 'data'),
     prevent_initial_call=True,
 )
@@ -737,32 +825,37 @@ clientside_callback(
             var b = right == null ? null : right;
             return a == b;
         }
+        var skip = window.dash_clientside.no_update;
         if (
             same(team, current.team)
             && same(opponent, current.opponent)
             && same(stadium, current.stadium)
             && same(site, current.site)
         ) {
-            return [
-                window.dash_clientside.no_update,
-                window.dash_clientside.no_update
-            ];
+            return [skip, skip, skip];
         }
-        var cards = window.dash_clientside.no_update;
+        var cards = skip;
         if (current.team && current.team !== 'all' && (team === 'all' || team == null)) {
             cards = __LOADING_BODY__;
         }
         var chart = __CHART_LOADING__;
+        var shot = skip;
         if (team === 'all' || team == null) {
             chart = __ROTATION_PICK__;
+            shot = __ROTATION_PICK__;
+        } else if (!same(team, current.team)) {
+            shot = __SHOT_LOADING__;
         }
-        return [cards, chart];
+        return [cards, chart, shot];
     }
     """.replace('__LOADING_BODY__', _LOADING_BODY).replace(
         '__CHART_LOADING__', _CHART_LOADING,
-    ).replace('__ROTATION_PICK__', _ROTATION_PICK),
+    ).replace('__SHOT_LOADING__', _SHOT_LOADING).replace(
+        '__ROTATION_PICK__', _ROTATION_PICK,
+    ),
     Output('ts-body', 'children', allow_duplicate=True),
     Output('ts-rotation', 'children', allow_duplicate=True),
+    Output('ts-shot-body', 'children', allow_duplicate=True),
     Input('ts-team', 'value'),
     Input('ts-opponent', 'value'),
     Input('ts-stadium', 'value'),
@@ -842,17 +935,51 @@ clientside_callback(
 clientside_callback(
     """
     function(tab) {
-        var rotation = tab === 'tab-rotation';
         var hidden = {display: 'none'};
-        return rotation
-            ? [hidden, hidden, null]
-            : [null, null, hidden];
+        var rotation = tab === 'tab-rotation';
+        var shot = tab === 'tab-shot-chart';
+        if (rotation) {
+            return [hidden, hidden, null, hidden, null];
+        }
+        if (shot) {
+            return [hidden, hidden, hidden, null, hidden];
+        }
+        return [null, null, hidden, hidden, null];
     }
     """,
     Output('ts-period-bar', 'style'),
     Output('ts-body', 'style'),
     Output('ts-rotation', 'style'),
+    Output('ts-shot', 'style'),
+    Output('ts-show-opp', 'style'),
     Input('ts-tabs', 'value'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(period, shotPeriod) {
+        var context = window.dash_clientside.callback_context || {};
+        var triggered = (context.triggered && context.triggered[0]) || {};
+        var prop = triggered.prop_id || '';
+        var skip = window.dash_clientside.no_update;
+        if (prop.indexOf('ts-shot-period') === 0) {
+            if (shotPeriod == null || shotPeriod === '' || shotPeriod == period) {
+                return [skip, skip];
+            }
+            return [shotPeriod, skip];
+        }
+        if (period == null || period === '' || period == shotPeriod) {
+            return [skip, skip];
+        }
+        return [skip, period];
+    }
+    """,
+    Output('ts-period', 'value', allow_duplicate=True),
+    Output('ts-shot-period', 'value', allow_duplicate=True),
+    Input('ts-period', 'value'),
+    Input('ts-shot-period', 'value'),
     prevent_initial_call=True,
 )
 
@@ -994,6 +1121,9 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
             'stadium': selected_stadium,
             'site': selected_site,
         },
+        chips,
+        period_out,
+        period_style,
     )
 
 
@@ -1022,6 +1152,9 @@ def _view_outputs():
         Output('ts-team-cluster', 'style', allow_duplicate=True),
         Output('ts-opponent-width', 'data', allow_duplicate=True),
         Output('ts-slice', 'data', allow_duplicate=True),
+        Output('ts-shot-period', 'data', allow_duplicate=True),
+        Output('ts-shot-period', 'value', allow_duplicate=True),
+        Output('ts-shot-period-bar', 'style', allow_duplicate=True),
     )
 
 
@@ -1366,3 +1499,59 @@ def render_team_rotation(
         aggregate, display_name(names, source.get('team')), opponent_name,
     )
     return _rotation_chart(figure, aggregate)
+
+
+@callback(
+    Output('ts-shot-body', 'children'),
+    Input('ts-tabs', 'value'),
+    Input('ts-applied', 'data'),
+    Input('ts-team', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    Input('ts-period', 'value'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-intent', 'data'),
+    prevent_initial_call=True,
+)
+def render_team_shot_chart(
+    tab, applied, team, opponent, stadium, site, period, league, season_id, game_type,
+    intent=None,
+):
+    if tab != 'tab-shot-chart':
+        raise PreventUpdate
+    applied = applied if isinstance(applied, dict) else {}
+    if _scope_pending(intent, applied):
+        return shot_chart_skeleton()
+    if applied.get('ok') is False:
+        return error_alert(ERROR_GAME)
+    league = applied.get('league') or league or 'PLG'
+    if applied.get('season') is not None:
+        season_id = applied.get('season')
+    if applied.get('game_type') is not None:
+        game_type = applied.get('game_type')
+    if not team or team == TEAM_ALL:
+        return empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)
+    try:
+        source = rotation_games(
+            league, season_id, game_type, opponent, stadium, site, team,
+        )
+    except Exception:
+        log_unexpected.exception('team shot chart page load failed')
+        return error_alert(ERROR_GAME)
+    if not source.get('ok'):
+        return error_alert(source.get('message') or ERROR_GAME)
+    if source.get('select_team'):
+        return empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)
+    if source.get('empty') or not source.get('games'):
+        return empty_state(EMPTY_TEAM_STATS, EMPTY_TEAM_STATS_NEXT)
+    names = source.get('id_table') or {}
+    team_zones, opp_zones = season_zones(source.get('games'), source.get('team') or team, period or 'all')
+    return _shot_courts(
+        display_name(names, source.get('team') or team),
+        team_zones,
+        _opp_chart_name(source.get('opponent'), names),
+        opp_zones,
+    )

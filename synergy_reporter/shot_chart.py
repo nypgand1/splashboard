@@ -3,14 +3,17 @@
 
 Court length is API x (0 left baseline, 100 right baseline). Court width is
 API y (0 top sideline, 100 bottom). The offensive basket is the majority side
-of that team's shots in that period. Right-basket shots mirror y so the
-shooter's left stays on the image left. Zone outlines are the B.League
-13-area overlay, drawn in the court SVG's coordinate space.
+of that team's shots in that period. A tie still uses the right basket and
+logs one warning. Right-basket shots mirror y so the shooter's left stays on
+the image left. Area 13 is only the band drawn on the half-court. A shot
+from the other half is dropped, and it still votes for the basket. Zone outlines are
+the B.League 13-area overlay, drawn in the court SVG's coordinate space.
 """
 import base64
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
+from synergy_inbounder.logs import data as log_data
 from synergy_reporter.rotation import period_label
 
 HOT = "#dc2626"
@@ -18,6 +21,9 @@ MID = "#94a3b8"
 COLD = "#0077b6"
 COURT_W = 380.0
 HALF_Y = 354.3
+COURT_COLUMN_STYLE = {'width': '100%', 'maxWidth': '380px', 'marginInline': 'auto'}
+COURT_CARD_STYLE = {'width': '100%', 'maxWidth': '808px', 'marginInline': 'auto'}
+COURT_IMAGE_STYLE = {'width': '100%', 'height': 'auto', 'display': 'block'}
 _COURT_PATH = Path(__file__).resolve().parents[1] / "assets" / "bg_shootchart_court.svg"
 _CURVE_STEPS = 24
 _EDGE_EPS = 1.0
@@ -150,18 +156,37 @@ def player_options(events, team_id):
     return options
 
 
-def court_zones(events, team_id, period="all", player_id="all"):
-    """Thirteen zones for one team after period and player filters.
+def _blank_totals():
+    return {area: {"two_m": 0, "three_m": 0, "attempts": 0} for area in range(1, 14)}
+
+
+def _appearances(totals, placed):
+    zones = []
+    for area in range(1, 14):
+        bucket = totals[area]
+        look = zone_appearance(bucket["two_m"], bucket["three_m"], bucket["attempts"], placed)
+        look["area"] = area
+        zones.append(look)
+    return zones
+
+
+def court_totals(events, team_id, period="all", player_id="all", fixture_id=None):
+    """Makes and attempts for one team after period and player filters.
 
     Basket side is voted from that team's shots in the period, before the
-    player filter. Shots on the other half of the court are dropped.
+    player filter. A tie with both sides greater than zero logs one warning
+    and still uses the right basket. A shot from the other half is dropped.
     """
     rows = [row for row in _shot_rows(events) if _same_id(row["team"], team_id) and row["x"] is not None and row["y"] is not None]
     grouped = {}
     for row in rows:
         grouped.setdefault(row["period"], []).append(row)
-    sides = {period_id: _offensive_side(group) for period_id, group in grouped.items()}
-    totals = {area: {"two_m": 0, "three_m": 0, "attempts": 0} for area in range(1, 14)}
+    sides = {}
+    for period_id, group in grouped.items():
+        lefts, rights = _side_counts(group)
+        _log_tied_basket(fixture_id, team_id, period_id, lefts, rights)
+        sides[period_id] = "right" if rights >= lefts else "left"
+    totals = _blank_totals()
     placed = 0
     for row in rows:
         if not _period_ok(row["period"], period) or not _player_ok(row["person"], player_id):
@@ -180,13 +205,58 @@ def court_zones(events, team_id, period="all", player_id="all"):
                 bucket["three_m"] += 1
             else:
                 bucket["two_m"] += 1
-    zones = []
-    for area in range(1, 14):
-        bucket = totals[area]
-        look = zone_appearance(bucket["two_m"], bucket["three_m"], bucket["attempts"], placed)
-        look["area"] = area
-        zones.append(look)
-    return zones
+    return totals, placed
+
+
+def court_zones(events, team_id, period="all", player_id="all", fixture_id=None):
+    """Thirteen zones for one team after period and player filters."""
+    totals, placed = court_totals(
+        events, team_id, period=period, player_id=player_id, fixture_id=fixture_id,
+    )
+    return _appearances(totals, placed)
+
+
+def _add_totals(total, part):
+    for area, bucket in part.items():
+        slot = total[area]
+        slot["two_m"] += bucket["two_m"]
+        slot["three_m"] += bucket["three_m"]
+        slot["attempts"] += bucket["attempts"]
+
+
+def season_zones(games, team_id, period="all"):
+    """Sum one team's zones and the other side's zones across games.
+
+    Each game votes its own baskets, then the makes and attempts are added.
+    A game with no play-by-play is skipped.
+    """
+    own_totals = _blank_totals()
+    opp_totals = _blank_totals()
+    own_placed = 0
+    opp_placed = 0
+    own = str(team_id)
+    for game in games or []:
+        events = game.get("pbp")
+        if events is None:
+            continue
+        home = "" if game.get("home") is None else str(game.get("home"))
+        away = "" if game.get("away") is None else str(game.get("away"))
+        if own == home:
+            other = away
+        elif own == away:
+            other = home
+        else:
+            continue
+        fixture_id = game.get("fixture_id")
+        part, placed = court_totals(events, own, period=period, fixture_id=fixture_id)
+        _add_totals(own_totals, part)
+        own_placed += placed
+        if not other:
+            continue
+        part, placed = court_totals(events, other, period=period, fixture_id=fixture_id)
+        _add_totals(opp_totals, part)
+        opp_placed += placed
+    return _appearances(own_totals, own_placed), _appearances(opp_totals, opp_placed)
 
 
 # Baseline corners are too narrow for a horizontal percent. B.League rotates
@@ -285,7 +355,7 @@ def court_data_uri(zones):
     return "data:image/svg+xml;base64," + encoded
 
 
-def report_shot_chart_payload(events, away_team_id, home_team_id, away_name, home_name):
+def report_shot_chart_payload(events, away_team_id, home_team_id, away_name, home_name, fixture_id=None):
     """Full-game team charts for the Report block.
 
     An empty frame is ``empty``. Rows with no chartable shots stay ``ready``
@@ -302,10 +372,10 @@ def report_shot_chart_payload(events, away_team_id, home_team_id, away_name, hom
         "away_name": away,
         "home_name": home,
         "away_src": court_data_uri(court_zones(
-            events, away_team_id, period="all", player_id="all",
+            events, away_team_id, period="all", player_id="all", fixture_id=fixture_id,
         )),
         "home_src": court_data_uri(court_zones(
-            events, home_team_id, period="all", player_id="all",
+            events, home_team_id, period="all", player_id="all", fixture_id=fixture_id,
         )),
     }
 
@@ -425,9 +495,27 @@ def _player_ok(person, selected):
     return str(person) == str(selected)
 
 
-def _offensive_side(rows):
+def _side_counts(rows):
     rights = sum(1 for row in rows if row["x"] is not None and row["x"] >= 50)
     lefts = sum(1 for row in rows if row["x"] is not None and row["x"] < 50)
+    return lefts, rights
+
+
+def _log_tied_basket(fixture_id, team_id, period_id, lefts, rights):
+    if lefts <= 0 or lefts != rights:
+        return
+    log_data.warning(
+        "shot chart basket tied fixture=%s team=%s period=%s left=%s right=%s",
+        "" if fixture_id is None else fixture_id,
+        team_id,
+        period_id,
+        lefts,
+        rights,
+    )
+
+
+def _offensive_side(rows):
+    lefts, rights = _side_counts(rows)
     return "right" if rights >= lefts else "left"
 
 

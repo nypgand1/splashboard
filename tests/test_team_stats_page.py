@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import base64
 import os
 import unittest
 from pathlib import Path
@@ -227,7 +228,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[12], 'all')
         self.assertEqual(result[15], 'all')
         self.assertEqual(result[17], 'all')
-        self.assertIs(result[23], no_update)
+        self.assertIs(result[26], no_update)
 
     def test_intent_click_ignores_stale_control_state(self):
         intent = {
@@ -309,7 +310,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[10]['game_type'], 'PLAYOFF')
         self.assertEqual(fetch.call_args.kwargs['site'], 'away')
         self.assertIs(result[17], no_update)
-        self.assertIs(result[23], no_update)
+        self.assertIs(result[26], no_update)
 
     def test_missing_play_by_play_paints_menus_and_arms_the_card_job(self):
         intent = {
@@ -361,15 +362,18 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[5], 'PLAYOFF')
         self.assertEqual(result[8], 'all')
         self.assertEqual(result[9], {'display': 'none'})
+        self.assertEqual(result[23], [{'label': 'All', 'value': 'all'}])
+        self.assertEqual(result[24], 'all')
+        self.assertEqual(result[25], {'display': 'none'})
         self.assertEqual(result[10]['league'], 'PLG')
         self.assertEqual(result[10]['season'], 's')
         self.assertEqual(result[10]['game_type'], 'PLAYOFF')
         self.assertTrue(result[10]['ok'])
         self.assertIs(result[19], no_update)
-        self.assertEqual(result[23]['phase'], 'cards')
-        self.assertEqual(result[23]['game_type'], 'PLAYOFF')
-        self.assertEqual(result[23]['team'], 'aces')
-        self.assertEqual(result[23]['nonce'], 9)
+        self.assertEqual(result[26]['phase'], 'cards')
+        self.assertEqual(result[26]['game_type'], 'PLAYOFF')
+        self.assertEqual(result[26]['team'], 'aces')
+        self.assertEqual(result[26]['nonce'], 9)
 
     def test_period_chip_keeps_applied_and_does_not_arm_a_job(self):
         payload = _payload('s', 'REGULAR', '1')
@@ -395,7 +399,10 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs['period'], '1')
         self.assertIs(result[8], no_update)
         self.assertIs(result[10], no_update)
-        self.assertIs(result[23], no_update)
+        self.assertEqual(result[23], payload['period_chips'])
+        self.assertIs(result[24], no_update)
+        self.assertIsNone(result[25])
+        self.assertIs(result[26], no_update)
 
     def test_download_paints_the_armed_type_and_drops_a_stale_job(self):
         job = {
@@ -411,7 +418,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             result = team_stats_page.render_team_stats_download(
                 job, dict(job), 'PLG', 's', 'REGULAR', '2',
             )
-        self.assertEqual(len(result), 23)
+        self.assertEqual(len(result), 26)
         self.assertEqual(result[0], 'cards')
         self.assertEqual(fetch.call_args.kwargs['reason'], 'type')
         self.assertEqual(fetch.call_args.kwargs['game_type'], 'PLAYOFF')
@@ -443,7 +450,7 @@ class TeamStatsRenderTests(unittest.TestCase):
             'game_type': None,
             'ok': False,
         })
-        self.assertIs(result[23], no_update)
+        self.assertIs(result[26], no_update)
         self.assertNotIn('secret', str(result[0]))
 
     def test_slice_keeps_the_period_and_does_not_ask_for_a_download(self):
@@ -476,7 +483,7 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs['team'], 'a')
         self.assertIs(result[8], no_update)
         self.assertIs(result[10], no_update)
-        self.assertIs(result[23], no_update)
+        self.assertIs(result[26], no_update)
 
     def test_scope_click_holds_cards_until_the_card_paint(self):
         intent = {
@@ -535,11 +542,11 @@ class TeamStatsRenderTests(unittest.TestCase):
         self.assertEqual(result[10]['game_type'], 'REGULAR')
         self.assertTrue(result[10]['ok'])
         self.assertEqual(result[19], 'all')
-        self.assertEqual(result[23]['phase'], 'cards')
-        self.assertEqual(result[23]['season'], 'easl-season')
-        self.assertEqual(result[23]['game_type'], 'REGULAR')
-        self.assertEqual(result[23]['team'], 'all')
-        self.assertEqual(result[23]['nonce'], 11)
+        self.assertEqual(result[26]['phase'], 'cards')
+        self.assertEqual(result[26]['season'], 'easl-season')
+        self.assertEqual(result[26]['game_type'], 'REGULAR')
+        self.assertEqual(result[26]['team'], 'all')
+        self.assertEqual(result[26]['nonce'], 11)
 
     def test_card_job_downloads_the_chosen_type_without_scope_reset(self):
         job = {
@@ -622,7 +629,7 @@ class TeamStatsShowOppTests(unittest.TestCase):
             node.value for node in _walk(tree)
             if isinstance(node, dmc.TabsTab)
         ]
-        self.assertEqual(tabs, ['tab-bs', 'tab-rotation'])
+        self.assertEqual(tabs, ['tab-bs', 'tab-rotation', 'tab-shot-chart'])
         opponent = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-opponent')
         self.assertIsInstance(opponent, dmc.Select)
         self.assertEqual(opponent.value, 'all')
@@ -915,3 +922,216 @@ class TeamStatsRotationTests(unittest.TestCase):
         )
         self.assertIn(ERROR_GAME, str(view))
         self.assertNotIn('Select a team.', str(view))
+
+
+class TeamStatsShotChartTests(unittest.TestCase):
+    def test_shot_chart_waits_until_that_tab_is_open(self):
+        with self.assertRaises(PreventUpdate):
+            team_stats_page.render_team_shot_chart(
+                'tab-bs', {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'aces', 'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            )
+
+    def test_all_teams_asks_for_one_team_without_a_fetch(self):
+        with patch.object(team_stats_page, 'rotation_games') as fetch:
+            view = team_stats_page.render_team_shot_chart(
+                'tab-shot-chart',
+                {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'all', 'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            )
+        fetch.assert_not_called()
+        self.assertIn('Select a team.', str(view))
+        self.assertIn('Choose one team.', str(view))
+
+    def test_no_games_uses_the_filter_empty_copy(self):
+        source = {'ok': True, 'select_team': False, 'empty': True, 'games': []}
+        with patch.object(team_stats_page, 'rotation_games', return_value=source):
+            view = team_stats_page.render_team_shot_chart(
+                'tab-shot-chart',
+                {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR'},
+                'aces', 'all', 'all', 'all', '1', 'PLG', 's', 'REGULAR',
+            )
+        self.assertIn('No games in this view.', str(view))
+        self.assertIn('Team', str(view))
+
+    def test_two_courts_keep_opp_and_skip_a_missing_play_by_play(self):
+        source = {
+            'ok': True,
+            'select_team': False,
+            'empty': False,
+            'team': 'aces',
+            'opponent': 'all',
+            'id_table': {'aces': 'Aces', 'bears': 'Bears'},
+            'games': [
+                {
+                    'fixture_id': 'g1',
+                    'home': 'aces',
+                    'away': 'bears',
+                    'pbp': [
+                        {
+                            'entityId': 'aces', 'eventType': '2pt', 'periodId': 1,
+                            'success': True, 'x': 6, 'y': 50,
+                        },
+                        {
+                            'entityId': 'bears', 'eventType': '2pt', 'periodId': 1,
+                            'success': False, 'x': 6, 'y': 50,
+                        },
+                    ],
+                },
+                {'fixture_id': 'g2', 'home': 'aces', 'away': 'cubs', 'pbp': None},
+            ],
+        }
+        with patch.object(team_stats_page, 'rotation_games', return_value=source):
+            view = team_stats_page.render_team_shot_chart(
+                'tab-shot-chart',
+                {'league': 'PLG', 'season': 's', 'game_type': 'REGULAR', 'ok': True},
+                'aces', 'all', 'all', 'all', '1', 'PLG', 's', 'REGULAR',
+            )
+        self.assertIsInstance(view, dmc.SimpleGrid)
+        self.assertFalse(any(isinstance(node, dmc.SegmentedControl) for node in _walk(view)))
+        self.assertFalse(any(isinstance(node, dmc.Select) for node in _walk(view)))
+        names = [
+            node.children for node in _walk(view)
+            if getattr(node, 'fw', None) == 700
+        ]
+        self.assertEqual(names, ['Aces', 'Opp'])
+        images = [node for node in _walk(view) if getattr(node, 'alt', None)]
+        self.assertEqual(len(images), 2)
+        self.assertIn('100.0', _svg(images[0].src))
+        self.assertIn('0.0', _svg(images[1].src))
+        self.assertEqual(images[0].style.get('width'), '100%')
+        columns = [node for node in view.children if getattr(node, 'style', None)]
+        self.assertEqual(columns[0].style.get('maxWidth'), '380px')
+
+    def test_named_opponent_uses_the_bare_name(self):
+        source = {
+            'ok': True,
+            'select_team': False,
+            'empty': False,
+            'team': 'aces',
+            'opponent': 'bears',
+            'id_table': {'aces': 'Aces', 'bears': 'Bears'},
+            'games': [{
+                'fixture_id': 'g1',
+                'home': 'aces',
+                'away': 'bears',
+                'pbp': [{
+                    'entityId': 'aces', 'eventType': '2pt', 'periodId': 2,
+                    'success': True, 'x': 6, 'y': 50,
+                }],
+            }],
+        }
+        with patch.object(team_stats_page, 'rotation_games', return_value=source):
+            view = team_stats_page.render_team_shot_chart(
+                'tab-shot-chart',
+                {'ok': True},
+                'aces', 'bears', 'all', 'all', '1', 'PLG', 's', 'REGULAR',
+            )
+        names = [
+            node.children for node in _walk(view)
+            if getattr(node, 'fw', None) == 700
+        ]
+        self.assertEqual(names, ['Aces', 'Bears'])
+        images = [node for node in _walk(view) if getattr(node, 'alt', None)]
+        self.assertIn('font-size="16">-</text>', _svg(images[0].src))
+
+    def test_period_control_stays_inside_the_card(self):
+        tree = team_stats_page.layout()
+        card = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-shot-card')
+        self.assertEqual(card.style.get('maxWidth'), '808px')
+        self.assertEqual(
+            [getattr(child, 'id', None) for child in card.children],
+            ['ts-shot-period-bar', 'ts-shot-body'],
+        )
+        bar = card.children[0]
+        self.assertEqual(bar.mb, 'sm')
+        self.assertEqual(bar.style, {'display': 'none'})
+        control = next(node for node in _walk(bar) if getattr(node, 'id', None) == 'ts-shot-period')
+        self.assertIsInstance(control, dmc.SegmentedControl)
+        self.assertEqual(control.value, 'all')
+        self.assertEqual(control.radius, 'md')
+        self.assertEqual(control.size, 'xs')
+        body = card.children[1]
+        self.assertFalse(any(getattr(node, 'id', None) == 'ts-shot-period' for node in _walk(body)))
+        self.assertFalse(any(isinstance(node, (dmc.Select, dmc.SegmentedControl)) for node in _walk(body)))
+        pane = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-shot')
+        self.assertIn(card, pane.children if isinstance(pane.children, (list, tuple)) else [pane.children])
+
+        listed = _callbacks('ts-shot-period.value')
+        mirror = [item for item in listed if item.get('clientside_function')]
+        self.assertEqual(len(mirror), 1)
+        self.assertEqual(
+            _pairs(mirror[0]['inputs']),
+            [('ts-period', 'value'), ('ts-shot-period', 'value')],
+        )
+        self.assertIn('ts-period.value', mirror[0]['output'])
+        self.assertTrue(mirror[0]['prevent_initial_call'])
+        paints = [
+            item for item in _callbacks('ts-shot-body.children')
+            if not item.get('clientside_function')
+        ]
+        self.assertEqual(len(paints), 1)
+        self.assertIn(('ts-period', 'value'), _pairs(paints[0]['inputs']))
+        self.assertNotIn('ts-shot-period', {item['id'] for item in paints[0]['inputs']})
+        rotation = [
+            item for item in _callbacks('ts-rotation.children')
+            if not item.get('clientside_function')
+        ]
+        self.assertEqual(len(rotation), 1)
+        rotation_ids = {item['id'] for item in rotation[0]['inputs'] + rotation[0]['state']}
+        self.assertNotIn('ts-period', rotation_ids)
+        self.assertNotIn('ts-shot-period', rotation_ids)
+
+    def test_slice_callback_skeletons_the_shot_chart_on_a_team_change(self):
+        text = Path('pages/team_stats.py').read_text(encoding='utf-8')
+        self.assertIn("Output('ts-shot-body', 'children', allow_duplicate=True)", text)
+        self.assertNotIn("Output('ts-shot', 'children'", text)
+        self.assertIn("shot = __ROTATION_PICK__;", text)
+        self.assertIn("var shot = skip;", text)
+        self.assertIn("shot = __SHOT_LOADING__;", text)
+        self.assertIn("!same(team, current.team)", text)
+        self.assertIn("return [__CHART_LOADING__, __SHOT_LOADING__];", text)
+        self.assertIn("Output('ts-show-opp', 'style')", text)
+        self.assertIn("tab === 'tab-shot-chart'", text)
+
+    def test_shot_chart_skeleton_matches_the_two_courts(self):
+        view = team_stats_page.shot_chart_skeleton()
+        self.assertIsInstance(view, dmc.SimpleGrid)
+        self.assertEqual(view.cols, {'base': 1, 'sm': 2})
+        self.assertEqual(view.spacing, '16px')
+        self.assertEqual(len(view.children), 2)
+        self.assertIsNot(view.children[0], view.children[1])
+        self.assertFalse(any(
+            isinstance(node, (dmc.Select, dmc.SegmentedControl)) for node in _walk(view)
+        ))
+        for column in view.children:
+            self.assertEqual(column.style.get('maxWidth'), '380px')
+            self.assertEqual(column.style.get('marginInline'), 'auto')
+            skeletons = [node for node in _walk(column) if isinstance(node, dmc.Skeleton)]
+            self.assertEqual(len(skeletons), 2)
+            name, court = skeletons
+            self.assertEqual(name.height, 14)
+            self.assertEqual(name.width, 160)
+            self.assertEqual(name.radius, 'sm')
+            self.assertEqual(court.radius, 'md')
+            self.assertEqual(court.style.get('width'), '100%')
+            self.assertEqual(court.style.get('aspectRatio'), '380.05 / 400.51')
+
+    def test_pending_scope_uses_the_court_skeleton(self):
+        view = team_stats_page.render_team_shot_chart(
+            'tab-shot-chart',
+            {'league': 'PLG', 'season': 'old', 'game_type': 'REGULAR', 'ok': True},
+            'aces', 'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR',
+            {'league': 'EASL', 'season': 's', 'game_type': 'REGULAR', 'nonce': 1},
+        )
+        self.assertIsInstance(view, dmc.SimpleGrid)
+        courts = [
+            node for node in _walk(view)
+            if isinstance(node, dmc.Skeleton)
+            and (getattr(node, 'style', None) or {}).get('aspectRatio')
+        ]
+        self.assertEqual(len(courts), 2)
+
+
+def _svg(src):
+    return base64.b64decode(src.split(',', 1)[1]).decode('utf-8')
