@@ -4,11 +4,44 @@
 Counting columns are sums divided by GP. Shot percentages and the efficiency
 cards sum the inputs first, then use the same formulas as one Box Score half.
 """
-import threading
 import time
 
 import pandas as pd
 
+from domain.clocks import clock_to_seconds, minutes_to_mmss, sum_clocks as _sum_clocks
+from domain.periods import (
+    build_period_chips as period_chips_for_ids,
+    chip_spec as _chip_spec,
+    filter_periods as _filter_periods,
+    is_overtime_period as _is_overtime,
+    period_label,
+    resolve_period_ids as _period_ids,
+)
+from domain.rates import (
+    SPLIT_LEAVES as _SPLIT_LEAVES,
+    TEAM_COUNT_FIELDS as _TEAM_COUNT_FIELDS,
+    flag_split_counts as _flag_split_counts,
+    num as _num,
+    recompute_rates as _recompute_rates,
+    shot_pct_display,
+    sum_fields as _sum_fields,
+)
+from domain.schedule_filters import (
+    choose_game_type,
+    fixture_type_options,
+    plain_fixture_type,
+    selectable_season_options,
+)
+from inbound.cache.frame_store import (
+    _bundles,
+    _lock as _bundle_lock,
+    clear_team_stats_cache,
+)
+from inbound.repository import (
+    fetch_pbp as Communicator_pbp,
+    fetch_season_periods as Communicator_periods,
+    fetch_season_totals as Communicator_totals,
+)
 from synergy_inbounder.communicator import SynergyAuthError, _cache_hits
 from synergy_inbounder.logs import auth as log_auth
 from synergy_inbounder.logs import unexpected as log_unexpected
@@ -26,21 +59,7 @@ from synergy_inbounder.settings import (
     selectable_seasons,
 )
 from synergy_inbounder import frame_store
-from synergy_reporter.post_game_report import (
-    PostGameReport,
-    _SPLIT_LEAVES,
-    _TEAM_COUNT_FIELDS,
-    _chip_spec,
-    _filter_periods,
-    _flag_split_counts,
-    _num,
-    _recompute_rates,
-    _sum_clocks,
-    _sum_fields,
-    minutes_to_mmss,
-    shot_pct_display,
-)
-from synergy_reporter.rotation import clock_to_seconds, period_label
+from synergy_reporter.post_game_report import PostGameReport
 from synergy_reporter.schedule_menu import named_side_options
 from ui_kit import ERROR_GAME
 
@@ -97,81 +116,6 @@ _LEAF_KEYS = tuple(
     for leaf in _SPLIT_LEAVES
 )
 
-_bundle_lock = threading.Lock()
-_bundles = {}
-
-
-def clear_team_stats_cache():
-    with _bundle_lock:
-        _bundles.clear()
-
-
-def plain_fixture_type(value):
-    """Real fixtureType string, or '' for blanks, non-strings, and pandas missing values.
-
-    ``float('nan')`` is truthy, so ``value or ''`` keeps it and ``str(nan).title()``
-    becomes the option ``Nan``. SegmentedControl then receives JSON null.
-    """
-    if not isinstance(value, str):
-        return ''
-    text = value.strip()
-    if text.lower() in ('nan', 'none', 'null', '<na>'):
-        return ''
-    return text
-
-
-def fixture_type_options(records):
-    """Distinct non-empty fixtureType values in schedule order."""
-    options = []
-    seen = set()
-    for record in records or []:
-        if not isinstance(record, dict):
-            continue
-        value = plain_fixture_type(record.get('fixtureType'))
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        options.append({'label': value.title(), 'value': value})
-    return options
-
-
-def choose_game_type(options, requested):
-    values = [item['value'] for item in options]
-    if requested in values:
-        return requested
-    for item in options:
-        if str(item['value']).title() == 'Regular':
-            return item['value']
-    return values[0] if values else None
-
-
-def period_chips_for_ids(period_ids):
-    """Quarter, half, and overtime chips from team period ids. No person gate."""
-    found = set()
-    for value in period_ids or []:
-        try:
-            found.add(int(value))
-        except (TypeError, ValueError):
-            continue
-    chips = [{'label': 'All', 'value': 'all'}]
-
-    def add(period):
-        if period in found:
-            chips.append({'label': period_label(period), 'value': str(period)})
-
-    add(1)
-    add(2)
-    if 1 in found and 2 in found:
-        chips.append({'label': '1H', 'value': 'h1'})
-    add(3)
-    add(4)
-    if 3 in found and 4 in found:
-        chips.append({'label': '2H', 'value': 'h2'})
-    for period in sorted(item for item in found if item not in (1, 2, 3, 4)):
-        chips.append({'label': period_label(period), 'value': str(period)})
-    return chips
-
-
 def _records(frame):
     if frame is None or getattr(frame, 'empty', True):
         return []
@@ -207,22 +151,6 @@ def _finished_rows(records, game_type):
             continue
         rows.append(record)
     return rows
-
-
-def _is_overtime(period):
-    if period in _REGULATION_PERIODS:
-        return False
-    try:
-        return int(period) not in (1, 2, 3, 4)
-    except (TypeError, ValueError):
-        return False
-
-
-def _period_ids(period):
-    if period in (None, '', 'all'):
-        return None
-    ids, _recompute = _chip_spec(period)
-    return ids
 
 
 def _subset(frame, fixture_id, entity_id):
@@ -979,13 +907,6 @@ def _download_pbp(org_id, row):
     frame_store.singleflight((org_id, fixture_id, 'pbp'), _build)
 
 
-def Communicator_pbp(org_id, fixture_id, status):
-    from synergy_inbounder.communicator import Communicator
-    return Communicator.get_game_play_by_play_synergy(
-        org_id, fixture_id, live=False, fixture_status=status,
-    )
-
-
 def _pbp_pending(org_id, rows):
     """Rows whose play-by-play is not already in memory.
 
@@ -1168,16 +1089,6 @@ def _load_bundle(org_id, season_id, reason):
     }
     _store_bundle(org_id, season_id, entry)
     return entry
-
-
-def Communicator_totals(org_id, season_id):
-    from synergy_inbounder.communicator import Communicator
-    return Communicator.get_season_team_totals(org_id, season_id)
-
-
-def Communicator_periods(org_id, season_id):
-    from synergy_inbounder.communicator import Communicator
-    return Communicator.get_season_team_periods(org_id, season_id)
 
 
 def _error_payload(league, season_id, seasons):

@@ -5,15 +5,18 @@ import threading
 
 import pandas as pd
 
-from synergy_reporter.rotation import (
-    _parse_scores,
-    _same_id,
-    clock_to_seconds,
-    period_label,
-)
+from domain.clocks import clock_to_seconds
+from domain.ids import same_id
+from domain.periods import period_label
+from synergy_reporter.rotation import _parse_scores
 
 _LOCK = threading.Lock()
 _CLOCKS = {}
+
+
+def clear_live_clocks():
+    with _LOCK:
+        _CLOCKS.clear()
 
 
 def format_period_clock(period_id, clock):
@@ -73,13 +76,7 @@ def clock_from_pbp_frame(frame):
 
 
 def scoreboard_from_pbp_frame(frame, home_id, away_id):
-    """Clock and the scoreboard at that event, from API ``data`` order.
-
-    The clock is the last row with ``periodId`` and a parseable clock.
-    The score is that row's home and away points, or the nearest earlier
-    row that has both. Rows after the clock that have no clock are ignored.
-    No clock returns ``(None, None, None)``.
-    """
+    """Clock and the scoreboard at that event, from API ``data`` order."""
     if frame is None or getattr(frame, 'empty', True):
         return None, None, None
     if 'periodId' not in frame.columns or 'clock' not in frame.columns:
@@ -103,9 +100,9 @@ def scoreboard_from_pbp_frame(frame, home_id, away_id):
             text = _score_text(value)
             if text is None:
                 continue
-            if _same_id(key, home_id):
+            if same_id(key, home_id):
                 found_home = text
-            elif _same_id(key, away_id):
+            elif same_id(key, away_id):
                 found_away = text
         if found_home is not None and found_away is not None:
             home_score = found_home

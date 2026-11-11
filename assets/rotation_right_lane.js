@@ -164,46 +164,58 @@
         return update;
     }
 
-    function finish(retry) {
-        window._rotationRightLanePending = false;
-        if (window._rotationRightLaneAgain) {
-            window._rotationRightLaneAgain = false;
-            apply(false);
-            return;
+    function createLaneController(getNode, matchesFn, updateFn, pendingKey, againKey) {
+        function finish(retry) {
+            window[pendingKey] = false;
+            if (window[againKey]) {
+                window[againKey] = false;
+                apply(false);
+                return;
+            }
+            var again = getNode();
+            if (again && !matchesFn(again, wantsNarrow()) && !retry) {
+                apply(true);
+            }
         }
-        var again = plotNode();
-        if (again && !laneMatches(again, wantsNarrow()) && !retry) {
-            apply(true);
+
+        function apply(retry) {
+            var gd = getNode();
+            if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
+                return;
+            }
+            var narrow = wantsNarrow();
+            if (matchesFn(gd, narrow)) {
+                return;
+            }
+            if (window[pendingKey]) {
+                window[againKey] = true;
+                return;
+            }
+            window[pendingKey] = true;
+            var result;
+            try {
+                result = window.Plotly.relayout(gd, updateFn(gd, narrow));
+            } catch (err) {
+                finish(retry);
+                return;
+            }
+            if (result && typeof result.then === 'function') {
+                result.then(function () { finish(retry); }, function () { finish(retry); });
+            } else {
+                finish(retry);
+            }
         }
+
+        return apply;
     }
 
-    function apply(retry) {
-        var gd = plotNode();
-        if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
-            return;
-        }
-        var narrow = wantsNarrow();
-        if (laneMatches(gd, narrow)) {
-            return;
-        }
-        if (window._rotationRightLanePending) {
-            window._rotationRightLaneAgain = true;
-            return;
-        }
-        window._rotationRightLanePending = true;
-        var result;
-        try {
-            result = window.Plotly.relayout(gd, laneUpdate(gd, narrow));
-        } catch (err) {
-            finish(retry);
-            return;
-        }
-        if (result && typeof result.then === 'function') {
-            result.then(function () { finish(retry); }, function () { finish(retry); });
-        } else {
-            finish(retry);
-        }
-    }
+    var apply = createLaneController(
+        plotNode,
+        laneMatches,
+        laneUpdate,
+        '_rotationRightLanePending',
+        '_rotationRightLaneAgain'
+    );
 
     function teamNode() {
         return document.querySelector('#ts-rotation-graph .js-plotly-plot')
@@ -286,46 +298,13 @@
         return update;
     }
 
-    function teamFinish(retry) {
-        window._teamRotationLanePending = false;
-        if (window._teamRotationLaneAgain) {
-            window._teamRotationLaneAgain = false;
-            teamApply(false);
-            return;
-        }
-        var again = teamNode();
-        if (again && !teamLaneMatches(again, wantsNarrow()) && !retry) {
-            teamApply(true);
-        }
-    }
-
-    function teamApply(retry) {
-        var gd = teamNode();
-        if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
-            return;
-        }
-        var narrow = wantsNarrow();
-        if (teamLaneMatches(gd, narrow)) {
-            return;
-        }
-        if (window._teamRotationLanePending) {
-            window._teamRotationLaneAgain = true;
-            return;
-        }
-        window._teamRotationLanePending = true;
-        var result;
-        try {
-            result = window.Plotly.relayout(gd, teamLaneUpdate(gd, narrow));
-        } catch (err) {
-            teamFinish(retry);
-            return;
-        }
-        if (result && typeof result.then === 'function') {
-            result.then(function () { teamFinish(retry); }, function () { teamFinish(retry); });
-        } else {
-            teamFinish(retry);
-        }
-    }
+    var teamApply = createLaneController(
+        teamNode,
+        teamLaneMatches,
+        teamLaneUpdate,
+        '_teamRotationLanePending',
+        '_teamRotationLaneAgain'
+    );
 
     function bind() {
         if (window._rotationRightLaneBound) {

@@ -299,6 +299,8 @@ class Parser:
                 playbyplay_df=playbyplay_df,
                 team_df=team_stats_df,
                 periods_df=team_stats_periods_df,
+                roster=roster,
+                starters=starter_dict,
                 touch=tuple(
                     name for name, flag in (
                         ('playbyplay_df', 'pbp'),

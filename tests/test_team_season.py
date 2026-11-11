@@ -762,7 +762,7 @@ class FrameStoreTests(unittest.TestCase):
 
         def _build():
             calls.append(1)
-            time.sleep(0.05)
+            time.sleep(0.15)
             return 'ok'
 
         results = []

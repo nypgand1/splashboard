@@ -1,12 +1,28 @@
 # -*- coding: utf-8 -*-
 """Process-local caches and singleflight. Cleared when the process exits."""
+from concurrent.futures import Future
 import datetime
 import threading
 import time
-from concurrent.futures import Future
 
 import pandas as pd
 
+from domain.clocks import parse_timestamp as _parse_start_time
+from inbound.cache.catalog_cache import (
+    ID_TABLE_TTL_SECONDS,
+    SEASON_LIST_TTL_SECONDS,
+    _id_inflight,
+    _id_table_cache,
+    _meta_lock,
+    _season_cache,
+    _season_inflight,
+    cached_fixture_match as _cached_fixture_match,
+    clear_catalog_cache,
+    id_refresh_state,
+    load_meta as _load_meta,
+    season_refresh_state,
+    taipei_now_label,
+)
 from synergy_inbounder.game_status import (
     FINISHED_STATUSES,
     is_finished_status,
@@ -23,8 +39,6 @@ from synergy_inbounder.live_budget import (
 # One live cadence for PBP-derived views (Play-By-Play + Rotation).
 LIVE_PBP_HTTP_TTL_SECONDS = SHORT_CACHE_SECONDS
 LIVE_REPORT_TTL_SECONDS = SHORT_CACHE_SECONDS
-SEASON_LIST_TTL_SECONDS = SHORT_CACHE_SECONDS
-ID_TABLE_TTL_SECONDS = LONG_CACHE_SECONDS
 
 
 def should_use_live_endpoints(status=None, game_id=None, organization_id=None):
@@ -39,17 +53,6 @@ _report_inflight = {}
 _applied = {}
 _delay_paint = {}
 _budget_wait_notice = set()
-
-_meta_lock = threading.Lock()
-_season_cache = {}
-_season_inflight = {}
-_id_table_cache = {}
-_id_inflight = {}
-
-
-def taipei_now_label():
-    when = datetime.datetime.now(tz=datetime.timezone(datetime.timedelta(hours=8)))
-    return 'Last Update: {when}'.format(when=when)
 
 
 def _report_key(game_id, organization_id):
@@ -186,24 +189,6 @@ def peek_finished_report(game_id, organization_id=None):
     return entry.get('report')
 
 
-def _cached_fixture_match(organization_id, game_id):
-    wanted = str(game_id or '')
-    if not wanted:
-        return None, None
-    with _meta_lock:
-        items = list(_season_cache.items())
-    for (org, season_id), entry in items:
-        if org != organization_id:
-            continue
-        frame = entry.get('value') if isinstance(entry, dict) else None
-        if frame is None or getattr(frame, 'empty', True) or 'fixtureId' not in getattr(frame, 'columns', []):
-            continue
-        matched = frame[frame['fixtureId'].astype(str) == wanted]
-        if not matched.empty:
-            return season_id, matched.iloc[0]
-    return None, None
-
-
 def cached_fixture_status(organization_id, game_id):
     """Status from the process season cache. A miss does not fetch."""
     _season_id, row = _cached_fixture_match(organization_id, game_id)
@@ -337,11 +322,11 @@ def get_cached_game_status(game_id, organization_id=None):
 
 
 def lookup_game_status(game_id, organization_id=None):
+    from synergy_inbounder.parser import Parser
     from synergy_inbounder.settings import (
         SYNERGY_ORGANIZATION_ID,
         season_ids_for_organization,
     )
-    from synergy_inbounder.parser import Parser
 
     org = organization_id or SYNERGY_ORGANIZATION_ID
     row = Parser.find_game_row(org, game_id, season_ids_for_organization(org))
@@ -362,53 +347,6 @@ def _drop_partial_live_http(game_id, live):
         return
 
 
-def _load_meta(cache, inflight, key, ttl, builder, now):
-    from synergy_inbounder.communicator import SynergyAuthError
-    with _meta_lock:
-        entry = cache.get(key)
-        if entry and (now - entry['fetched_at']) < ttl:
-            return entry['value']
-        fut = inflight.get(key)
-        if fut is None:
-            fut = Future()
-            inflight[key] = fut
-            is_builder = True
-        else:
-            is_builder = False
-    if not is_builder:
-        return fut.result()
-    try:
-        value = builder()
-        with _meta_lock:
-            cache[key] = {
-                'value': value,
-                'fetched_at': time.monotonic(),
-                'delayed': False,
-                'label': taipei_now_label(),
-            }
-        fut.set_result(value)
-        return value
-    except SynergyAuthError as exc:
-        from synergy_inbounder.logs import auth
-        auth.exception('meta refresh auth failed')
-        fut.set_exception(exc)
-        raise
-    except Exception as exc:
-        from synergy_inbounder.logs import unexpected
-        unexpected.exception('meta refresh failed')
-        with _meta_lock:
-            entry = cache.get(key)
-            if entry:
-                entry['delayed'] = True
-                fut.set_result(entry['value'])
-                return entry['value']
-        fut.set_exception(exc)
-        raise
-    finally:
-        with _meta_lock:
-            inflight.pop(key, None)
-
-
 def get_cached_season_df(org_id, season_id, builder):
     return _load_meta(
         _season_cache,
@@ -418,25 +356,6 @@ def get_cached_season_df(org_id, season_id, builder):
         builder,
         time.monotonic(),
     )
-
-
-def season_refresh_state(org_id, season_id):
-    with _meta_lock:
-        entry = _season_cache.get((org_id, season_id))
-        if not entry:
-            return {'label': None, 'delayed': False}
-        return {
-            'label': entry.get('label'),
-            'delayed': bool(entry.get('delayed')),
-        }
-
-
-def id_refresh_state(org_id):
-    with _meta_lock:
-        entry = _id_table_cache.get(org_id)
-        if not entry:
-            return {'delayed': False}
-        return {'delayed': bool(entry.get('delayed'))}
 
 
 def get_cached_id_table(org_id, builder):
@@ -477,30 +396,6 @@ def warmup_game_report(game_id, match_info=None, organization_id=None):
     t.start()
 
 
-def _parse_start_time(value):
-    if value is None or value == '':
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception as exc:
-        from synergy_inbounder.logs import data
-        data.debug('start time is not a scalar: %s', exc)
-    try:
-        parsed = pd.to_datetime(value)
-    except Exception as exc:
-        from synergy_inbounder.logs import data
-        data.debug('start time parse failed: %s', exc)
-        return None
-    try:
-        if pd.isna(parsed):
-            return None
-    except Exception as exc:
-        from synergy_inbounder.logs import data
-        data.debug('start time na check failed: %s', exc)
-    return parsed
-
-
 def _fixture_id(value):
     if value is None:
         return ''
@@ -517,11 +412,7 @@ def _fixture_id(value):
 
 
 def latest_finished_fixture_ids(season_df, max_games=2):
-    """Up to max_games finished fixtures, latest startTimeLocal last.
-
-    A missing start time stays out unless every finished row is missing one.
-    Equal times keep schedule order: the later row is later.
-    """
+    """Up to max_games finished fixtures, latest startTimeLocal last."""
     if max_games <= 0 or season_df is None or getattr(season_df, 'empty', True):
         return []
     columns = set(getattr(season_df, 'columns', []))
@@ -566,24 +457,16 @@ def prefetch_latest_games(season_df, max_games=2, organization_id=None):
 
 
 def clear_runtime_caches():
+    """Clear all 3 memory cache modules: Report/LiveCache, CatalogCache, and FrameStore."""
     with _report_lock:
         _report_cache.clear()
         _report_inflight.clear()
         _applied.clear()
         _delay_paint.clear()
         _budget_wait_notice.clear()
-    with _meta_lock:
-        _season_cache.clear()
-        _season_inflight.clear()
-        _id_table_cache.clear()
-        _id_inflight.clear()
+    clear_catalog_cache()
     BUDGET.clear()
     from synergy_inbounder.frame_store import clear as clear_frames
     clear_frames()
-    try:
-        from synergy_reporter.team_season import clear_team_stats_cache
-        clear_team_stats_cache()
-    except Exception:
-        from synergy_inbounder.logs import unexpected
-        unexpected.exception('clear team stats cache failed')
-
+    from synergy_inbounder.live_clock import clear_live_clocks
+    clear_live_clocks()

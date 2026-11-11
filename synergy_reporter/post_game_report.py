@@ -3,6 +3,39 @@ import json
 import os
 import threading
 
+from domain.clocks import (
+    clock_sort_seconds as _clock_sort_seconds,
+    clock_to_seconds,
+    minutes_to_mmss,
+    sum_clocks as _sum_clocks,
+)
+from domain.periods import (
+    build_period_chips,
+    chip_spec as _chip_spec,
+    filter_periods as _filter_periods,
+    known_period_ids as _known_period_ids,
+    period_id_value as _period_id_value,
+    period_label,
+)
+from domain.rates import (
+    FLAG_SPLITS as _FLAG_SPLITS,
+    PLAYER_COUNT_FIELDS as _PLAYER_COUNT_FIELDS,
+    RATE_FIELDS as _RATE_FIELDS,
+    SPLIT_LEAVES as _SPLIT_LEAVES,
+    TEAM_COUNT_FIELDS as _TEAM_COUNT_FIELDS,
+    as_nonneg_int as _as_nonneg_int,
+    efg_pct_display,
+    flag_split_counts as _flag_split_counts,
+    lineup_ppp_display,
+    num as _num,
+    rate_text as _rate_text,
+    recompute_rates as _recompute_rates,
+    shot_made as _shot_made,
+    shot_pct_display,
+    sum_fields as _sum_fields,
+    three_decimal_rate as _three_decimal_rate,
+    true_shooting as _true_shooting,
+)
 from synergy_inbounder.names import (
     display_name,
     lineup_token,
@@ -14,30 +47,11 @@ from synergy_inbounder.names import (
 from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
 from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import annotate_possessions, possession_counts
-from synergy_inbounder.pre_processing_func import (
-    _flag_from_parsed,
-    _parsed_option,
-    process_lineup_stats,
-)
+from synergy_inbounder.pre_processing_func import process_lineup_stats
 from synergy_reporter.rotation import (
     build_rotation_payload,
-    clock_to_seconds,
-    period_label,
     walk_lineup,
 )
-
-
-def _as_nonneg_int(value):
-    if value is None or value == '':
-        return 0
-    if isinstance(value, str) and not str(value).strip():
-        return 0
-    if isinstance(value, float) and pd.isna(value):
-        return 0
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return 0
 
 
 def _played_count(minutes, value):
@@ -54,54 +68,6 @@ def _pm_side(value):
         return _as_nonneg_int(round(float(value or 0)))
     except (TypeError, ValueError):
         return 0
-
-
-def _three_decimal_rate(rate):
-    text = f"{float(rate):.3f}"
-    if text.startswith('0'):
-        return text[1:]
-    return text
-
-
-def shot_pct_display(made, attempted, pct=None):
-    """Blank when A==0; .000 when A>0 and M==0. Three decimals, no leading zero."""
-    attempted_n = _as_nonneg_int(attempted)
-    if attempted_n <= 0:
-        return ''
-    if _as_nonneg_int(made) == 0:
-        return '.000'
-    if pct is not None and pd.notnull(pct):
-        rate = float(pct) / 100.0
-    else:
-        rate = _as_nonneg_int(made) / attempted_n
-    return _three_decimal_rate(rate)
-
-
-def lineup_ppp_display(points, possessions):
-    """Blank when POSS is 0. Two decimals, including 0.00."""
-    poss_n = _as_nonneg_int(possessions)
-    if poss_n <= 0:
-        return ''
-    return f"{_as_nonneg_int(points) / poss_n:.2f}"
-
-
-def _clock_sort_seconds(value):
-    """M:SS as seconds. Blank and DNP sort as missing."""
-    if value is None:
-        return float('nan')
-    try:
-        if pd.isna(value):
-            return float('nan')
-    except TypeError:
-        pass
-    text = str(value).strip()
-    if not text or text == 'DNP' or ':' not in text:
-        return float('nan')
-    minutes, _, seconds = text.partition(':')
-    try:
-        return int(minutes) * 60 + float(seconds)
-    except ValueError:
-        return float('nan')
 
 
 def sort_lineup_table(df):
@@ -136,135 +102,6 @@ def _lineup_identity(players):
     return '|'.join(sorted((str(pid) for pid in players), key=str))
 
 
-def efg_pct_display(made2, attempted2, made3, attempted3, efg_val=None):
-    """Blank when FGA==0; 0.0% when FGA>0 and (2M+3M)==0."""
-    fga = _as_nonneg_int(attempted2) + _as_nonneg_int(attempted3)
-    if fga <= 0:
-        return ''
-    made = _as_nonneg_int(made2) + _as_nonneg_int(made3)
-    if made == 0:
-        return '0.0%'
-    if efg_val is not None and pd.notnull(efg_val):
-        return f"{float(efg_val):0.1f}%"
-    made3_n = _as_nonneg_int(made3)
-    return f"{100.0 * (made + 0.5 * made3_n) / fga:0.1f}%"
-
-
-def minutes_to_mmss(value):
-    """Convert Synergy PT duration (or seconds) to M:SS (e.g. 45:59, 8:21, 0:06)."""
-    seconds = clock_to_seconds(value)
-    if seconds is None:
-        if value is None or (isinstance(value, float) and pd.isna(value)):
-            return ''
-        text = str(value).strip()
-        return text
-    total = int(round(float(seconds)))
-    if total < 0:
-        total = 0
-    return '{:d}:{:02d}'.format(total // 60, total % 60)
-
-
-_TEAM_COUNT_FIELDS = (
-    'points', 'pointsAgainst', 'plusMinus',
-    'pointsTwoMade', 'pointsTwoAttempted',
-    'pointsThreeMade', 'pointsThreeAttempted',
-    'freeThrowsMade', 'freeThrowsAttempted',
-    'reboundsOffensive', 'reboundsDefensive', 'rebounds', 'reboundsDefensiveAgainst',
-    'assists', 'turnovers', 'steals', 'blocks',
-    'foulsTotal', 'foulsDrawn',
-    'pointsInThePaintMade', 'pointsInThePaintAttempted', 'pointsInThePaint',
-    'pointsSecondChanceMade', 'pointsSecondChanceAttempted', 'pointsSecondChance',
-    'pointsFastBreak', 'pointsFromTurnover', 'pointsFromBench',
-    'fieldGoalsMade', 'fieldGoalsAttempted',
-    'reboundsTeamOffensive', 'reboundsTeamDefensive', 'reboundsTeamTotal',
-    'turnoversTeam',
-    'foulsCoachTechnical', 'foulsBenchTechnical', 'foulsCoachDisqualifying',
-)
-_PLAYER_COUNT_FIELDS = (
-    'plusMinus', 'plus', 'minus',
-    'pointsTwoMade', 'pointsTwoAttempted',
-    'pointsThreeMade', 'pointsThreeAttempted',
-    'freeThrowsMade', 'freeThrowsAttempted',
-    'reboundsOffensive', 'reboundsDefensive', 'rebounds',
-    'assists', 'turnovers', 'steals', 'blocks',
-    'foulsTotal', 'foulsDrawn', 'points',
-)
-_RATE_FIELDS = (
-    'pointsTwoPercentage', 'pointsThreePercentage', 'freeThrowsPercentage',
-    'fieldGoalsEffectivePercentage',
-)
-
-
-def _period_id_value(value):
-    try:
-        if pd.isna(value):
-            return None
-    except TypeError:
-        pass
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _filter_periods(frame, period_ids):
-    if frame is None or len(frame) == 0 or 'periodId' not in frame.columns:
-        return pd.DataFrame()
-    wanted = {_period_id_value(period) for period in period_ids}
-    ids = frame['periodId'].map(_period_id_value)
-    return frame.loc[ids.isin(wanted)].copy()
-
-
-def _known_period_ids(frame):
-    if frame is None or len(frame) == 0 or 'periodId' not in getattr(frame, 'columns', []):
-        return set()
-    found = set()
-    for value in frame['periodId'].tolist():
-        period = _period_id_value(value)
-        if period is not None:
-            found.add(period)
-    return found
-
-
-def _sum_clocks(values):
-    total = 0.0
-    seen = False
-    for value in values:
-        seconds = clock_to_seconds(value)
-        if seconds is None:
-            continue
-        seen = True
-        total += float(seconds)
-    if not seen:
-        return 'PT0S'
-    whole = int(round(total))
-    return f'PT{whole // 60}M{whole % 60}S'
-
-
-def _num(value):
-    if value is None:
-        return 0.0
-    try:
-        if pd.isna(value):
-            return 0.0
-    except TypeError:
-        pass
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _sum_fields(rows, fields):
-    summed = {}
-    for field in fields:
-        if field in rows.columns:
-            summed[field] = float(pd.to_numeric(rows[field], errors='coerce').fillna(0).sum())
-        else:
-            summed[field] = 0
-    return summed
-
-
 def _blank_team(entity_id):
     row = {field: 0 for field in _TEAM_COUNT_FIELDS}
     row['entityId'] = entity_id
@@ -278,93 +115,6 @@ def _ensure_fga(row):
     if pd.isna(row.get('fieldGoalsAttempted')):
         row['fieldGoalsAttempted'] = _num(row.get('pointsTwoAttempted')) + _num(row.get('pointsThreeAttempted'))
     return row
-
-
-def _recompute_rates(row):
-    two_m = _num(row.get('pointsTwoMade'))
-    two_a = _num(row.get('pointsTwoAttempted'))
-    three_m = _num(row.get('pointsThreeMade'))
-    three_a = _num(row.get('pointsThreeAttempted'))
-    ft_m = _num(row.get('freeThrowsMade'))
-    ft_a = _num(row.get('freeThrowsAttempted'))
-    fga = two_a + three_a
-    row['fieldGoalsAttempted'] = fga
-    row['fieldGoalsMade'] = two_m + three_m
-    row['pointsTwoPercentage'] = (100.0 * two_m / two_a) if two_a else None
-    row['pointsThreePercentage'] = (100.0 * three_m / three_a) if three_a else None
-    row['freeThrowsPercentage'] = (100.0 * ft_m / ft_a) if ft_a else None
-    row['fieldGoalsEffectivePercentage'] = (
-        (100.0 * (two_m + 1.5 * three_m) / fga) if fga else None
-    )
-    row['usageRate'] = None
-    return row
-
-
-def _rate_text(numer, denom, digits, scale=1, suffix=''):
-    if pd.isnull(numer) or pd.isnull(denom) or denom == 0:
-        return ''
-    return f"{(scale * float(numer) / float(denom)):.{digits}f}{suffix}"
-
-
-def _true_shooting(points, fga, fta):
-    """TS% = 100 * PTS / (2 * (FGA + 0.44 * FTA)). Blank when the denominator is 0."""
-    if pd.isnull(points) or pd.isnull(fga) or pd.isnull(fta):
-        return ''
-    denom = float(fga) + 0.44 * float(fta)
-    if denom == 0:
-        return ''
-    return f"{100.0 * float(points) / (2.0 * denom):0.1f}%"
-
-
-def _shot_made(value):
-    if value is True or value == 1:
-        return True
-    try:
-        if pd.isna(value):
-            return False
-    except TypeError:
-        return False
-    try:
-        return float(value) == 1.0
-    except (TypeError, ValueError):
-        return False
-
-
-_FLAG_SPLITS = (
-    ('SCP', 'secondChance', 'pointsSecondChance'),
-    ('FBP', 'fastBreak', 'pointsFastBreak'),
-    ('POT', 'fromTurnover', 'pointsFromTurnover'),
-)
-_SPLIT_LEAVES = ('2M', '2A', '3M', '3A')
-
-
-def _flag_split_counts(pbp, entity_ids, period_ids):
-    """2M/2A/3M/3A for SCP, FBP, and POT. Blank strings when play-by-play is missing."""
-    keys = [prefix + leaf for prefix, _flag, _points in _FLAG_SPLITS for leaf in _SPLIT_LEAVES]
-    entities = list(entity_ids)
-    missing = pbp is None or len(pbp) == 0 or 'entityId' not in getattr(pbp, 'columns', [])
-    if missing:
-        return {entity: {key: '' for key in keys} for entity in entities}
-    frame = pbp if period_ids is None else _filter_periods(pbp, period_ids)
-    counts = {entity: {key: 0 for key in keys} for entity in entities}
-    if frame is None or len(frame) == 0:
-        return counts
-    options = frame['options'] if 'options' in frame.columns else pd.Series([None] * len(frame), index=frame.index)
-    event = frame['eventType'] if 'eventType' in frame.columns else pd.Series([''] * len(frame), index=frame.index)
-    success = frame['success'] if 'success' in frame.columns else pd.Series([0] * len(frame), index=frame.index)
-    made = success.map(_shot_made)
-    entity = frame['entityId']
-    parsed = options.map(_parsed_option)
-    for prefix, flag_name, _points in _FLAG_SPLITS:
-        flag = parsed.map(lambda item, name=flag_name: _flag_from_parsed(item, name))
-        for shot, made_leaf, attempt_leaf in (('2pt', '2M', '2A'), ('3pt', '3M', '3A')):
-            attempts = flag & (event == shot)
-            makes = attempts & made
-            for ent in entities:
-                mine = entity == ent
-                counts[ent][prefix + attempt_leaf] = int((attempts & mine).sum())
-                counts[ent][prefix + made_leaf] = int((makes & mine).sum())
-    return counts
 
 
 def _game_long_dnp(row):
@@ -381,14 +131,6 @@ def _regulation_base(minutes):
     if base <= 0:
         return 48.0
     return base
-
-
-def _chip_spec(value):
-    if value == 'h1':
-        return (1, 2), True
-    if value == 'h2':
-        return (3, 4), True
-    return (int(value),), False
 
 
 class PostGameReport():
@@ -429,23 +171,22 @@ class PostGameReport():
         qt_pts_df.sort_values(by=['Team'], ascending=True, inplace=True)
         return qt_pts_df
     
+    def _period_team_metric_df(self, column_name, label):
+        df = pd.DataFrame()
+        df['Team'] = self.team_stats_periods_df.apply(
+            lambda x: display_name(self.id_table, x.get('entityId')), axis=1,
+        )
+        df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
+        df[label] = self.team_stats_periods_df.get(column_name, '')
+        df = df.pivot(index='Team', columns='Period', values=label).reset_index()
+        df.sort_values(by=['Team'], ascending=True, inplace=True)
+        return df
+
     def get_period_team_fouls_df(self):
-        qt_foul_df = pd.DataFrame()
-        qt_foul_df['Team'] = self.team_stats_periods_df.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
-        qt_foul_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
-        qt_foul_df['Foul'] = self.team_stats_periods_df.get('foulsTotal', '')
-        qt_foul_df = qt_foul_df.pivot(index='Team', columns='Period', values='Foul').reset_index()
-        qt_foul_df.sort_values(by=['Team'], ascending=True, inplace=True)
-        return qt_foul_df
-        
+        return self._period_team_metric_df('foulsTotal', 'Foul')
+
     def get_period_team_timeout_df(self):
-        qt_tout_df = pd.DataFrame()
-        qt_tout_df['Team'] = self.team_stats_periods_df.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
-        qt_tout_df['Period'] = self.team_stats_periods_df['periodId'].apply(period_label)
-        qt_tout_df['TOut'] = self.team_stats_periods_df.get('timeoutsUsed', '')
-        qt_tout_df = qt_tout_df.pivot(index='Team', columns='Period', values='TOut').reset_index()
-        qt_tout_df.sort_values(by=['Team'], ascending=True, inplace=True)
-        return qt_tout_df
+        return self._period_team_metric_df('timeoutsUsed', 'TOut')
 
     def get_team_advance_stats_df(self, source=None, period_ids=None, share_mean=True, poss_by_entity=None):
         stats = (self.team_stats_df if source is None else source).copy()
@@ -553,23 +294,7 @@ class PostGameReport():
         if not player_ids:
             return [{'label': 'All', 'value': 'all'}]
         period_ids = player_ids | _known_period_ids(getattr(self, 'team_stats_periods_df', None))
-        chips = [{'label': 'All', 'value': 'all'}]
-
-        def add_period(period):
-            if period in period_ids:
-                chips.append({'label': period_label(period), 'value': str(period)})
-
-        add_period(1)
-        add_period(2)
-        if 1 in period_ids and 2 in period_ids:
-            chips.append({'label': '1H', 'value': 'h1'})
-        add_period(3)
-        add_period(4)
-        if 3 in period_ids and 4 in period_ids:
-            chips.append({'label': '2H', 'value': 'h2'})
-        for period in sorted(period for period in period_ids if period not in (1, 2, 3, 4)):
-            chips.append({'label': period_label(period), 'value': str(period)})
-        return chips
+        return build_period_chips(period_ids)
 
     def _slice_team_frame(self, period_ids, recompute):
         source = _filter_periods(getattr(self, 'team_stats_periods_df', None), period_ids)

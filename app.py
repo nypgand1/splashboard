@@ -3,28 +3,14 @@ from dash import Dash, page_container
 import dash_mantine_components as dmc
 from asset_url import stamp_asset_urls
 from navbar import create_navbar
+from ui.tokens import MANTINE_THEME as _TOKENS_MANTINE_THEME
 
 # Configure React 18 for DMC 2.8.0
 dash._dash_renderer._set_react_version('18.2.0')
 
 MANTINE_THEME = {
+    **_TOKENS_MANTINE_THEME,
     "primaryColor": "bravesBlue",
-    "fontFamily": '-apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif',
-    "defaultRadius": "md",
-    "colors": {
-        "bravesBlue": [
-            "#e8f4f8",
-            "#cce9f2",
-            "#99d4e5",
-            "#66bed8",
-            "#33a9cb",
-            "#00b4d8",
-            "#0077b6",
-            "#005f92",
-            "#00476d",
-            "#002f49",
-        ]
-    }
 }
 
 app = Dash(

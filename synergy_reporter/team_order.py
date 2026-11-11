@@ -3,11 +3,7 @@
 import json
 
 from synergy_inbounder.logs import data as log_data
-
-HOME_DOT = '#00b4d8'
-AWAY_DOT = '#94a3b8'
-HOME_STRIPE = '#0077b6'
-AWAY_STRIPE = '#94a3b8'
+from ui.tokens import AWAY_DOT, AWAY_STRIPE, HOME_DOT, HOME_STRIPE
 
 
 def side_names(match_info):

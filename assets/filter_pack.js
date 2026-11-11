@@ -56,34 +56,12 @@
         }
     }
 
-    function measureScope(pack) {
-        var league = pack.querySelector(':scope > .filter-cluster-league');
-        var typeNode = pack.querySelector(':scope > .filter-cluster-type');
+    function measurePair(pack, selA, selB) {
+        var first = pack.querySelector(':scope > ' + selA);
+        var second = pack.querySelector(':scope > ' + selB);
         var gap = gapOf(pack);
         var mode = 'wide';
-        if (sumWidths([contentWidth(league), contentWidth(typeNode)], gap) > pack.clientWidth + 1) {
-            mode = 'split';
-        }
-        setMode(pack, mode);
-    }
-
-    function measurePlace(pack) {
-        var stadium = pack.querySelector(':scope > .filter-cluster-stadium');
-        var site = pack.querySelector(':scope > .filter-cluster-site');
-        var gap = gapOf(pack);
-        var mode = 'wide';
-        if (sumWidths([contentWidth(stadium), contentWidth(site)], gap) > pack.clientWidth + 1) {
-            mode = 'split';
-        }
-        setMode(pack, mode);
-    }
-
-    function measureMatch(pack) {
-        var team = pack.querySelector(':scope > .filter-cluster-team');
-        var opponent = pack.querySelector(':scope > .filter-cluster-opp');
-        var gap = gapOf(pack);
-        var mode = 'wide';
-        if (sumWidths([contentWidth(team), contentWidth(opponent)], gap) > pack.clientWidth + 1) {
+        if (sumWidths([contentWidth(first), contentWidth(second)], gap) > pack.clientWidth + 1) {
             mode = 'split';
         }
         setMode(pack, mode);
@@ -91,15 +69,15 @@
 
     function measure(pack) {
         if (pack.classList.contains('filter-pack-scope')) {
-            measureScope(pack);
+            measurePair(pack, '.filter-cluster-league', '.filter-cluster-type');
             return;
         }
         if (pack.classList.contains('filter-pack-match')) {
-            measureMatch(pack);
+            measurePair(pack, '.filter-cluster-team', '.filter-cluster-opp');
             return;
         }
         if (pack.classList.contains('filter-pack-place')) {
-            measurePlace(pack);
+            measurePair(pack, '.filter-cluster-stadium', '.filter-cluster-site');
             return;
         }
         var clusters = pack.querySelectorAll(':scope > .filter-cluster');

@@ -65,4 +65,11 @@ Set secrets before the first deploy that no longer bakes credentials into the im
 
 Dash links each file in `assets/` with `?m=` set to a content hash (`asset_url.py`), not the file mtime. The Paketo buildpack freezes mtimes at 1980-01-01, so a mtime query never changes and a phone keeps the previous CSS and JS. The Report font fetch reads that same hash from `#report-font-url`. The name stored inside the PDF stays `NotoSansTC-Regular.ttf`.
 
+## Architecture
+
+- `inbound/`: Synergy HTTP wave, repository (`inbound/repository.py`), and 3-module cache (`inbound/cache/catalog_cache.py`, `inbound/cache/frame_store.py`, `inbound/cache/live_cache.py`) with shared `SingleflightGroup` coalescing (`inbound/cache/singleflight.py`). `synergy_inbounder/` re-exports compatible entrypoints.
+- `domain/`: Pure basketball calculation and domain rules (`clocks.py`, `periods.py`, `rates.py`, `ids.py`, `schedule_filters.py`, `shot_zones.py`). `synergy_reporter/` orchestrates post-game reports, rotation timelines, and season aggregations over `domain/`.
+- `ui/`: Design tokens (`ui/tokens.py`), shared DMC components (`ui/components.py`), shared 4-card DMC and AG-Grid table builders (`ui/tables/stat_cards.py`, `ui/tables/ag_grid.py`), Plotly/SVG chart renderers (`ui/charts/rotation_fig.py`, `ui/charts/shot_svg.py`), and Game tab controllers (`ui/game_tabs/`).
+- `pages/`: Dash `use_pages` route entrypoints (`pages/home.py`, `pages/game.py`, `pages/team_stats.py`).
+
 Product behavior: `docs/spec.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.

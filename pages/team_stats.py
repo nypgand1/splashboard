@@ -49,16 +49,40 @@ from synergy_reporter.team_season import (
     schedule_chrome,
     team_stats_payload,
 )
+from domain.schedule_filters import (
+    LEAGUE_OPTIONS,
+    default_season_id as _default_season,
+    selectable_season_options as _season_data,
+)
+from ui.tables.stat_cards import (
+    COUNT_TAILS as _COUNT_TAILS,
+    KEY_STAT_GROUPS as _KEY_GROUPS,
+    SHOT_GROUPS as _SHOT_GROUPS,
+    TAIL_LABEL as _TAIL_LABEL,
+    card_header_rows as _header_rows,
+    card_segments as _segments,
+    edge_columns as _edge_columns,
+    span_labels as _span_labels,
+    stat_th as _th,
+    team_label_cell as _team_label,
+    team_stats_body_rows as _body_rows,
+    team_stats_cards_view as _cards_view,
+    team_stats_paper as _paper,
+)
 from ui_kit import (
     ERROR_GAME,
     empty_state,
     error_alert,
+    filter_cluster as _cluster,
     filter_control,
     icon,
+    last_update_line,
     loading_skeleton,
     shot_chart_paper,
     shot_court_column,
+    sized_select as _sized_select,
     team_name_lines,
+    to_jsonable as _jsonable,
 )
 
 register_page(
@@ -67,110 +91,6 @@ register_page(
     top_nav=True,
     path='/team-stats',
 )
-
-LEAGUE_OPTIONS = [
-    {'label': 'PLG', 'value': 'PLG'},
-    {'label': 'EASL', 'value': 'EASL'},
-]
-_KEY_GROUPS = (
-    ('Points in the Paint', (('PIPM', 'M'), ('PIPA', 'A'), ('PIP', 'PT'))),
-    ('Second Chance Points', (
-        ('SCP2M', '2M'), ('SCP2A', '2A'), ('SCP3M', '3M'), ('SCP3A', '3A'), ('SCP', 'PT'),
-    )),
-    ('Fast Break Points', (
-        ('FBP2M', '2M'), ('FBP2A', '2A'), ('FBP3M', '3M'), ('FBP3A', '3A'), ('FBP', 'PT'),
-    )),
-    ('Points off Turnovers', (
-        ('POT2M', '2M'), ('POT2A', '2A'), ('POT3M', '3M'), ('POT3A', '3A'), ('POT', 'PT'),
-    )),
-)
-_SHOT_GROUPS = (
-    ('2PT', ('2M', '2A', '2FG%'), ('M', 'A', '%')),
-    ('3PT', ('3M', '3A', '3FG%'), ('M', 'A', '%')),
-    ('FT', ('FTM', 'FTA', 'FT%'), ('M', 'A', '%')),
-    ('REB', ('OR', 'DR', 'REB'), ('O', 'D', 'T')),
-)
-_COUNT_TAILS = ('AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS')
-_TAIL_LABEL = {'AST': 'AS', 'PTS': 'PT'}
-
-
-def _cluster(kind, children, cluster_id=None, style=None):
-    props = {
-        'className': 'filter-cluster filter-cluster-{0}'.format(kind),
-    }
-    if cluster_id:
-        props['id'] = cluster_id
-    if style:
-        props['style'] = style
-    return dmc.Box(
-        dmc.Box(children, className='filter-cluster-inner'),
-        **props,
-    )
-
-
-def _sized_select(select_id, probe_id, label, data, value):
-    return html.Div(
-        [
-            html.Div(
-                html.Span(
-                    label,
-                    className='home-team-sizer-probe',
-                    **{'aria-hidden': 'true'},
-                ),
-                id=probe_id,
-                className='ts-sizer-probes',
-            ),
-            dmc.Select(
-                id=select_id,
-                data=data,
-                value=value,
-                allowDeselect=False,
-                clearable=False,
-                searchable=False,
-                size='xs',
-                radius='md',
-                comboboxProps={'withinPortal': True},
-                rightSectionWidth=28,
-                className='home-team-sizer-control',
-                styles={
-                    'wrapper': {'width': '100%'},
-                    'input': {
-                        'width': '100%',
-                        'paddingInlineStart': '12px',
-                        'paddingInlineEnd': '40px',
-                    },
-                },
-            ),
-        ],
-        className='home-team-sizer',
-    )
-
-
-def _default_season(league):
-    if str(league or '').strip().upper() == 'EASL':
-        return EASL_SEASON_ID
-    return SYNERGY_SEASON_ID
-
-
-def _season_data(league):
-    return [
-        {'label': label, 'value': season_id}
-        for label, season_id in selectable_seasons(league)
-    ]
-
-
-def _jsonable(node):
-    if isinstance(node, Component):
-        spec = node.to_plotly_json()
-        spec['props'] = {
-            key: _jsonable(value) for key, value in spec['props'].items()
-        }
-        return spec
-    if isinstance(node, (list, tuple)):
-        return [_jsonable(item) for item in node]
-    if isinstance(node, dict):
-        return {key: _jsonable(value) for key, value in node.items()}
-    return node
 
 
 def _loading_body():
@@ -189,273 +109,7 @@ def _loading_body():
 
 
 def _stamp(text):
-    return dmc.Text(text or 'Last Update: —', size='sm', c='dimmed', mb=8, className='no-print')
-
-
-def _th(label, kind, span=None, cols=None, edge=False):
-    table_props = {}
-    if span:
-        table_props['rowSpan'] = span
-    if cols:
-        table_props['colSpan'] = cols
-    class_name = kind
-    props = {'className': class_name}
-    if table_props:
-        props['tableProps'] = table_props
-    return dmc.TableTh(label, **props)
-
-
-def _segments(card_id, columns):
-    present = set(columns)
-    if card_id == 'advanced':
-        return [('single', (column,)) for column in columns]
-    segments = []
-    if card_id == 'team':
-        for name in ('Team', 'GP', 'Min'):
-            if name in present:
-                segments.append(('single', (name,)))
-        for _title, members, _leaves in _SHOT_GROUPS:
-            cols = tuple(column for column in members if column in present)
-            if cols:
-                segments.append(('group', cols))
-        for column in _COUNT_TAILS:
-            if column in present:
-                segments.append(('single', (column,)))
-        return segments
-    if card_id == 'key':
-        for name in ('Team', 'GP'):
-            if name in present:
-                segments.append(('single', (name,)))
-        for _name, pairs in _KEY_GROUPS:
-            cols = tuple(column for column, _label in pairs if column in present)
-            if cols:
-                segments.append(('group', cols))
-        if 'BP' in present:
-            segments.append(('single', ('BP',)))
-        return segments
-    for name in ('Team', 'GP', 'Pace'):
-        if name in present:
-            segments.append(('single', (name,)))
-    factors = tuple(column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present)
-    if factors:
-        segments.append(('group', factors))
-    return segments
-
-
-def _edge_columns(card_id, columns):
-    segments = _segments(card_id, columns)
-    ends = set()
-    for index, (kind, cols) in enumerate(segments):
-        if not cols:
-            continue
-        if index + 1 >= len(segments):
-            if kind == 'group':
-                ends.add(cols[-1])
-            continue
-        if kind == 'group' or segments[index + 1][0] == 'group':
-            ends.add(cols[-1])
-    return ends
-
-
-def _span_labels(columns, names, edges):
-    present = set(columns)
-    nodes = []
-    for name in names:
-        if name not in present:
-            continue
-        if name == 'Team':
-            label = 'TEAM'
-        elif name == 'GP':
-            label = 'GP'
-        else:
-            label = name.upper()
-        nodes.append(_th(label, 'braves-th-span', span=2, edge=name in edges))
-    return nodes
-
-
-def _header_rows(card_id, columns):
-    present = set(columns)
-    edges = _edge_columns(card_id, columns)
-    if card_id == 'advanced':
-        labels = []
-        for column in columns:
-            if column == 'Team':
-                labels.append('TEAM')
-            elif column == 'GP':
-                labels.append('GP')
-            else:
-                labels.append(column)
-        return [dmc.TableTr([
-            _th(label, 'braves-th-single') for label in labels
-        ])]
-
-    top = []
-    sub = []
-    if card_id == 'team':
-        top.extend(_span_labels(columns, ('Team', 'GP', 'Min'), edges))
-        for title, members, leaves in _SHOT_GROUPS:
-            if not any(column in present for column in members):
-                continue
-            top.append(_th(
-                title, 'braves-th-group', cols=len(leaves), edge=members[-1] in edges,
-            ))
-            sub.extend(
-                _th(leaf, 'braves-th-sub', edge=column in edges)
-                for column, leaf in zip(members, leaves)
-            )
-        for column in _COUNT_TAILS:
-            if column in present:
-                top.append(_th(
-                    _TAIL_LABEL.get(column, column),
-                    'braves-th-span-tight',
-                    span=2,
-                    edge=column in edges,
-                ))
-    elif card_id == 'key':
-        top.extend(_span_labels(columns, ('Team', 'GP'), edges))
-        for name, pairs in _KEY_GROUPS:
-            found = [(column, label) for column, label in pairs if column in present]
-            if not found:
-                continue
-            top.append(_th(
-                name, 'braves-th-group', cols=len(found), edge=found[-1][0] in edges,
-            ))
-            sub.extend(
-                _th(label, 'braves-th-sub', edge=column in edges)
-                for column, label in found
-            )
-        if 'BP' in present:
-            top.append(_th('BP', 'braves-th-span', span=2, edge='BP' in edges))
-    else:
-        top.extend(_span_labels(columns, ('Team', 'GP', 'Pace'), edges))
-        factors = [column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present]
-        if factors:
-            top.append(_th(
-                'FOUR FACTORS', 'braves-th-group', cols=len(factors),
-                edge=factors[-1] in edges,
-            ))
-            sub.extend(
-                _th(column, 'braves-th-sub', edge=column in edges) for column in factors
-            )
-    rows = [dmc.TableTr(top)]
-    if sub:
-        rows.append(dmc.TableTr(sub))
-    return rows
-
-
-def _team_label(text, keep_vs=False):
-    raw = '' if text is None else str(text)
-    name = raw[:-3] if keep_vs and raw.endswith(' vs') else raw
-    first, second = team_name_lines(name)
-    if not second:
-        return raw
-    suffix = ' vs' if keep_vs else ''
-    return html.Span(
-        [
-            html.Span(name + suffix, className='ts-team-full'),
-            html.Span(first + suffix, className='ts-team-line1'),
-            html.Span(second, className='ts-team-line2'),
-        ],
-        className='ts-team-label is-split',
-    )
-
-
-def _body_rows(card):
-    columns = card.get('columns') or []
-    edges = _edge_columns(card.get('id'), columns)
-    records = []
-    for index, record in enumerate(card.get('rows') or []):
-        records.append(record)
-        opp_rows = card.get('opp_rows') or []
-        if index < len(opp_rows):
-            records.append(opp_rows[index])
-    rows = []
-    for record in records:
-        opp = bool(isinstance(record, dict) and record.get('opp'))
-        cells = []
-        for column in columns:
-            cell = record.get(column) if isinstance(record, dict) else None
-            text = ''
-            style = None
-            if isinstance(cell, dict):
-                text = '' if cell.get('text') is None else str(cell.get('text'))
-                if opp and cell.get('opp_best'):
-                    style = {'color': '#e63946', 'fontWeight': 700}
-                elif cell.get('winner'):
-                    style = {'color': '#0077b6', 'fontWeight': 700}
-            classes = []
-            if column in edges:
-                classes.append('braves-group-end')
-            if opp and column == 'Team':
-                classes.append('braves-opp-label')
-            kwargs = {}
-            if style:
-                kwargs['style'] = style
-            if classes:
-                kwargs['className'] = ' '.join(classes)
-            content = text
-            if column == 'Team':
-                content = _team_label(
-                    text,
-                    keep_vs=(
-                        not opp
-                        and not (isinstance(record, dict) and record.get('summary'))
-                        and text.endswith(' vs')
-                    ),
-                )
-            cells.append(dmc.TableTd(content, **kwargs))
-        class_name = 'braves-clean-row braves-opp-row' if opp else 'braves-clean-row'
-        if isinstance(record, dict) and record.get('summary'):
-            class_name += ' braves-summary-end' if opp else ' braves-summary-row'
-        rows.append(dmc.TableTr(cells, className=class_name))
-    return rows
-
-
-def _paper(card):
-    table = dmc.Table(
-        [
-            dmc.TableThead(_header_rows(card.get('id'), card.get('columns') or [])),
-            dmc.TableTbody(_body_rows(card)),
-        ],
-        withTableBorder=False,
-        withColumnBorders=False,
-        className='braves-clean-table',
-        style={'width': '100%'},
-    )
-    children = [dmc.Box(table, className='braves-table-scroll')]
-    title = card.get('title')
-    if title:
-        children.insert(0, dmc.Text(
-            str(title).upper(),
-            size='xs',
-            fw=700,
-            c='dimmed',
-            mb=6,
-            style={'letterSpacing': '0.05em'},
-        ))
-    return dmc.Paper(
-        children,
-        withBorder=True,
-        radius='md',
-        p='sm',
-        shadow='xs',
-        className='braves-card-wrapper',
-    )
-
-
-def _cards_view(cards):
-    return dmc.Stack(
-        [
-            dmc.SimpleGrid(
-                cols={'base': 1, 'lg': 2},
-                spacing='12px',
-                children=[_paper(cards['pace']), _paper(cards['advanced'])],
-            ),
-            _paper(cards['key']),
-            _paper(cards['team']),
-        ],
-        gap='sm',
-    )
+    return last_update_line(text)
 
 
 def _view(payload):
