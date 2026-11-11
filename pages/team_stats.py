@@ -20,9 +20,12 @@ import dash_mantine_components as dmc
 from synergy_inbounder.logs import data as log_data
 from synergy_inbounder.logs import unexpected as log_unexpected
 from synergy_inbounder.names import TEAM_TBD, display_name
+from synergy_inbounder.publisher import note_season, peek_season
+from synergy_inbounder.runtime_cache import LIVE_CADENCE_SECONDS
 from synergy_inbounder.settings import (
     EASL_SEASON_ID,
     SYNERGY_SEASON_ID,
+    organization_for_league,
     selectable_seasons,
 )
 from synergy_reporter.rotation import period_label
@@ -267,6 +270,12 @@ def layout():
             ),
             dcc.Store(id='ts-intent'),
             dcc.Store(id='ts-job'),
+            dcc.Store(id='ts-seen', data=0),
+            dcc.Interval(
+                id='ts-interval',
+                interval=LIVE_CADENCE_SECONDS * 1000,
+                n_intervals=0,
+            ),
             dcc.Store(
                 id='ts-slice',
                 data={
@@ -1004,6 +1013,69 @@ def render_team_stats_download(
     return _paint(
         payload, league, season_id, game_type, period, opponent, stadium, site, team,
     )
+
+
+def _season_view(league, season_id, game_type, period, opponent, stadium, site, team):
+    return {
+        'league': league,
+        'season_id': season_id,
+        'game_type': game_type,
+        'period': period or 'all',
+        'opponent': OPPONENT_ALL if opponent is None else opponent,
+        'stadium': STADIUM_ALL if stadium is None else stadium,
+        'site': SITE_ALL if site is None else site,
+        'team': TEAM_ALL if team is None else team,
+    }
+
+
+def _same_watched_view(left, right):
+    keys = (
+        'league', 'season_id', 'game_type', 'period',
+        'opponent', 'stadium', 'site', 'team',
+    )
+    return all(
+        str((left or {}).get(key) or '') == str((right or {}).get(key) or '')
+        for key in keys
+    )
+
+
+@callback(
+    *_view_outputs(),
+    Output('ts-seen', 'data'),
+    Input('ts-interval', 'n_intervals'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-period', 'value'),
+    State('ts-opponent', 'value'),
+    State('ts-stadium', 'value'),
+    State('ts-site', 'value'),
+    State('ts-team', 'value'),
+    State('ts-seen', 'data'),
+    prevent_initial_call='initial_duplicate',
+)
+def read_team_stats_drawer(
+    n, league, season_id, game_type, period, opponent, stadium, site, team, seen,
+):
+    """Note the season watch and paint a payload the publisher already built."""
+    hold = (no_update,) * (len(_view_outputs()) + 1)
+    org = organization_for_league(str(league or '').strip().upper())
+    if org is None or not season_id:
+        return hold
+    view = _season_view(
+        league, season_id, game_type, period, opponent, stadium, site, team,
+    )
+    note_season(org, season_id, view)
+    snap = peek_season(org, season_id)
+    generation = int((snap or {}).get('generation') or 0)
+    if snap is None or generation == int(seen or 0):
+        return hold
+    if not _same_watched_view(snap.get('view'), view):
+        return hold
+    return _paint(
+        snap.get('payload') or {},
+        league, season_id, game_type, period, opponent, stadium, site, team,
+    ) + (generation,)
 
 
 @callback(

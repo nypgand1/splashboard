@@ -175,6 +175,17 @@ def _mark_report_delayed(key):
     return None
 
 
+def forget_finished_report(game_id, organization_id=None):
+    """Drop a non-live report memo so the next build reads the new bodies."""
+    if not game_id:
+        return
+    key = _report_key(game_id, organization_id)
+    with _report_lock:
+        entry = _report_cache.get(key)
+        if entry and not is_live_play_status(entry.get('status')):
+            _report_cache.pop(key, None)
+
+
 def peek_finished_report(game_id, organization_id=None):
     """Return a stored non-live finished report, or None. Does not build one."""
     if not game_id:
@@ -470,3 +481,5 @@ def clear_runtime_caches():
     clear_frames()
     from synergy_inbounder.live_clock import clear_live_clocks
     clear_live_clocks()
+    from synergy_inbounder.publisher import reset as reset_publisher
+    reset_publisher()

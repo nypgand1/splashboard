@@ -95,7 +95,7 @@ class TeamStatsCallbackTests(unittest.TestCase):
         clientside = [item for item in listed if item.get('clientside_function')]
         server = [item for item in listed if not item.get('clientside_function')]
         self.assertEqual(len(clientside), 2)
-        self.assertEqual(len(server), 2)
+        self.assertEqual(len(server), 3)
         intent_body = next(
             item for item in clientside
             if _pairs(item['inputs']) == [('ts-intent', 'data')]
@@ -126,9 +126,22 @@ class TeamStatsCallbackTests(unittest.TestCase):
         self.assertTrue(bridge[0]['prevent_initial_call'])
 
         render = [item for item in server if 'ts-job.data' in item['output']]
-        download = [item for item in server if 'ts-job.data' not in item['output']]
+        drawer = [
+            item for item in server
+            if _pairs(item['inputs']) == [('ts-interval', 'n_intervals')]
+        ]
+        download = [
+            item for item in server
+            if item not in render and item not in drawer
+        ]
         self.assertEqual(len(render), 1)
+        self.assertEqual(len(drawer), 1)
         self.assertEqual(len(download), 1)
+        # Dash stores initial_duplicate as "do not skip the first call".
+        self.assertFalse(drawer[0]['prevent_initial_call'])
+        self.assertIn('ts-seen.data', drawer[0]['output'])
+        self.assertNotIn('ts-job.data', drawer[0]['output'])
+        self.assertIn(('ts-seen', 'data'), _pairs(drawer[0]['state']))
         self.assertEqual(
             _pairs(render[0]['inputs']),
             [

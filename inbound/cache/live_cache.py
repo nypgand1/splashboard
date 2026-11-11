@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Cache Module 3: Live Report Snapshot Cache, LiveBudget, and In-Progress Clocks."""
+"""Cache Module 3: Live Report Snapshot Cache, LiveBudget, and In-Progress Clocks.
+
+The publisher drawer stores precomputed Game and Team Stats payloads beside
+this cache. It is not a fourth cache family.
+"""
 from synergy_inbounder.live_budget import BUDGET, LiveBudget, live_route, parse_retry_after
 from synergy_inbounder.live_clock import (
     clear_live_clocks,
@@ -29,6 +33,15 @@ from synergy_inbounder.runtime_cache import (
     report_refresh_state,
     should_use_live_endpoints,
     warmup_game_report,
+)
+from synergy_inbounder.publisher import (
+    CONFIRMED_BATCH,
+    OFFICIAL_REFRESH_SECONDS,
+    READER_WAIT_MS,
+    note_game,
+    note_season,
+    peek_game,
+    peek_season,
 )
 
 __all__ = [
@@ -60,5 +73,12 @@ __all__ = [
     'report_refresh_state',
     'scoreboard_from_pbp_frame',
     'should_use_live_endpoints',
+    'CONFIRMED_BATCH',
+    'OFFICIAL_REFRESH_SECONDS',
+    'READER_WAIT_MS',
+    'note_game',
+    'note_season',
+    'peek_game',
+    'peek_season',
     'warmup_game_report',
 ]

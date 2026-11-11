@@ -45,7 +45,7 @@ from inbound.repository import (
 from synergy_inbounder.communicator import SynergyAuthError, _cache_hits
 from synergy_inbounder.logs import auth as log_auth
 from synergy_inbounder.logs import unexpected as log_unexpected
-from synergy_inbounder.game_status import is_finished_status
+from synergy_inbounder.game_status import is_finished_status, normalize_status
 from synergy_inbounder.http_wave import run_wave
 from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
 from synergy_inbounder.names import TEAM_TBD, display_name
@@ -1047,20 +1047,21 @@ def _needs_cards(org_id, bundle, game_type):
     return bool(_pbp_pending(org_id, _finished_rows(bundle.get('schedule') or [], chosen)))
 
 
-def _load_bundle(org_id, season_id, reason):
+def _load_bundle(org_id, season_id, reason, force=False):
     key = (org_id, season_id)
     now = time.monotonic()
     with _bundle_lock:
         current = _bundles.get(key)
-    if _bundle_complete(current) and reason in ('chip', 'type', 'slice'):
+    if not force and _bundle_complete(current) and reason in ('chip', 'type', 'slice'):
         return current
     if (
-        _bundle_complete(current)
+        not force
+        and _bundle_complete(current)
         and reason == 'scope'
         and (now - current['fetched_at']) < SHORT_CACHE_SECONDS
     ):
         return current
-    if _bundle_complete(current) and reason == 'scope':
+    if force or (_bundle_complete(current) and reason == 'scope'):
         schedule_entry = _load_schedule(org_id, season_id, reuse=False)
     else:
         schedule_entry = _load_schedule(org_id, season_id, reuse=True)
@@ -1370,3 +1371,158 @@ def rotation_games(league, season_id, game_type, opponent, stadium, site, team):
         'team': str(team),
         'opponent': chosen_opponent,
     }
+
+
+def watched_fixture_batch(schedule, cursor, batch=4):
+    """All not-yet-confirmed finished games, then ``batch`` confirmed games.
+
+    The confirmed cursor walks the confirmed list and wraps. Fewer than
+    ``batch`` confirmed games are all included once.
+    """
+    finished = []
+    confirmed = []
+    for row in schedule or []:
+        if not isinstance(row, dict):
+            continue
+        fixture_id = str(row.get('fixtureId') or '').strip()
+        if not fixture_id:
+            continue
+        status = normalize_status(row.get('status'))
+        if status == 'FINISHED':
+            finished.append(row)
+        elif status == 'CONFIRMED':
+            confirmed.append(row)
+    chosen = []
+    new_cursor = int(cursor or 0)
+    if confirmed:
+        count = min(int(batch), len(confirmed))
+        start = new_cursor % len(confirmed)
+        for offset in range(count):
+            chosen.append(confirmed[(start + offset) % len(confirmed)])
+        new_cursor = (start + count) % len(confirmed)
+    return finished + chosen, new_cursor
+
+
+def _df_signature(frame):
+    import hashlib
+    if frame is None:
+        return 'none'
+    try:
+        hashed = pd.util.hash_pandas_object(frame, index=False)
+        return hashlib.sha256(hashed.values.tobytes()).hexdigest()
+    except Exception:
+        return 'shape:{0}'.format(getattr(frame, 'shape', None))
+
+
+def season_content_fingerprint(org_id, bundle):
+    """Hash schedule status plus the frames a watched cycle can change."""
+    import hashlib
+    bundle = bundle or {}
+    rows = []
+    for record in bundle.get('schedule') or []:
+        if not isinstance(record, dict):
+            continue
+        fixture_id = str(record.get('fixtureId') or '').strip()
+        if fixture_id:
+            rows.append((fixture_id, normalize_status(record.get('status'))))
+    rows.sort()
+    parts = [repr(rows), _df_signature(bundle.get('totals')), _df_signature(bundle.get('periods'))]
+    for fixture_id, status in rows:
+        if status not in ('FINISHED', 'CONFIRMED'):
+            continue
+        frame = frame_store.peek(org_id, fixture_id)
+        pbp = None if frame is None else frame.playbyplay_df
+        parts.append(fixture_id + ':' + _df_signature(pbp))
+    return hashlib.sha256('\n'.join(parts).encode('utf-8')).hexdigest()
+
+
+def refresh_watched_pbp(org_id, row):
+    """Refetch one official play-by-play, including a pinned CONFIRMED frame."""
+    fixture_id = str((row or {}).get('fixtureId') or '').strip()
+    if not fixture_id:
+        return
+    frame_store.invalidate_piece(org_id, fixture_id, 'playbyplay_df')
+    from synergy_inbounder.communicator import force_body_refresh
+    from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
+    with force_body_refresh(SHORT_CACHE_SECONDS):
+        _download_pbp(org_id, row)
+
+
+def _watched_payload(view, season_id):
+    view = view or {}
+    return team_stats_payload(
+        view.get('league'),
+        season_id,
+        view.get('game_type'),
+        view.get('period') or 'all',
+        'chip',
+        view.get('opponent') or OPPONENT_ALL,
+        view.get('stadium') or STADIUM_ALL,
+        view.get('site') or SITE_ALL,
+        view.get('team') or TEAM_ALL,
+    )
+
+
+def _finish_watched_season(org_id, season_id, view, state, now):
+    from synergy_inbounder.publisher import OFFICIAL_REFRESH_SECONDS
+    with _bundle_lock:
+        bundle = _bundles.get((org_id, season_id))
+    fingerprint = season_content_fingerprint(org_id, bundle)
+    painted = state.get('painted')
+    payload = None
+    if fingerprint != painted:
+        try:
+            payload = _watched_payload(view, season_id)
+            painted = fingerprint
+        except Exception:
+            log_unexpected.exception(
+                'watched season payload failed org=%s season=%s', org_id, season_id,
+            )
+    started = state.get('started') or now
+    return {
+        'phase': 'idle',
+        'cursor': state.get('cursor') or 0,
+        'painted': painted,
+        'next_due': max(started + OFFICIAL_REFRESH_SECONDS, now),
+        'rows': [],
+        'index': 0,
+    }, payload
+
+
+def advance_watched_season(org_id, season_id, view, state, now):
+    """One Q6 C step: season head, then one game, then the chip payload."""
+    state = dict(state or {})
+    if state.get('phase') != 'games':
+        bundle = _load_bundle(org_id, season_id, 'scope', force=True)
+        rows, cursor = watched_fixture_batch(
+            bundle.get('schedule') or [],
+            state.get('cursor') or 0,
+        )
+        started = {
+            'phase': 'games',
+            'rows': rows,
+            'index': 0,
+            'cursor': cursor,
+            'started': now,
+            'painted': state.get('painted'),
+            'next_due': state.get('next_due'),
+        }
+        if not rows:
+            return _finish_watched_season(org_id, season_id, view, started, now)
+        return started, None
+    rows = state.get('rows') or []
+    index = int(state.get('index') or 0)
+    if index < len(rows):
+        refresh_watched_pbp(org_id, rows[index])
+        state['index'] = index + 1
+        if state['index'] < len(rows):
+            return state, None
+    return _finish_watched_season(org_id, season_id, view, state, now)
+
+
+def _register_watched_season():
+    from synergy_inbounder.publisher import register_season_step
+    register_season_step(advance_watched_season)
+
+
+_register_watched_season()

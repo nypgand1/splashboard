@@ -103,6 +103,36 @@ def peek(organization_id, fixture_id):
         return _frames.get(_key(organization_id, fixture_id))
 
 
+def invalidate_piece(organization_id, fixture_id, piece):
+    """Drop one parsed piece so the next read does not treat it as fresh."""
+    with _lock:
+        frame = _frames.get(_key(organization_id, fixture_id))
+        if frame is None:
+            return
+        setattr(frame, piece, None)
+        frame.times.pop(piece, None)
+        if piece == 'playbyplay_df':
+            frame.pbp_failed = False
+
+
+def mark_stale(organization_id, fixture_id):
+    """Drop parsed pieces so a watched official refetch is not served from memory.
+
+    ``piece_fresh`` treats a ``CONFIRMED`` piece as fresh whenever the value is
+    present, so clearing the timestamp alone does not bypass it.
+    """
+    with _lock:
+        frame = _frames.get(_key(organization_id, fixture_id))
+        if frame is None:
+            return
+        frame.playbyplay_df = None
+        frame.team_df = None
+        frame.periods_df = None
+        frame.roster = None
+        frame.times.clear()
+        frame.pbp_failed = False
+
+
 def piece_fresh(frame, piece, now=None):
     """True when the piece should not be downloaded again."""
     if frame is None:

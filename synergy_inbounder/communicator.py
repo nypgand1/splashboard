@@ -52,6 +52,32 @@ _token_slots = {}
 _active_org = None
 _wave_local = threading.local()
 _cache_hits = contextvars.ContextVar('synergy_cache_hits', default=None)
+_force_expire = contextvars.ContextVar('synergy_force_expire', default=None)
+_force_refresh = contextvars.ContextVar('synergy_force_refresh', default=False)
+
+
+class force_body_refresh(object):
+    """Force the next official reads to hit Synergy and cache them briefly.
+
+    ``expire_after`` alone does not bypass a ``CONFIRMED`` body that was stored
+    with the two-hour lifetime. ``force_refresh`` rewrites that entry. The
+    follow-up parse then reads the short-lived copy and does not fetch again.
+    """
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+        self._expire = None
+        self._refresh = None
+
+    def __enter__(self):
+        self._expire = _force_expire.set(self.seconds)
+        self._refresh = _force_refresh.set(True)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _force_expire.reset(self._expire)
+        _force_refresh.reset(self._refresh)
+        return False
 
 
 def fixture_body_expire(status, live=False):
@@ -146,12 +172,14 @@ def payload_from_response(response, url=''):
 
 class Communicator:
     @staticmethod
-    def get(url, params=None, headers=dict(), cached=True, expire_after=None, **kwargs):
+    def get(url, params=None, headers=dict(), cached=True, expire_after=None, force_refresh=False, **kwargs):
         session = getattr(_wave_local, 'session', None)
         getter = session.get if session is not None else requests.get
         request_kwargs = dict(kwargs)
         if cached and expire_after is not None:
             request_kwargs['expire_after'] = expire_after
+        if cached and force_refresh:
+            request_kwargs['force_refresh'] = True
         if cached:
             r = getter(url, params, **request_kwargs)
         else:
@@ -249,13 +277,17 @@ class Communicator:
         token, generation = Communicator._current_token(org_id)
         if not token:
             token, generation = Communicator._refresh_token(org_id)
+        forced_expire = _force_expire.get()
+        if forced_expire is not None:
+            expire_after = forced_expire
+        force_refresh = bool(_force_refresh.get())
         route = live_route(url)
         if route and not BUDGET.in_hold(org_id):
             if not BUDGET.try_spend(org_id, route):
                 raise SynergyApiError('Live budget exhausted for {url}'.format(url=url))
         r = Communicator.get(
             url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
-            expire_after=expire_after, **kwargs,
+            expire_after=expire_after, force_refresh=force_refresh, **kwargs,
         )
         r = Communicator._note_live_response(org_id, url, r)
 
@@ -264,13 +296,13 @@ class Communicator:
             if route is None or BUDGET.allow_retry(org_id, route):
                 r = Communicator.get(
                     url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
-                    expire_after=expire_after, **kwargs,
+                    expire_after=expire_after, force_refresh=force_refresh, **kwargs,
                 )
                 r = Communicator._note_live_response(org_id, url, r)
         if r.status_code >= 500 and route is None:
             r = Communicator.get(
                 url, params=params, headers=headers, auth=BearerAuth(token), cached=cached,
-                expire_after=expire_after, **kwargs,
+                expire_after=expire_after, force_refresh=force_refresh, **kwargs,
             )
             r = Communicator._note_live_response(org_id, url, r)
         return r

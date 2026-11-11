@@ -69,15 +69,15 @@ class WarmupGateTests(unittest.TestCase):
 
 
 class IntervalGateTests(unittest.TestCase):
-    def test_finished_disables_interval(self):
-        self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'FINISHED'})))
-        self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'CONFIRMED'})))
+    def test_finished_keeps_the_interval_on(self):
+        self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'FINISHED'})))
+        self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'CONFIRMED'})))
         self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'SCHEDULED'})))
         self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'CANCELLED'})))
         self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'IN_PROGRESS'})))
         self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'PENDING'})))
-        self.assertTrue(game_page.set_interval_disabled('not-json'))
-        self.assertTrue(game_page.set_interval_disabled(None))
+        self.assertFalse(game_page.set_interval_disabled('not-json'))
+        self.assertFalse(game_page.set_interval_disabled(None))
 
 
 class HiddenTabTests(unittest.TestCase):
@@ -1282,7 +1282,7 @@ class LivePaintTests(unittest.TestCase):
         self.assertEqual(posted['home_score'], '88')
         self.assertEqual(posted['status'], 'FINISHED')
         self.assertNotIn('banner_ready', posted)
-        self.assertTrue(game_page.set_interval_disabled(outputs[5]))
+        self.assertFalse(game_page.set_interval_disabled(outputs[5]))
 
     def test_finish_failure_keeps_a_snapshot_and_errors_on_the_first_load(self):
         from synergy_inbounder.communicator import SynergyAuthError
@@ -1335,43 +1335,34 @@ class DuplicateOutputKeyTests(unittest.TestCase):
         duplicates = {key: count for key, count in Counter(keys).items() if count > 1}
         self.assertEqual(duplicates, {})
 
-    def test_finished_snapshot_uses_the_sentinel_and_live_writers_do_not(self):
+    def test_one_reader_writes_the_game_stores(self):
         from dash._callback import GLOBAL_CALLBACK_LIST
 
-        finished = [
+        readers = [
             item for item in GLOBAL_CALLBACK_LIST
-            if any(dep['id'] == 'finished-snapshot-sentinel' for dep in item['inputs'])
+            if 'rotation_store.data' in str(item.get('output'))
+            and 'interval-component.interval' in str(item.get('output'))
         ]
-        self.assertEqual(len(finished), 1)
+        self.assertEqual(len(readers), 1)
         self.assertEqual(
-            [(item['id'], item['property']) for item in finished[0]['inputs']],
+            [(item['id'], item['property']) for item in readers[0]['inputs']],
             [
                 ('interval-component', 'n_intervals'),
                 ('game_id', 'children'),
                 ('game_league', 'children'),
-                ('finished-snapshot-sentinel', 'data'),
             ],
         )
-        self.assertEqual(finished[0]['state'], [])
-        live = [
-            item for item in GLOBAL_CALLBACK_LIST
-            if item['output'].startswith('rotation_store.data@')
-        ]
-        self.assertEqual(len(live), 1)
-        self.assertNotIn(
-            'finished-snapshot-sentinel',
-            {item['id'] for item in live[0]['inputs']},
-        )
-        self.assertNotIn(live[0]['output'], finished[0]['output'])
+        state = {(item['id'], item['property']) for item in readers[0]['state']}
+        self.assertIn(('bs_store', 'data'), state)
+        self.assertIn(('match_info_store', 'data'), state)
+        self.assertIn(('interval-component', 'interval'), state)
+        self.assertNotIn('finished-snapshot-sentinel', {item['id'] for item in readers[0]['inputs']})
 
-    def test_sentinel_store_is_a_constant_on_the_game_layout(self):
+    def test_game_layout_has_no_sentinel_store(self):
         matches = [
             node for node in _walk(game_page.layout('g1', 'plg'))
             if getattr(node, 'id', None) == 'finished-snapshot-sentinel'
         ]
-        self.assertEqual(len(matches), 1)
-        store = matches[0]
-        self.assertEqual(store.data, 'finished')
-        self.assertEqual(store.storage_type, 'memory')
+        self.assertEqual(matches, [])
 
 

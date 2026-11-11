@@ -17,8 +17,17 @@ from synergy_inbounder.live_clock import scoreboard_from_pbp_frame
 from synergy_inbounder.names import display_name
 from synergy_inbounder.settings import organization_for_league, season_ids_for_organization
 from synergy_inbounder.parser import Parser
+from synergy_inbounder.frame_store import mark_stale
+from synergy_inbounder.publisher import (
+    READER_WAIT_MS,
+    game_pending,
+    note_game,
+    peek_game,
+    register_game_builder,
+)
 from synergy_inbounder.runtime_cache import (
     LIVE_CADENCE_SECONDS,
+    forget_finished_report,
     get_cached_report,
     lookup_game_status,
     report_generation,
@@ -379,7 +388,7 @@ def layout(game_id=None, league='plg'):
         # Background Stores & Intervals
         dcc.Interval(
             id='interval-component',
-            interval=LIVE_CADENCE_SECONDS * 1000,
+            interval=READER_WAIT_MS,
             n_intervals=0
         ),
         dcc.Store(id='bs_store'),
@@ -401,13 +410,6 @@ def layout(game_id=None, league='plg'):
             'finished_reset': False,
         }),
         dcc.Store(id='match_info_store'),
-        # Dash hashes allow_duplicate outputs from Inputs only. Nothing writes
-        # this store; it keeps the finished publisher off the live callbacks' hash.
-        dcc.Store(
-            id='finished-snapshot-sentinel',
-            data='finished',
-            storage_type='memory',
-        ),
         dcc.Store(id='report-pane-ready', data=''),
         
         # Dummy grid to force Dash to load AG Grid JS/CSS resources on initial load
@@ -755,14 +757,6 @@ def _banner_time_and_scores(info):
     return tip, info.get('home_score'), info.get('away_score')
 
 
-@callback(
-    Output('bs_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    State('bs_store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def update_bs_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
@@ -814,14 +808,6 @@ def update_bs_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-@callback(
-    Output('match_info_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    State('match_info_store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def update_match_info_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
@@ -900,10 +886,14 @@ def render_game_info_banner(match_info_store):
     Input('match_info_store', 'data'),
 )
 def set_interval_disabled(match_info_store):
+    """Keep the reader on until a snapshot names an unplayed or void status."""
     info = safe_loads(match_info_store)
-    if info.get('_ui') == 'error':
+    if not info or info.get('_ui') == 'error':
         return False
-    return not is_live_play_status(info.get('status'))
+    status = info.get('status')
+    if is_live_play_status(status) or is_finished_status(status):
+        return False
+    return True
 
 
 @callback(
@@ -943,19 +933,6 @@ def _finish_outputs(game_id, org, report, info):
     )
 
 
-@callback(
-    Output('bs_store', 'data', allow_duplicate=True),
-    Output('pbp_store', 'data', allow_duplicate=True),
-    Output('lineup_store', 'data', allow_duplicate=True),
-    Output('matchup_store', 'data', allow_duplicate=True),
-    Output('rotation_store', 'data', allow_duplicate=True),
-    Output('match_info_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    Input('finished-snapshot-sentinel', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def publish_finished_snapshot(n, game_id, league='plg', _sentinel='finished'):
     hold = (no_update, no_update, no_update, no_update, no_update, no_update)
     if not game_id:
@@ -997,14 +974,6 @@ def publish_finished_snapshot(n, game_id, league='plg', _sentinel='finished'):
         return hold
 
 
-@callback(
-    Output('pbp_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    State('pbp_store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def update_pbp_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
@@ -1032,14 +1001,6 @@ def update_pbp_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-@callback(
-    Output('lineup_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    State('lineup_store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def update_lineup_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
@@ -1067,14 +1028,6 @@ def update_lineup_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-@callback(
-    Output('matchup_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    State('matchup_store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def update_matchup_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
@@ -1114,14 +1067,6 @@ def update_matchup_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-@callback(
-    Output('rotation_store', 'data', allow_duplicate=True),
-    Input('interval-component', 'n_intervals'),
-    Input('game_id', 'children'),
-    Input('game_league', 'children'),
-    State('rotation_store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def update_rotation_store(n, game_id, league='plg', previous=None):
     if not game_id:
         return json.dumps({})
@@ -1158,6 +1103,171 @@ def update_rotation_store(n, game_id, league='plg', previous=None):
     if _stale(game_id, org, generation):
         return no_update
     return _with_generation(payload, generation, game_id, org)
+
+
+_GAME_STORE_KEYS = ('bs', 'pbp', 'lineup', 'matchup', 'rotation', 'info')
+
+
+def _official_digest(org, game_id, status):
+    """Hash the official bodies. The fetch is the refresh; the hash only gates the rebuild."""
+    import hashlib
+
+    from synergy_inbounder.communicator import Communicator, force_body_refresh
+    from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
+
+    calls = (
+        lambda: Communicator.get_game_play_by_play_synergy(
+            org, game_id, live=False, fixture_status=status,
+        ),
+        lambda: Communicator.get_game_team_stats_synergy(
+            org, game_id, live=False, fixture_status=status,
+        ),
+        lambda: Communicator.get_game_team_stats_periods_synergy(
+            org, game_id, live=False, fixture_status=status,
+        ),
+        lambda: Communicator.get_game_player_stats_synergy(
+            org, game_id, live=False, fixture_status=status,
+        ),
+        lambda: Communicator.get_game_player_stats_periods_synergy(
+            org, game_id, live=False, fixture_status=status,
+        ),
+        lambda: Communicator.get_fixture_roster_synergy(
+            org, game_id, fixture_status=status,
+        ),
+    )
+    blobs = []
+    with force_body_refresh(SHORT_CACHE_SECONDS):
+        for call in calls:
+            blobs.append(call())
+    raw = json.dumps(blobs, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
+def _merge_game_stores(previous, values):
+    prev = previous or {}
+    stores = {}
+    for key, value in zip(_GAME_STORE_KEYS, values):
+        if value is no_update:
+            stores[key] = prev.get(key)
+        else:
+            stores[key] = value
+    return stores
+
+
+def _snapshot_kind(status, stores):
+    if is_live_play_status(status):
+        return 'live'
+    if is_finished_status(status):
+        return 'official'
+    info = safe_loads((stores or {}).get('info'))
+    if info.get('_ui') == 'error' or not info.get('status'):
+        return 'official'
+    return 'idle'
+
+
+def background_game_snapshot(org, game_id, league, previous, fingerprint):
+    """Build one game off the request. A matching fingerprint skips the payload."""
+    try:
+        status = lookup_game_status(game_id, org)
+    except Exception:
+        log_unexpected.exception('publisher status failed game=%s', game_id)
+        return {'unchanged': True, 'kind': 'live', 'fingerprint': fingerprint}
+    if is_live_play_status(status):
+        prev = previous or {}
+        values = (
+            update_bs_store(1, game_id, league, prev.get('bs')),
+            update_pbp_store(1, game_id, league, prev.get('pbp')),
+            update_lineup_store(1, game_id, league, prev.get('lineup')),
+            update_matchup_store(1, game_id, league, prev.get('matchup')),
+            update_rotation_store(1, game_id, league, prev.get('rotation')),
+            update_match_info_store(1, game_id, league, prev.get('info')),
+        )
+        stores = _merge_game_stores(previous, values)
+        return {'stores': stores, 'fingerprint': fingerprint, 'kind': 'live'}
+    digest = None
+    if is_finished_status(status):
+        try:
+            digest = _official_digest(org, game_id, status)
+        except Exception:
+            log_unexpected.exception('official fingerprint failed game=%s', game_id)
+            digest = None
+        if digest is not None and fingerprint is not None and digest == fingerprint:
+            return {'unchanged': True, 'fingerprint': digest, 'kind': 'official'}
+        if digest is not None:
+            mark_stale(org, game_id)
+            forget_finished_report(game_id, org)
+    # n=1 is not a page load, so this does not start the lineup warmup thread.
+    values = publish_finished_snapshot(1, game_id, league)
+    stores = _merge_game_stores(previous, values)
+    return {
+        'stores': stores,
+        'fingerprint': digest if digest is not None else fingerprint,
+        'kind': _snapshot_kind(status, stores),
+    }
+
+
+def _reader_interval(current, pending):
+    want = READER_WAIT_MS if pending else LIVE_CADENCE_SECONDS * 1000
+    if current == want:
+        return no_update
+    return want
+
+
+@callback(
+    Output('bs_store', 'data'),
+    Output('pbp_store', 'data'),
+    Output('lineup_store', 'data'),
+    Output('matchup_store', 'data'),
+    Output('rotation_store', 'data'),
+    Output('match_info_store', 'data'),
+    Output('interval-component', 'interval'),
+    Input('interval-component', 'n_intervals'),
+    Input('game_id', 'children'),
+    Input('game_league', 'children'),
+    State('bs_store', 'data'),
+    State('pbp_store', 'data'),
+    State('lineup_store', 'data'),
+    State('matchup_store', 'data'),
+    State('rotation_store', 'data'),
+    State('match_info_store', 'data'),
+    State('interval-component', 'interval'),
+    prevent_initial_call=False,
+)
+def read_game_drawer(n, game_id, league, bs, pbp, lineup, matchup, rotation, info, interval):
+    """Note the watch and copy the drawer. This callback does not call Synergy."""
+    hold = (no_update, no_update, no_update, no_update, no_update, no_update)
+    if not game_id:
+        return hold + (no_update,)
+    org = _organization(league)
+    if org is None:
+        return hold + (no_update,)
+    note_game(org, game_id, league)
+    snap = peek_game(org, game_id)
+    pending = game_pending(org, game_id)
+    interval_out = _reader_interval(interval, pending or snap is None)
+    if snap is None:
+        return hold + (interval_out,)
+    stores = snap.get('stores') or {}
+    current = {
+        'bs': bs,
+        'pbp': pbp,
+        'lineup': lineup,
+        'matchup': matchup,
+        'rotation': rotation,
+        'info': info,
+    }
+
+    def _cell(key):
+        value = stores.get(key)
+        if value is None or value == current.get(key):
+            return no_update
+        return value
+
+    return tuple(_cell(key) for key in _GAME_STORE_KEYS) + (interval_out,)
+
+
+register_game_builder(background_game_snapshot)
+
 
 @callback(
     Output('bs-matrix', 'children'),
