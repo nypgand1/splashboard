@@ -421,6 +421,7 @@ class MatchupTabTests(unittest.TestCase):
         grid = next(node for node in walk(tree) if getattr(node, 'id', None) == 'matchup-grid')
         self.assertIn('braves-lineup-grid', grid.className)
         self.assertNotIn('pagination', grid.dashGridOptions)
+        self.assertNotIn('paginationPageSizeSelector', grid.dashGridOptions)
         self.assertIn(':view', grid.getRowId)
         self.assertIn(':other', grid.getRowId)
         lineup = _field(grid.columnDefs, 'Lineup')

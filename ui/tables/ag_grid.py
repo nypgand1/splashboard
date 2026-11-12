@@ -577,6 +577,7 @@ def _matchup_grid(grid_id='matchup-grid', row_data=None, page_size=None):
     if page_size:
         options['pagination'] = True
         options['paginationPageSize'] = page_size
+        options['paginationPageSizeSelector'] = False
     return dag.AgGrid(
         id=grid_id,
         rowData=list(row_data or []),
@@ -730,6 +731,7 @@ def _ag_grid_from_df(df, page_size=None, filterable_cols=None, pinned_bottom_dat
     if page_size:
         dash_options["pagination"] = True
         dash_options["paginationPageSize"] = page_size
+        dash_options["paginationPageSizeSelector"] = False
     if pinned_bottom_data:
         dash_options["pinnedBottomRowData"] = pinned_bottom_data
     pair_props = {}

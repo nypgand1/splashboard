@@ -1328,6 +1328,7 @@ class TeamStatsLineupTabTests(unittest.TestCase):
         grid = next(node for node in _walk(sized) if getattr(node, 'id', None) == 'ts-lineup-grid')
         self.assertIn('braves-lineup-grid', grid.className)
         self.assertEqual(grid.dashGridOptions['paginationPageSize'], 40)
+        self.assertIs(grid.dashGridOptions['paginationPageSizeSelector'], False)
         self.assertEqual(grid.dashGridOptions['isExternalFilterPresent']['function'], 'false')
         self.assertEqual(grid.rowData[0]['+/-'], 0)
         self.assertTrue(grid.rowData[1]['_opp'])
@@ -1346,8 +1347,10 @@ class TeamStatsLineupTabTests(unittest.TestCase):
         full_grid = next(node for node in _walk(full) if getattr(node, 'id', None) == 'ts-lineup-grid')
         self.assertTrue(full_grid.dashGridOptions.get('pagination'))
         self.assertEqual(full_grid.dashGridOptions['paginationPageSize'], 20)
+        self.assertIs(full_grid.dashGridOptions['paginationPageSizeSelector'], False)
         paired_grid = next(node for node in _walk(paired) if getattr(node, 'id', None) == 'ts-lineup-grid')
         self.assertEqual(paired_grid.dashGridOptions['paginationPageSize'], 40)
+        self.assertIs(paired_grid.dashGridOptions['paginationPageSizeSelector'], False)
 
     def test_matchup_grid_keeps_both_names(self):
         source = {
@@ -1372,6 +1375,7 @@ class TeamStatsLineupTabTests(unittest.TestCase):
         self.assertEqual(grid.rowData[1]['Lineup'], 'Chen-Liu')
         self.assertTrue(grid.dashGridOptions.get('pagination'))
         self.assertEqual(grid.dashGridOptions['paginationPageSize'], 40)
+        self.assertIs(grid.dashGridOptions['paginationPageSizeSelector'], False)
 
 
 def _svg(src):

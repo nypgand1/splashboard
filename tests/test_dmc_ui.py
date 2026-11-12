@@ -422,6 +422,7 @@ class FourStateTests(unittest.TestCase):
             opts = grid.dashGridOptions
             self.assertTrue(opts.get('pagination'))
             self.assertEqual(opts.get('paginationPageSize'), 20)
+            self.assertIs(opts.get('paginationPageSizeSelector'), False)
             self.assertEqual(opts.get('isExternalFilterPresent'), {'function': 'true'})
             lineup_col = next(col for col in grid.columnDefs if col.get('field') == 'Lineup')
             self.assertTrue(lineup_col.get('filter'))
@@ -432,15 +433,19 @@ class FourStateTests(unittest.TestCase):
         five_grids = find_type(five, dag.AgGrid)
         self.assertEqual(len(five_grids), 1)
         self.assertFalse(five_grids[0].dashGridOptions.get('pagination'))
+        self.assertNotIn('paginationPageSizeSelector', five_grids[0].dashGridOptions)
         shown = game_page.update_pane_lineup('4', 'tab-lineup', store, None, True)
         shown_grids = find_type(shown, dag.AgGrid)
         self.assertEqual(shown_grids[0].dashGridOptions.get('paginationPageSize'), 40)
+        self.assertIs(shown_grids[0].dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(
             shown_grids[0].dashGridOptions.get('isExternalFilterPresent'),
             {'function': 'false'},
         )
         five_on = game_page.update_pane_lineup('5', 'tab-lineup', store, None, True)
-        self.assertFalse(find_type(five_on, dag.AgGrid)[0].dashGridOptions.get('pagination'))
+        five_on_grid = find_type(five_on, dag.AgGrid)[0]
+        self.assertFalse(five_on_grid.dashGridOptions.get('pagination'))
+        self.assertNotIn('paginationPageSizeSelector', five_on_grid.dashGridOptions)
 
     def test_lineup_missing_size_uses_render_path_not_title(self):
         teams = ['Home', 'Away']
@@ -478,6 +483,7 @@ class FourStateTests(unittest.TestCase):
         grids = find_type(tree, dag.AgGrid)
         self.assertEqual(len(grids), 2)
         self.assertEqual(grids[0].dashGridOptions.get('paginationPageSize'), 20)
+        self.assertIs(grids[0].dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(grids[0].id, 'lineup-grid-0')
         lineup_col = next(col for col in grids[0].columnDefs if col.get('field') == 'Lineup')
         self.assertTrue(lineup_col.get('filter'))
@@ -504,6 +510,7 @@ class FourStateTests(unittest.TestCase):
         grid = grids[0]
         self.assertEqual(grid.id, 'lineup-grid-0')
         self.assertEqual(grid.dashGridOptions.get('paginationPageSize'), 20)
+        self.assertIs(grid.dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(grid.dashGridOptions['isExternalFilterPresent']['function'], 'true')
         self.assertIn(
             'params && params.data && params.data._opp',
@@ -514,6 +521,7 @@ class FourStateTests(unittest.TestCase):
             dag.AgGrid,
         )[0]
         self.assertEqual(shown.dashGridOptions.get('paginationPageSize'), 40)
+        self.assertIs(shown.dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(shown.dashGridOptions['isExternalFilterPresent']['function'], 'false')
         fields = []
 
