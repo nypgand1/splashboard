@@ -103,6 +103,17 @@ class TeamNameLineTests(unittest.TestCase):
         self.assertEqual(team_name_lines('Chiba Jets'), ('Chiba Jets', None))
         self.assertEqual(team_name_lines('Alvark Tokyo'), ('Alvark Tokyo', None))
         self.assertEqual(team_name_lines('臺北富邦勇士'), ('臺北富邦勇士', None))
+        self.assertEqual(team_name_lines('桃園璞園領航猿'), ('桃園璞園領航猿', None))
+        self.assertEqual(team_name_lines('桃園璞園領航猿隊'), ('桃園璞園領', '航猿隊'))
+        self.assertEqual(
+            team_name_lines('桃園璞園領航猿桃園璞園領'),
+            ('桃園璞園領航', '猿桃園璞園領'),
+        )
+        self.assertEqual(
+            team_name_lines('桃園璞園領航猿桃園璞園領航猿隊'),
+            ('桃園璞園領航猿桃', '園璞園領航猿隊'),
+        )
+        self.assertEqual(team_name_lines('高雄17直播鋼鐵人'), ('高雄17直播', '鋼鐵人'))
         self.assertEqual(team_name_lines('Braves'), ('Braves', None))
         self.assertEqual(team_name_lines('TBD'), ('TBD', None))
         self.assertEqual(team_name_lines('ABCDEFGHIJKLM'), ('ABCDEFGHIJKLM', None))
@@ -131,6 +142,23 @@ class TeamNameLineTests(unittest.TestCase):
         cjk = team_name_text('臺北富邦勇士', 'left')
         self.assertIsInstance(cjk, dmc.Text)
         self.assertEqual(cjk.children, '臺北富邦勇士')
+        seven = team_name_text('桃園璞園領航猿', 'right')
+        self.assertIsInstance(seven, dmc.Text)
+        self.assertEqual(seven.children, '桃園璞園領航猿')
+
+    def test_cjk_split_keeps_both_lines(self):
+        node = team_name_text('桃園璞園領航猿隊', 'left')
+        self.assertIsInstance(node, dmc.Box)
+        wide = node.children[0]
+        narrow = node.children[1]
+        self.assertEqual(wide.children, '桃園璞園領航猿隊')
+        self.assertTrue(wide.truncate)
+        self.assertEqual(
+            [child.children for child in narrow.children],
+            ['桃園璞園領', '航猿隊'],
+        )
+        self.assertFalse(narrow.children[0].truncate)
+        self.assertFalse(narrow.children[1].truncate)
 
 
 class PlayerColumnContractTests(unittest.TestCase):
@@ -172,6 +200,12 @@ class PlayerColumnContractTests(unittest.TestCase):
         self.assertIn('height: 0 !important', wide)
         self.assertIn('overflow: hidden !important', wide)
         self.assertIn('display: flex !important', phone)
+        self.assertIn('.home-schedule-row-body', phone)
+        self.assertIn('.game-info-banner', phone)
+        self.assertIn('padding-left: 8px !important', phone)
+        self.assertIn('padding-right: 8px !important', phone)
+        self.assertIn('.home-schedule-score-line', phone)
+        self.assertIn('gap: 4px !important', phone)
 
 
 class ShortLabelWiringTests(unittest.TestCase):

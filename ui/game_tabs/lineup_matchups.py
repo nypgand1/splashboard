@@ -142,7 +142,7 @@ def _lineup_frame(records):
 
 
 def team_lineup_grid(records, size, show_opp):
-    """One season lineup grid. Size 5 is not paginated."""
+    """One season lineup grid. 20 lineups per page, 40 rows while Show Opp is on."""
     try:
         size_int = int(size)
     except (TypeError, ValueError):
@@ -152,7 +152,7 @@ def team_lineup_grid(records, size, show_opp):
     elif size_int > 5:
         size_int = 5
     show = bool(show_opp)
-    page_size = (40 if show else 20) if size_int < 5 else None
+    page_size = 40 if show else 20
     return _ag_grid_from_df(
         _lineup_frame(records),
         page_size=page_size,
@@ -166,9 +166,9 @@ def team_lineup_grid(records, size, show_opp):
 
 
 def team_matchup_grid(records):
-    """One season matchup grid. Both rows stay mounted."""
+    """One season matchup grid. 20 pairs per page, both rows of a pair together."""
     return dmc.Paper(
-        _matchup_grid('ts-matchup-grid', records),
+        _matchup_grid('ts-matchup-grid', records, page_size=40),
         withBorder=True,
         radius='md',
         shadow='xs',

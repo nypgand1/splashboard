@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 
@@ -227,14 +228,6 @@ def apply_home_filters(
     return data, scope
 
 
-@callback(
-    Output('home-game-list', 'children'),
-    Output('home-filter-store', 'data', allow_duplicate=True),
-    Input('home-interval', 'n_intervals'),
-    Input('home-scope-store', 'data'),
-    State('home-filter-store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def load_home_game_list(n_intervals=0, scope=None, filters=None):
     first = _first_home_load(n_intervals)
     triggered = _triggered_id()
@@ -312,6 +305,20 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
         data['team'] = team
         return page, data
     return page, no_update
+
+
+@callback(
+    Output('home-game-list', 'children'),
+    Output('home-filter-store', 'data', allow_duplicate=True),
+    Input('home-interval', 'n_intervals'),
+    Input('home-scope-store', 'data'),
+    State('home-filter-store', 'data'),
+    prevent_initial_call='initial_duplicate',
+)
+async def serve_home_game_list(n_intervals=0, scope=None, filters=None):
+    return await asyncio.to_thread(
+        load_home_game_list, n_intervals, scope, filters,
+    )
 
 
 @callback(
@@ -816,6 +823,7 @@ def _compact_row(record):
         gap=4,
         px='md',
         py='sm',
+        className='home-schedule-row-body',
     )
     fixture_id = record.get('fixtureId') or ''
     if 'scoreClickable' in record:

@@ -1302,7 +1302,7 @@ class TeamStatsLineupTabTests(unittest.TestCase):
         self.assertIn('No 5-player matchups for this view.', _text_bits(matchups))
         self.assertIn('Switch Game Type, Team, Opponent, Stadium, or Home/Away.', _text_bits(lineup))
 
-    def test_lineup_grid_paginates_sizes_below_five(self):
+    def test_lineup_grid_paginates_every_size(self):
         source = {
             'ok': True, 'select_team': False, 'empty': False,
             'games': [{'fixture_id': 'g1'}], 'team': 'aces',
@@ -1319,6 +1319,10 @@ class TeamStatsLineupTabTests(unittest.TestCase):
             )
             full = team_stats_page.render_team_lineup(
                 'tab-lineup', {'ok': True}, 'aces', 'all', 'all', 'all', '5', False,
+                'PLG', 's', 'REGULAR', None,
+            )
+            paired = team_stats_page.render_team_lineup(
+                'tab-lineup', {'ok': True}, 'aces', 'all', 'all', 'all', '5', True,
                 'PLG', 's', 'REGULAR', None,
             )
         grid = next(node for node in _walk(sized) if getattr(node, 'id', None) == 'ts-lineup-grid')
@@ -1340,7 +1344,10 @@ class TeamStatsLineupTabTests(unittest.TestCase):
         self.assertEqual(len(fields), 27)
         self.assertNotIn('_opp', fields)
         full_grid = next(node for node in _walk(full) if getattr(node, 'id', None) == 'ts-lineup-grid')
-        self.assertNotIn('pagination', full_grid.dashGridOptions)
+        self.assertTrue(full_grid.dashGridOptions.get('pagination'))
+        self.assertEqual(full_grid.dashGridOptions['paginationPageSize'], 20)
+        paired_grid = next(node for node in _walk(paired) if getattr(node, 'id', None) == 'ts-lineup-grid')
+        self.assertEqual(paired_grid.dashGridOptions['paginationPageSize'], 40)
 
     def test_matchup_grid_keeps_both_names(self):
         source = {
@@ -1363,7 +1370,8 @@ class TeamStatsLineupTabTests(unittest.TestCase):
         )
         grid = next(node for node in _walk(paper) if getattr(node, 'id', None) == 'ts-matchup-grid')
         self.assertEqual(grid.rowData[1]['Lineup'], 'Chen-Liu')
-        self.assertNotIn('pagination', grid.dashGridOptions)
+        self.assertTrue(grid.dashGridOptions.get('pagination'))
+        self.assertEqual(grid.dashGridOptions['paginationPageSize'], 40)
 
 
 def _svg(src):

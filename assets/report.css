@@ -1691,6 +1691,14 @@ a.home-schedule-row {
         display: flex !important;
         flex-direction: column !important;
     }
+    .home-schedule-row-body,
+    .game-info-banner {
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+    }
+    .home-schedule-score-line {
+        gap: 4px !important;
+    }
 }
 
 .home-schedule-list .home-schedule-row:last-child {

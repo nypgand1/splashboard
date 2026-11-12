@@ -27,6 +27,58 @@ server = app.server
 stamp_asset_urls(app.css._resources)
 stamp_asset_urls(app.scripts._resources)
 
+# One pass after the parser has waited on the head stylesheets. A failed
+# same-origin sheet has no CSSStyleSheet; clone it once and drop the failed node.
+_STYLESHEET_RETRY = """<script>
+(function () {
+  var links = document.querySelectorAll('head link[rel="stylesheet"]');
+  for (var i = 0; i < links.length; i++) {
+    var link = links[i];
+    if (link.getAttribute('data-retry')) {
+      continue;
+    }
+    var loaded = false;
+    try {
+      loaded = !!link.sheet;
+    } catch (err) {
+      loaded = false;
+    }
+    if (loaded) {
+      continue;
+    }
+    var next = link.cloneNode(false);
+    next.setAttribute('data-retry', '1');
+    if (!link.parentNode) {
+      continue;
+    }
+    link.parentNode.insertBefore(next, link.nextSibling);
+    link.parentNode.removeChild(link);
+  }
+})();
+</script>"""
+
+app.index_string = """<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        """ + _STYLESHEET_RETRY + """
+    </head>
+    <body>
+        <!--[if IE]><script>
+        alert("Dash v2.7+ does not support Internet Explorer. Please use a newer browser.");
+        </script><![endif]-->
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>"""
+
 NAVBAR = create_navbar()
 app.layout = dmc.MantineProvider(
     theme=MANTINE_THEME,

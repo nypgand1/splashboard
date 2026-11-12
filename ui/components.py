@@ -248,29 +248,79 @@ def matchup_score_parts(status, home_score, away_score):
 
 _LATIN = re.compile(r'[A-Za-z]')
 TEAM_NAME_PHONE_LIMIT = 12
+_PHONE_CJK_SLOT = 112
+
+
+def _phone_name_px(text):
+    width = 0
+    for char in text:
+        if contains_cjk(char):
+            width += 16
+        elif char.isdigit():
+            width += 10
+        elif char == ' ':
+            width += 4
+        else:
+            width += 9
+    return width
+
+
+def _cjk_phone_split(text):
+    count = len(text)
+    if count > 3:
+        head, tail = text[:-3], text[-3:]
+        if (
+            _phone_name_px(head) <= _PHONE_CJK_SLOT
+            and _phone_name_px(tail) <= _PHONE_CJK_SLOT
+        ):
+            return head, tail
+    middle = count / 2
+    best = None
+    best_distance = None
+    for cut in range(1, count):
+        if (
+            _phone_name_px(text[:cut]) > _PHONE_CJK_SLOT
+            or _phone_name_px(text[cut:]) > _PHONE_CJK_SLOT
+        ):
+            continue
+        distance = abs(cut - middle)
+        if best_distance is None or distance < best_distance:
+            best = cut
+            best_distance = distance
+    if best is not None:
+        return text[:best], text[best:]
+    cut = (count + 1) // 2
+    if cut <= 0 or cut >= count:
+        return text, None
+    return text[:cut], text[cut:]
 
 
 def team_name_lines(name, limit=TEAM_NAME_PHONE_LIMIT):
-    """Phone split for a long Latin team name.
+    """Phone split for a long team name.
 
+    A Latin name longer than the limit, with a space, splits on words.
     Three words whose first two fit in the limit: those two, then the last
     word. The space counts. Otherwise line 2 is the last two words.
+    A CJK name wider than 112px splits so both lines fit the phone slot.
     """
     text = '' if name is None else str(name).strip()
-    if (
-        not text
-        or contains_cjk(text)
-        or not _LATIN.search(text)
-        or len(text) <= limit
-        or ' ' not in text
-    ):
+    if not text:
         return (text, None)
-    words = text.split()
-    if len(words) == 3 and len(words[0]) + 1 + len(words[1]) <= limit:
-        return (f'{words[0]} {words[1]}', words[2])
-    if len(words) == 2:
-        return (words[0], words[1])
-    return (' '.join(words[:-2]), ' '.join(words[-2:]))
+    if (
+        not contains_cjk(text)
+        and _LATIN.search(text)
+        and len(text) > limit
+        and ' ' in text
+    ):
+        words = text.split()
+        if len(words) == 3 and len(words[0]) + 1 + len(words[1]) <= limit:
+            return (f'{words[0]} {words[1]}', words[2])
+        if len(words) == 2:
+            return (words[0], words[1])
+        return (' '.join(words[:-2]), ' '.join(words[-2:]))
+    if contains_cjk(text) and _phone_name_px(text) > _PHONE_CJK_SLOT:
+        return _cjk_phone_split(text)
+    return (text, None)
 
 
 def team_name_text(name, ta):
@@ -280,6 +330,7 @@ def team_name_text(name, ta):
     if second is None:
         return dmc.Text(shown, **props)
     wide = dmc.Text(shown, className='team-name-wide', **props)
+    cjk_split = contains_cjk(shown)
     narrow = dmc.Stack(
         [
             dmc.Text(
@@ -287,7 +338,7 @@ def team_name_text(name, ta):
                 fw=800,
                 fz='16px',
                 ta=ta,
-                truncate=True,
+                truncate=not cjk_split,
                 style={'lineHeight': '1.15', 'whiteSpace': 'nowrap'},
             ),
             dmc.Text(

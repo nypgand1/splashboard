@@ -1276,6 +1276,7 @@ class HomeScheduleTests(unittest.TestCase):
             ),
         ]))
         tree = home_page.render_schedule_list(records, 'upcoming', None)
+        self.assertEqual(len(_by_class(tree, 'home-schedule-row-body')), 1)
         score_line = _by_class(tree, 'home-schedule-score-line')[0]
         meta_line = _by_class(tree, 'home-schedule-meta-line')[0]
         well = _by_class(tree, 'home-score-well')[0]
@@ -1669,3 +1670,37 @@ class GameLayoutContractTests(unittest.TestCase):
         markup = str(layout)
         self.assertNotIn('bi bi-', markup)
         self.assertNotIn('Loading...', markup)
+
+
+class HomeListCallbackTests(unittest.TestCase):
+    def test_serve_home_game_list_runs_the_builder_off_the_main_thread(self):
+        import asyncio
+        import inspect
+        import threading
+
+        self.assertTrue(inspect.iscoroutinefunction(home_page.serve_home_game_list))
+        seen = {}
+
+        def builder(n_intervals=0, scope=None, filters=None):
+            seen['name'] = threading.current_thread().name
+            seen['main'] = threading.current_thread() is threading.main_thread()
+            return ('page', no_update)
+
+        with patch.object(home_page, 'load_home_game_list', builder):
+            result = asyncio.run(home_page.serve_home_game_list(1, {'league': 'PLG'}, {}))
+        self.assertEqual(result, ('page', no_update))
+        self.assertFalse(seen['main'])
+        self.assertNotEqual(seen['name'], threading.main_thread().name)
+
+    def test_index_retries_a_failed_stylesheet_once(self):
+        html = app.app.index_string
+        css_at = html.find('{%css%}')
+        head_end = html.find('</head>')
+        retry_at = html.find('data-retry', css_at)
+        self.assertGreater(css_at, 0)
+        self.assertGreater(retry_at, css_at)
+        self.assertLess(retry_at, head_end)
+        self.assertIn('link.sheet', html[css_at:head_end])
+        self.assertNotIn('setInterval', html)
+        self.assertIn('{%app_entry%}', html)
+        self.assertIn('{%scripts%}', html)

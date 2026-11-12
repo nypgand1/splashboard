@@ -567,7 +567,16 @@ def _matchup_column_defs():
     return column_defs
 
 
-def _matchup_grid(grid_id='matchup-grid', row_data=None):
+def _matchup_grid(grid_id='matchup-grid', row_data=None, page_size=None):
+    options = {
+        'domLayout': 'autoHeight',
+        'suppressHorizontalScroll': False,
+        'suppressMovableColumns': True,
+        'postSortRows': _LINEUP_POST_SORT,
+    }
+    if page_size:
+        options['pagination'] = True
+        options['paginationPageSize'] = page_size
     return dag.AgGrid(
         id=grid_id,
         rowData=list(row_data or []),
@@ -579,12 +588,7 @@ def _matchup_grid(grid_id='matchup-grid', row_data=None):
             'suppressMovable': True,
             'cellDataType': False,
         },
-        dashGridOptions={
-            'domLayout': 'autoHeight',
-            'suppressHorizontalScroll': False,
-            'suppressMovableColumns': True,
-            'postSortRows': _LINEUP_POST_SORT,
-        },
+        dashGridOptions=options,
         eventListeners=_LINEUP_FIT_EVENTS,
         className='ag-theme-alpine braves-clean-ag-grid braves-lineup-grid',
         style={'width': '100%'},
