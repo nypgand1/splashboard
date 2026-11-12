@@ -401,7 +401,23 @@ def _close_kill_streak(streak, side, kills):
     return []
 
 
-def detect_kills(trips, home_team_id, away_team_id):
+def _split_kill_streak(streak, trip, halftime):
+    """Halftime is the only hard cut. A trip that starts at the cut begins a new streak."""
+    if not streak or halftime is None:
+        return False
+    try:
+        cut = float(halftime)
+        previous = float(streak[-1].get('start'))
+        start = float(trip.get('start'))
+        end = float(trip.get('end'))
+    except (TypeError, ValueError):
+        return False
+    if previous < cut <= start:
+        return True
+    return start < cut <= end and previous < cut
+
+
+def detect_kills(trips, home_team_id, away_team_id, halftime=None):
     """One kill is three or more consecutive opponent trips that score 0."""
     kills = []
     for side, offense_id in (('home', away_team_id), ('away', home_team_id)):
@@ -411,10 +427,12 @@ def detect_kills(trips, home_team_id, away_team_id):
         for trip in trips or []:
             if not _same_id(trip.get('offense'), offense_id):
                 continue
-            if int(trip.get('points') or 0) <= 0:
-                streak.append(trip)
-            else:
+            if int(trip.get('points') or 0) > 0:
                 streak = _close_kill_streak(streak, side, kills)
+                continue
+            if _split_kill_streak(streak, trip, halftime):
+                streak = _close_kill_streak(streak, side, kills)
+            streak.append(trip)
         _close_kill_streak(streak, side, kills)
     kills.sort(key=lambda kill: (kill['start'], 0 if kill['side'] == 'home' else 1))
     return kills
@@ -678,7 +696,9 @@ def build_rotation_payload(
     halftime = next((period['end'] for period in periods if period.get('id') == 2), None)
     if marks:
         runs = detect_runs(score_events, min_delta=8, halftime=halftime)
-        kills = detect_kills(possession_trips(df, periods), home_team_id, away_team_id)
+        kills = detect_kills(
+            possession_trips(df, periods), home_team_id, away_team_id, halftime=halftime,
+        )
     else:
         runs = []
         kills = []

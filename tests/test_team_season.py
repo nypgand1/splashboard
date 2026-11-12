@@ -892,3 +892,124 @@ class PayloadCacheTests(unittest.TestCase):
         self.assertEqual(self.pbp_calls, [])
         self.assertFalse(totals.called)
         self.assertFalse(periods.called)
+
+
+def _sort_cell(text):
+    return {'text': text, 'winner': False, 'opp_best': False}
+
+
+def _sort_row(name, pts, minutes='10:00', summary=False, pace='70.0', ppp='1.00'):
+    row = {
+        'Team': _sort_cell(name),
+        'GP': _sort_cell('' if name == 'Opp' else '2'),
+        'Min': _sort_cell('' if name == 'Opp' else minutes),
+        'PTS': _sort_cell(pts),
+        'TO': _sort_cell('1.0'),
+        'Pace': _sort_cell(pace),
+        'PPP': _sort_cell(ppp),
+    }
+    if summary:
+        row['summary'] = True
+    if name == 'Opp':
+        row['opp'] = True
+    return row
+
+
+class TeamCardSortTests(unittest.TestCase):
+    def _cards(self):
+        names = [('Aces', '10.0', '9:00', '60.0'), ('Braves', '20.0', '10:00', '80.0')]
+        rows = [_sort_row(name, pts, minutes, pace=pace) for name, pts, minutes, pace in names]
+        opp = [_sort_row('Opp', '4.0' if name == 'Aces' else '8.0') for name, _pts, _minutes, _pace in names]
+        cards = {}
+        for card_id, columns in (
+            ('team', ['Team', 'GP', 'Min', 'PTS', 'TO']),
+            ('key', ['Team', 'GP']),
+            ('pace', ['Team', 'GP', 'Pace']),
+            ('advanced', ['Team', 'GP', 'PPP']),
+        ):
+            cards[card_id] = {
+                'id': card_id,
+                'columns': columns,
+                'rows': rows,
+                'opp_rows': opp,
+            }
+        return cards
+
+    def _names(self, cards, card_id='team'):
+        return [row['Team']['text'] for row in cards[card_id]['rows']]
+
+    def test_stat_cycle_and_team_cycle(self):
+        from synergy_reporter.team_season import next_team_sort
+
+        desc = next_team_sort(None, 'PTS')
+        self.assertEqual(desc, {'column': 'PTS', 'direction': 'desc'})
+        asc = next_team_sort(desc, 'PTS')
+        self.assertEqual(asc['direction'], 'asc')
+        self.assertIsNone(next_team_sort(asc, 'PTS'))
+        team = next_team_sort(desc, 'Team')
+        self.assertEqual(team, {'column': 'Team', 'direction': 'asc'})
+        self.assertEqual(next_team_sort(team, 'Team')['direction'], 'desc')
+        self.assertIsNone(next_team_sort(next_team_sort(team, 'Team'), 'Team'))
+
+    def test_points_desc_keeps_opp_under_the_team_and_shares_the_order(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        ordered = order_team_cards(self._cards(), {'column': 'PTS', 'direction': 'desc'})
+        self.assertEqual(self._names(ordered), ['Braves', 'Aces'])
+        self.assertEqual(
+            [row['Team']['text'] for row in ordered['team']['opp_rows']],
+            ['Opp', 'Opp'],
+        )
+        self.assertEqual(ordered['team']['opp_rows'][0]['PTS']['text'], '8.0')
+        self.assertEqual(self._names(ordered, 'pace'), ['Braves', 'Aces'])
+        self.assertEqual(ordered['pace']['rows'][0]['Pace']['text'], '80.0')
+        self.assertEqual(self._names(ordered, 'advanced'), ['Braves', 'Aces'])
+
+    def test_blank_ranks_below_zero_and_minutes_sort_as_seconds(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        cards = self._cards()
+        cards['team']['rows'] = [
+            _sort_row('Aces', '0.0', '9:00'),
+            _sort_row('Braves', '', '10:00'),
+        ]
+        desc = order_team_cards(cards, {'column': 'PTS', 'direction': 'desc'})
+        asc = order_team_cards(cards, {'column': 'PTS', 'direction': 'asc'})
+        self.assertEqual(self._names(desc), ['Aces', 'Braves'])
+        self.assertEqual(self._names(asc), ['Braves', 'Aces'])
+        minutes = order_team_cards(cards, {'column': 'Min', 'direction': 'desc'})
+        self.assertEqual(self._names(minutes), ['Braves', 'Aces'])
+
+    def test_turnovers_desc_puts_the_larger_number_first(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        cards = self._cards()
+        cards['team']['rows'][0]['TO'] = _sort_cell('16.0')
+        cards['team']['rows'][1]['TO'] = _sort_cell('10.0')
+        ordered = order_team_cards(cards, {'column': 'TO', 'direction': 'desc'})
+        self.assertEqual(self._names(ordered), ['Aces', 'Braves'])
+
+    def test_summary_stays_pinned(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        cards = self._cards()
+        cards['team']['rows'] = [
+            _sort_row('Aces', '1.0', summary=True),
+            _sort_row('Aces vs', '5.0'),
+            _sort_row('Aces vs', '30.0'),
+        ]
+        cards['team']['opp_rows'] = [
+            _sort_row('Opp', '1.0', summary=True),
+            _sort_row('Opp', '2.0'),
+            _sort_row('Opp', '9.0'),
+        ]
+        for name in ('key', 'pace', 'advanced'):
+            cards[name]['rows'] = list(cards['team']['rows'])
+            cards[name]['opp_rows'] = list(cards['team']['opp_rows'])
+        ordered = order_team_cards(cards, {'column': 'PTS', 'direction': 'desc'})
+        self.assertEqual(
+            [row['PTS']['text'] for row in ordered['team']['rows']],
+            ['1.0', '30.0', '5.0'],
+        )
+        self.assertTrue(ordered['team']['rows'][0].get('summary'))
+        self.assertEqual(ordered['team']['opp_rows'][1]['PTS']['text'], '9.0')

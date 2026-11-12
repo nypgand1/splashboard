@@ -14,6 +14,7 @@ from synergy_reporter.rotation import (
     stop_seam_spacing,
     clock_to_seconds,
     contrast_text_color,
+    detect_kills,
     detect_runs,
     format_kill_label,
     format_run_label,
@@ -426,6 +427,50 @@ class KillDetectionTests(unittest.TestCase):
         self.assertEqual(kill['stops'], 5)
         self.assertAlmostEqual(kill['start'], 20.0)
         self.assertAlmostEqual(kill['end'], 100.0)
+
+    def test_halftime_splits_a_stop_streak_and_overtime_does_not(self):
+        home, away = 'home-id', 'away-id'
+        before = [
+            {'offense': away, 'points': 0, 'start': 10, 'end': 20},
+            {'offense': away, 'points': 0, 'start': 30, 'end': 40},
+        ]
+        after = [
+            {'offense': away, 'points': 0, 'start': 70, 'end': 80},
+        ]
+        self.assertEqual(detect_kills(before + after, home, away, halftime=65), [])
+        self.assertEqual(detect_kills(before + after, home, away)[0]['stops'], 3)
+        both = before + [
+            {'offense': away, 'points': 0, 'start': 50, 'end': 60},
+        ] + [
+            {'offense': away, 'points': 0, 'start': 80, 'end': 90},
+            {'offense': away, 'points': 0, 'start': 100, 'end': 110},
+            {'offense': away, 'points': 0, 'start': 120, 'end': 130},
+        ]
+        kills = detect_kills(both, home, away, halftime=65)
+        self.assertEqual([kill['stops'] for kill in kills], [3, 3])
+        self.assertLess(kills[0]['end'], 65)
+        self.assertGreaterEqual(kills[1]['start'], 65)
+        late = [
+            {'offense': away, 'points': 0, 'start': 2700, 'end': 2710},
+            {'offense': away, 'points': 0, 'start': 2720, 'end': 2730},
+            {'offense': away, 'points': 0, 'start': 2800, 'end': 2810},
+        ]
+        self.assertEqual(detect_kills(late, home, away, halftime=1440)[0]['stops'], 3)
+
+    def test_payload_splits_stops_across_halftime(self):
+        home, away = 'home-id', 'away-id'
+        payload = _kill_payload(home, away, [
+            {'periodId': 2, 'clock': 'PT01M00S', 'eventType': 'period', 'subType': 'start'},
+            {'periodId': 2, 'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 2, 'clock': 'PT00M20S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 2, 'clock': 'PT00M05S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 3, 'clock': 'PT01M00S', 'eventType': 'period', 'subType': 'start'},
+            {'periodId': 3, 'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 3, 'clock': 'PT00M20S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 3, 'clock': 'PT00M05S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+        ])
+        self.assertEqual([kill['stops'] for kill in payload['kills']], [3, 3])
+        self.assertLess(payload['kills'][0]['end'], payload['kills'][1]['start'])
 
     def test_technical_free_throw_does_not_break_or_count(self):
         home, away = 'home-id', 'away-id'

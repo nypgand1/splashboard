@@ -380,7 +380,8 @@ dagComponentFuncs.StarterCell = function (props) {
             if (!host.classList.contains('is-scrollable')) {
                 return;
             }
-            if (event.target.closest('.ag-header, .ag-header-cell-resize, button, input, textarea, [contenteditable="true"]')) {
+            var sortHit = event.target.closest('.ts-sort-hit');
+            if (!sortHit && event.target.closest('.ag-header, .ag-header-cell-resize, button, input, textarea, [contenteditable="true"]')) {
                 return;
             }
             dragging = true;
@@ -389,7 +390,9 @@ dagComponentFuncs.StarterCell = function (props) {
             startScroll = scroller.scrollLeft;
             host.classList.add('is-dragging');
             scroller.classList.add('is-dragging');
-            event.preventDefault();
+            if (!sortHit) {
+                event.preventDefault();
+            }
         });
 
         window.addEventListener('mousemove', function (event) {

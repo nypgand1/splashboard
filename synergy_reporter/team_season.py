@@ -335,6 +335,115 @@ def _parse_stat(text):
         return None
 
 
+def next_team_sort(current, column):
+    """Stat columns cycle desc, asc, then clear. TEAM cycles asc, desc, then clear."""
+    column = '' if column is None else str(column)
+    if not column:
+        return None
+    direction = None
+    if isinstance(current, dict) and current.get('column') == column:
+        direction = current.get('direction')
+    cycle = ('asc', 'desc', None) if column == 'Team' else ('desc', 'asc', None)
+    if direction not in cycle:
+        nxt = cycle[0]
+    else:
+        nxt = cycle[(cycle.index(direction) + 1) % len(cycle)]
+    if nxt is None:
+        return None
+    return {'column': column, 'direction': nxt}
+
+
+def _cell_text(row, column):
+    if not isinstance(row, dict):
+        return ''
+    cell = row.get(column)
+    if isinstance(cell, dict):
+        text = cell.get('text')
+    else:
+        text = cell
+    if text is None:
+        return ''
+    return str(text)
+
+
+def _sort_number(text):
+    raw = '' if text is None else str(text).strip()
+    if ':' in raw:
+        parts = raw.split(':')
+        if len(parts) == 2:
+            try:
+                minutes = int(parts[0])
+                seconds = int(parts[1])
+            except ValueError:
+                return None
+            if minutes < 0 or seconds < 0:
+                return None
+            return minutes * 60 + seconds
+    return _parse_stat(raw)
+
+
+def _pair_order(rows, column, direction):
+    pinned = [
+        index for index, row in enumerate(rows)
+        if isinstance(row, dict) and row.get('summary')
+    ]
+    pinned_set = set(pinned)
+    movable = [index for index in range(len(rows)) if index not in pinned_set]
+
+    def team_key(index):
+        text = _cell_text(rows[index], column)
+        if direction == 'desc':
+            return (tuple(-ord(ch) for ch in text), -index)
+        return (text, index)
+
+    def number_key(index):
+        value = _sort_number(_cell_text(rows[index], column))
+        if direction == 'desc':
+            if value is None:
+                return (1, 0, index)
+            return (0, -value, index)
+        if value is None:
+            return (0, 0, index)
+        return (1, value, index)
+
+    movable.sort(key=team_key if column == 'Team' else number_key)
+    return pinned + movable
+
+
+def order_team_cards(cards, sort):
+    """Reorder every card by one team-row column. Opp stays under its team."""
+    if not isinstance(cards, dict) or not isinstance(sort, dict):
+        return cards
+    column = sort.get('column')
+    direction = sort.get('direction')
+    if not column or direction not in ('asc', 'desc'):
+        return cards
+    source = None
+    for name in ('team', 'key', 'pace', 'advanced'):
+        card = cards.get(name)
+        if isinstance(card, dict) and column in (card.get('columns') or []):
+            source = card
+            break
+    if source is None:
+        return cards
+    rows = list(source.get('rows') or [])
+    order = _pair_order(rows, column, direction)
+    if order == list(range(len(rows))):
+        return cards
+    ordered = {}
+    for name, card in cards.items():
+        if not isinstance(card, dict):
+            ordered[name] = card
+            continue
+        card_rows = list(card.get('rows') or [])
+        opp_rows = list(card.get('opp_rows') or [])
+        copied = dict(card)
+        copied['rows'] = [card_rows[index] for index in order if index < len(card_rows)]
+        copied['opp_rows'] = [opp_rows[index] for index in order if index < len(opp_rows)]
+        ordered[name] = copied
+    return ordered
+
+
 def _paint_winners(rows, columns, flag='winner'):
     for column in columns:
         if column in _UNCOLORED:

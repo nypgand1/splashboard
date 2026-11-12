@@ -95,7 +95,7 @@ class TeamStatsCallbackTests(unittest.TestCase):
         clientside = [item for item in listed if item.get('clientside_function')]
         server = [item for item in listed if not item.get('clientside_function')]
         self.assertEqual(len(clientside), 2)
-        self.assertEqual(len(server), 3)
+        self.assertEqual(len(server), 4)
         intent_body = next(
             item for item in clientside
             if _pairs(item['inputs']) == [('ts-intent', 'data')]
@@ -130,12 +130,17 @@ class TeamStatsCallbackTests(unittest.TestCase):
             item for item in server
             if _pairs(item['inputs']) == [('ts-interval', 'n_intervals')]
         ]
-        download = [
+        sort_cb = [
             item for item in server
-            if item not in render and item not in drawer
+            if any('ts-sort-th' in str(dep.get('id')) for dep in item['inputs'])
         ]
         self.assertEqual(len(render), 1)
         self.assertEqual(len(drawer), 1)
+        self.assertEqual(len(sort_cb), 1)
+        download = [
+            item for item in server
+            if item not in render and item not in drawer and item not in sort_cb
+        ]
         self.assertEqual(len(download), 1)
         # Dash stores initial_duplicate as "do not skip the first call".
         self.assertFalse(drawer[0]['prevent_initial_call'])
@@ -159,6 +164,7 @@ class TeamStatsCallbackTests(unittest.TestCase):
                 ('ts-league', 'value'),
                 ('ts-season', 'value'),
                 ('ts-game-type', 'value'),
+                ('ts-sort', 'data'),
             ],
         )
         self.assertNotIn('ts-opponent', {item['id'] for item in intent_body['inputs']})
@@ -1148,3 +1154,97 @@ class TeamStatsShotChartTests(unittest.TestCase):
 
 def _svg(src):
     return base64.b64decode(src.split(',', 1)[1]).decode('utf-8')
+
+
+class TeamStatsSortChromeTests(unittest.TestCase):
+    def test_sort_store_is_memory_and_filters_clear_it(self):
+        from dash import dcc
+
+        layout = team_stats_page.layout()
+        store = next(node for node in _walk(layout) if getattr(node, 'id', None) == 'ts-sort')
+        self.assertIsInstance(store, dcc.Store)
+        self.assertEqual(store.storage_type, 'memory')
+        self.assertIsNone(store.data)
+        listed = _callbacks('ts-sort.data')
+        self.assertEqual(len(listed), 2)
+        clear = next(
+            item for item in listed
+            if ('ts-intent', 'data') in _pairs(item['inputs'])
+        )
+        self.assertEqual(
+            _pairs(clear['inputs']),
+            [
+                ('ts-intent', 'data'),
+                ('ts-team', 'value'),
+                ('ts-opponent', 'value'),
+                ('ts-stadium', 'value'),
+                ('ts-site', 'value'),
+            ],
+        )
+        self.assertNotIn('ts-period', {item['id'] for item in clear['inputs']})
+        self.assertNotIn('ts-show-opp', {item['id'] for item in clear['inputs']})
+        self.assertIsNone(team_stats_page.clear_team_stats_sort(None, None, None, None, None))
+
+    def test_leaf_headers_are_buttons_and_group_labels_are_not(self):
+        from dash import html
+
+        paper = team_stats_page._paper({
+            'id': 'team',
+            'columns': ['Team', 'GP', 'Min', '2M', '2A', '2FG%', 'PTS'],
+            'rows': [],
+            'opp_rows': [],
+        }, {'column': 'PTS', 'direction': 'desc'})
+        headers = [th for th in _walk(paper) if isinstance(th, dmc.TableTh)]
+        buttons = [node for node in _walk(paper) if isinstance(node, html.Button)]
+        labels = []
+        for button in buttons:
+            text = next(child for child in button.children if isinstance(child, str))
+            labels.append((button.id['column'], text, button.className))
+        self.assertIn(('PTS', 'PT', 'ts-sort-hit is-desc'), labels)
+        self.assertIn(('2M', 'M', 'ts-sort-hit'), labels)
+        self.assertIn(('Team', 'TEAM', 'ts-sort-hit'), labels)
+        self.assertTrue(any(th.children == '2PT' for th in headers))
+        plain = team_stats_page._header_rows('team', ['Team', 'PTS'])
+        self.assertTrue(all(isinstance(th.children, str) for th in _walk(plain[0]) if isinstance(th, dmc.TableTh)))
+
+    def test_period_keeps_sort_and_a_team_change_drops_it(self):
+        payload = _payload()
+        sort = {'column': 'PTS', 'direction': 'desc'}
+        with patch.object(team_stats_page, '_triggered_id', return_value='ts-period'), \
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload), \
+                patch.object(team_stats_page, '_view', return_value='cards') as view:
+            team_stats_page.render_team_stats(
+                None, '1', 'all', 'all', 'all', 'all', 'PLG', 's', 'REGULAR', sort,
+            )
+        self.assertEqual(view.call_args.args[1], sort)
+        with patch.object(team_stats_page, '_triggered_id', return_value='ts-team'), \
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload), \
+                patch.object(team_stats_page, '_view', return_value='cards') as view:
+            team_stats_page.render_team_stats(
+                None, 'all', 'all', 'all', 'all', 'aces', 'PLG', 's', 'REGULAR', sort,
+            )
+        self.assertIsNone(view.call_args.args[1])
+
+    def test_header_click_sorts_from_the_cached_chip_path(self):
+        payload = _payload()
+        with patch.object(team_stats_page, 'ctx') as fake, \
+                patch.object(team_stats_page, 'team_stats_payload', return_value=payload) as fetch, \
+                patch.object(team_stats_page, '_view', return_value='cards') as view:
+            fake.triggered = [{'value': 0}]
+            fake.triggered_id = {'type': 'ts-sort-th', 'card': 'team', 'column': 'PTS'}
+            with self.assertRaises(PreventUpdate):
+                team_stats_page.sort_team_stats_cards(
+                    [0], {'column': 'PTS', 'direction': 'desc'},
+                    'PLG', 's', 'REGULAR', '1', 'all', 'all', 'all', 'aces',
+                )
+            fake.triggered = [{'value': 1}]
+            sort, body = team_stats_page.sort_team_stats_cards(
+                [1], None, 'PLG', 's', 'REGULAR', '1', 'opp', 'gym', 'home', 'aces',
+            )
+        self.assertEqual(sort, {'column': 'PTS', 'direction': 'desc'})
+        self.assertEqual(body, 'cards')
+        self.assertEqual(fetch.call_args.kwargs['reason'], 'chip')
+        self.assertEqual(fetch.call_args.kwargs['period'], '1')
+        self.assertEqual(fetch.call_args.kwargs['team'], 'aces')
+        self.assertEqual(view.call_args.args[1], sort)
+        self.assertFalse(fetch.call_args.kwargs.get('force', False))

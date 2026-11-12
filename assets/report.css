@@ -1218,6 +1218,43 @@ body {
     font-size: 13px;
 }
 
+button.ts-sort-hit {
+    appearance: none;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+button.ts-sort-hit .ts-sort-mark {
+    display: none;
+}
+
+button.ts-sort-hit.is-asc .ts-sort-mark,
+button.ts-sort-hit.is-desc .ts-sort-mark {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+}
+
+button.ts-sort-hit.is-desc .ts-sort-mark {
+    border-top: 5px solid #64748b;
+}
+
+button.ts-sort-hit.is-asc .ts-sort-mark {
+    border-bottom: 5px solid #64748b;
+}
+
 .braves-clean-table td {
     text-align: center;
     padding: 7px 10px;

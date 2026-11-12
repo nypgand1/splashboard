@@ -2,6 +2,7 @@
 import json
 
 from dash import (
+    ALL,
     Input,
     Output,
     State,
@@ -48,6 +49,8 @@ from synergy_reporter.team_season import (
     STADIUM_ALL_LABEL,
     TEAM_ALL,
     TEAM_ALL_LABEL,
+    next_team_sort,
+    order_team_cards,
     rotation_games,
     schedule_chrome,
     team_stats_payload,
@@ -115,12 +118,12 @@ def _stamp(text):
     return last_update_line(text)
 
 
-def _view(payload):
+def _view(payload, sort=None):
     if not payload or not payload.get('ok'):
         return error_alert((payload or {}).get('message') or ERROR_GAME)
     if payload.get('empty') or not payload.get('cards'):
         return empty_state(payload.get('message') or '', payload.get('next_step') or '')
-    return _cards_view(payload['cards'])
+    return _cards_view(order_team_cards(payload['cards'], sort), sort)
 
 
 def _rotation_pane():
@@ -263,6 +266,7 @@ def layout():
             dcc.Store(id='ts-filter-pack-sync'),
             dcc.Store(id='ts-sizer-sync'),
             dcc.Store(id='ts-show-opp-memory'),
+            dcc.Store(id='ts-sort', data=None, storage_type='memory'),
             dcc.Store(id='ts-opponent-width', data=[OPPONENT_ALL_LABEL]),
             dcc.Store(
                 id='ts-applied',
@@ -706,7 +710,7 @@ def _load(
         }
 
 
-def _paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL):
+def _paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL, sort=None):
     seasons = payload.get('seasons') or _season_data(league or 'PLG')
     selected_season = payload.get('season_id') or season_id
     types = payload.get('game_types') or []
@@ -756,7 +760,7 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
         'ok': payload.get('ok') is not False,
     }
     return (
-        _view(payload),
+        _view(payload, sort),
         _stamp(payload.get('stamp')),
         seasons,
         season_out,
@@ -821,9 +825,10 @@ def _view_outputs():
     )
 
 
-def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL):
+def _local_paint(payload, league, season_id, game_type, period, opponent, stadium, site, team=TEAM_ALL, sort=None):
     painted = _paint(
         payload, league, season_id, game_type, period, opponent, stadium, site, team,
+        sort=sort,
     )
     # applied stays. The slice outputs follow it. The job slot is the caller's.
     return painted[:10] + (no_update,) + painted[11:]
@@ -931,9 +936,10 @@ def _paint_from_chrome(
     State('ts-league', 'value'),
     State('ts-season', 'value'),
     State('ts-game-type', 'value'),
+    State('ts-sort', 'data'),
     prevent_initial_call='initial_duplicate',
 )
-def render_team_stats(intent, period, opponent, stadium, site, team, league, season_id, game_type):
+def render_team_stats(intent, period, opponent, stadium, site, team, league, season_id, game_type, sort=None):
     triggered = _triggered_id()
     # The click lives on ts-intent. Control State can still be the previous
     # value when this callback runs, so a league, season, or game-type click
@@ -964,6 +970,7 @@ def render_team_stats(intent, period, opponent, stadium, site, team, league, sea
         )
         return _local_paint(
             payload, league, season_id, game_type, period, opponent, stadium, site, team,
+            sort=sort if reason == 'chip' else None,
         ) + (no_update,)
     payload = _load(
         league, season_id, None, 'all', 'scope',
@@ -972,6 +979,51 @@ def render_team_stats(intent, period, opponent, stadium, site, team, league, sea
     return _paint(
         payload, league, season_id, game_type, period, opponent, stadium, site, team,
     ) + (no_update,)
+
+
+@callback(
+    Output('ts-sort', 'data', allow_duplicate=True),
+    Input('ts-intent', 'data'),
+    Input('ts-team', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    prevent_initial_call=True,
+)
+def clear_team_stats_sort(_intent, _team, _opponent, _stadium, _site):
+    return None
+
+
+@callback(
+    Output('ts-sort', 'data', allow_duplicate=True),
+    Output('ts-body', 'children', allow_duplicate=True),
+    Input({'type': 'ts-sort-th', 'card': ALL, 'column': ALL}, 'n_clicks'),
+    State('ts-sort', 'data'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-period', 'value'),
+    State('ts-opponent', 'value'),
+    State('ts-stadium', 'value'),
+    State('ts-site', 'value'),
+    State('ts-team', 'value'),
+    prevent_initial_call=True,
+)
+def sort_team_stats_cards(
+    _clicks, sort, league, season_id, game_type, period, opponent, stadium, site, team,
+):
+    triggered = ctx.triggered or []
+    if not triggered or not triggered[0].get('value'):
+        raise PreventUpdate
+    ident = ctx.triggered_id
+    if not isinstance(ident, dict) or not ident.get('column'):
+        raise PreventUpdate
+    nxt = next_team_sort(sort, ident.get('column'))
+    payload = _load(
+        league, season_id, game_type, period or 'all', 'chip',
+        opponent, stadium, site, team,
+    )
+    return nxt, _view(payload, nxt)
 
 
 @callback(

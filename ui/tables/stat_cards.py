@@ -43,7 +43,24 @@ def stat_header_label(name):
     return TAIL_LABEL.get(name, name)
 
 
-def stat_th(label, kind, span=None, cols=None, edge=False):
+def _sort_control(label, column, card_id, sort_state):
+    direction = None
+    if isinstance(sort_state, dict) and sort_state.get('column') == column:
+        if sort_state.get('direction') in ('asc', 'desc'):
+            direction = sort_state.get('direction')
+    class_name = 'ts-sort-hit'
+    if direction:
+        class_name += ' is-' + direction
+    return html.Button(
+        [label, html.Span(className='ts-sort-mark')],
+        id={'type': 'ts-sort-th', 'card': card_id, 'column': column},
+        n_clicks=0,
+        type='button',
+        className=class_name,
+    )
+
+
+def stat_th(label, kind, span=None, cols=None, edge=False, column=None, card_id=None, sort_state=None):
     table_props = {}
     if span:
         table_props['rowSpan'] = span
@@ -52,7 +69,10 @@ def stat_th(label, kind, span=None, cols=None, edge=False):
     props = {'className': kind}
     if table_props:
         props['tableProps'] = table_props
-    return dmc.TableTh(label, **props)
+    content = label
+    if column and card_id:
+        content = _sort_control(label, column, card_id, sort_state)
+    return dmc.TableTh(content, **props)
 
 
 def boundary_columns(segments):
@@ -111,7 +131,7 @@ def edge_columns(card_id, columns, include_extra_tails=False):
     return boundary_columns(card_segments(card_id, columns, include_extra_tails=include_extra_tails))
 
 
-def span_labels(columns, names, edges):
+def span_labels(columns, names, edges, card_id=None, sort_state=None):
     present = set(columns)
     nodes = []
     for name in names:
@@ -123,30 +143,42 @@ def span_labels(columns, names, edges):
             label = 'GP'
         else:
             label = name.upper()
-        nodes.append(stat_th(label, 'braves-th-span', span=2, edge=name in edges))
+        nodes.append(stat_th(
+            label, 'braves-th-span', span=2, edge=name in edges,
+            column=name if card_id else None,
+            card_id=card_id,
+            sort_state=sort_state,
+        ))
     return nodes
 
 
-def card_header_rows(card_id, columns, include_extra_tails=False):
+def card_header_rows(card_id, columns, include_extra_tails=False, sort_state=None, sortable=False):
     present = set(columns)
     edges = edge_columns(card_id, columns, include_extra_tails=include_extra_tails)
+    sort_card = card_id if sortable else None
     if card_id == 'advanced':
         labels = []
         for column in columns:
             if column == 'Team':
-                labels.append('TEAM')
+                labels.append(('TEAM', column))
             elif column == 'GP':
-                labels.append('GP')
+                labels.append(('GP', column))
             else:
-                labels.append(column)
+                labels.append((column, column))
         return [dmc.TableTr([
-            stat_th(label, 'braves-th-single') for label in labels
+            stat_th(
+                label, 'braves-th-single',
+                column=column if sort_card else None,
+                card_id=sort_card,
+                sort_state=sort_state,
+            )
+            for label, column in labels
         ])]
 
     top = []
     sub = []
     if card_id == 'team':
-        top.extend(span_labels(columns, ('Team', 'GP', 'Min'), edges))
+        top.extend(span_labels(columns, ('Team', 'GP', 'Min'), edges, sort_card, sort_state))
         for title, members, leaves in SHOT_GROUPS:
             if not any(column in present for column in members):
                 continue
@@ -154,7 +186,12 @@ def card_header_rows(card_id, columns, include_extra_tails=False):
                 title, 'braves-th-group', cols=len(leaves), edge=members[-1] in edges,
             ))
             sub.extend(
-                stat_th(leaf, 'braves-th-sub', edge=column in edges)
+                stat_th(
+                    leaf, 'braves-th-sub', edge=column in edges,
+                    column=column if sort_card else None,
+                    card_id=sort_card,
+                    sort_state=sort_state,
+                )
                 for column, leaf in zip(members, leaves)
             )
         tails = COUNT_TAILS + EXTRA_TAILS if include_extra_tails else COUNT_TAILS
@@ -165,9 +202,12 @@ def card_header_rows(card_id, columns, include_extra_tails=False):
                     'braves-th-span-tight',
                     span=2,
                     edge=column in edges,
+                    column=column if sort_card else None,
+                    card_id=sort_card,
+                    sort_state=sort_state,
                 ))
     elif card_id == 'key':
-        top.extend(span_labels(columns, ('Team', 'GP'), edges))
+        top.extend(span_labels(columns, ('Team', 'GP'), edges, sort_card, sort_state))
         for name, pairs in KEY_STAT_GROUPS:
             found = [(column, label) for column, label in pairs if column in present]
             if not found:
@@ -176,13 +216,23 @@ def card_header_rows(card_id, columns, include_extra_tails=False):
                 name, 'braves-th-group', cols=len(found), edge=found[-1][0] in edges,
             ))
             sub.extend(
-                stat_th(label, 'braves-th-sub', edge=column in edges)
+                stat_th(
+                    label, 'braves-th-sub', edge=column in edges,
+                    column=column if sort_card else None,
+                    card_id=sort_card,
+                    sort_state=sort_state,
+                )
                 for column, label in found
             )
         if 'BP' in present:
-            top.append(stat_th('BP', 'braves-th-span', span=2, edge='BP' in edges))
+            top.append(stat_th(
+                'BP', 'braves-th-span', span=2, edge='BP' in edges,
+                column='BP' if sort_card else None,
+                card_id=sort_card,
+                sort_state=sort_state,
+            ))
     else:
-        top.extend(span_labels(columns, ('Team', 'GP', 'Pace'), edges))
+        top.extend(span_labels(columns, ('Team', 'GP', 'Pace'), edges, sort_card, sort_state))
         factors = [column for column in ('eFG%', 'TO%', 'ORB%', 'FT-R') if column in present]
         if factors:
             top.append(stat_th(
@@ -190,7 +240,13 @@ def card_header_rows(card_id, columns, include_extra_tails=False):
                 edge=factors[-1] in edges,
             ))
             sub.extend(
-                stat_th(column, 'braves-th-sub', edge=column in edges) for column in factors
+                stat_th(
+                    factor, 'braves-th-sub', edge=factor in edges,
+                    column=factor if sort_card else None,
+                    card_id=sort_card,
+                    sort_state=sort_state,
+                )
+                for factor in factors
             )
     rows = [dmc.TableTr(top)]
     if sub:
@@ -423,10 +479,15 @@ def team_stats_body_rows(card):
     return rows
 
 
-def team_stats_paper(card):
+def team_stats_paper(card, sort_state=None):
     table = dmc.Table(
         [
-            dmc.TableThead(card_header_rows(card.get('id'), card.get('columns') or [])),
+            dmc.TableThead(card_header_rows(
+                card.get('id'),
+                card.get('columns') or [],
+                sort_state=sort_state,
+                sortable=True,
+            )),
             dmc.TableTbody(team_stats_body_rows(card)),
         ],
         withTableBorder=False,
@@ -455,16 +516,19 @@ def team_stats_paper(card):
     )
 
 
-def team_stats_cards_view(cards):
+def team_stats_cards_view(cards, sort_state=None):
     return dmc.Stack(
         [
             dmc.SimpleGrid(
                 cols={'base': 1, 'lg': 2},
                 spacing='12px',
-                children=[team_stats_paper(cards['pace']), team_stats_paper(cards['advanced'])],
+                children=[
+                    team_stats_paper(cards['pace'], sort_state),
+                    team_stats_paper(cards['advanced'], sort_state),
+                ],
             ),
-            team_stats_paper(cards['key']),
-            team_stats_paper(cards['team']),
+            team_stats_paper(cards['key'], sort_state),
+            team_stats_paper(cards['team'], sort_state),
         ],
         gap='sm',
     )
