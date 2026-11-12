@@ -10,7 +10,7 @@ window.applyLineupShowOpp = function (show, attempt) {
         return;
     }
     var pending = false;
-    ['lineup-grid-0', 'lineup-grid-1'].forEach(function (id) {
+    ['lineup-grid-0', 'lineup-grid-1', 'ts-lineup-grid'].forEach(function (id) {
         if (!document.getElementById(id)) {
             return;
         }
@@ -85,7 +85,7 @@ function _lineupApi(id) {
 }
 
 function _lineupHostWidth(api) {
-    var ids = ['lineup-grid-0', 'lineup-grid-1', 'matchup-grid'];
+    var ids = ['lineup-grid-0', 'lineup-grid-1', 'matchup-grid', 'ts-lineup-grid', 'ts-matchup-grid'];
     for (var i = 0; i < ids.length; i++) {
         if (_lineupApi(ids[i]) === api) {
             return document.getElementById(ids[i]).clientWidth;
@@ -95,11 +95,11 @@ function _lineupHostWidth(api) {
 }
 
 function _lineupPeers(api) {
-    if (_lineupApi('matchup-grid') === api) {
+    if (_lineupApi('matchup-grid') === api || _lineupApi('ts-matchup-grid') === api || _lineupApi('ts-lineup-grid') === api) {
         return [api];
     }
     var peers = [];
-    ['lineup-grid-0', 'lineup-grid-1'].forEach(function (id) {
+    ['lineup-grid-0', 'lineup-grid-1', 'ts-lineup-grid'].forEach(function (id) {
         var peer = _lineupApi(id);
         if (peer) {
             peers.push(peer);
@@ -150,7 +150,7 @@ function _lineupLabel(data, matchup) {
 }
 
 function _lineupTextWidth(api) {
-    var matchup = _lineupApi('matchup-grid') === api;
+    var matchup = _lineupApi('matchup-grid') === api || _lineupApi('ts-matchup-grid') === api;
     var pad = _lineupPad();
     var widest = 0;
     if (!api.forEachNode) {

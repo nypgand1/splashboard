@@ -567,10 +567,10 @@ def _matchup_column_defs():
     return column_defs
 
 
-def _matchup_grid():
+def _matchup_grid(grid_id='matchup-grid', row_data=None):
     return dag.AgGrid(
-        id='matchup-grid',
-        rowData=[],
+        id=grid_id,
+        rowData=list(row_data or []),
         columnDefs=_matchup_column_defs(),
         defaultColDef={
             'sortable': True,

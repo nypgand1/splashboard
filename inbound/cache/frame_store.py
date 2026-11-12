@@ -35,12 +35,14 @@ _shirts = {}
 _facts = {}
 _fact_attempts = set()
 _summaries = {}
+_lineup_summaries = {}
 _shirt_source = {}
 _STARTERS = _starters
 _SHIRTS = _shirts
 _FACTS = _facts
 _FACT_ATTEMPTS = _fact_attempts
 _SUMMARIES = _summaries
+_LINEUP_SUMMARIES = _lineup_summaries
 _SHIRT_SOURCE = _shirt_source
 
 
@@ -79,6 +81,7 @@ def clear():
         _facts.clear()
         _fact_attempts.clear()
         _summaries.clear()
+        _lineup_summaries.clear()
         _shirt_source.clear()
     _singleflight.clear()
 
@@ -95,6 +98,7 @@ def clear_rotation_cache():
         _facts.clear()
         _fact_attempts.clear()
         _summaries.clear()
+        _lineup_summaries.clear()
         _shirt_source.clear()
 
 
@@ -220,6 +224,8 @@ def _drop_released(organization_id, released):
             _fact_attempts.discard(fkey)
             for skey in [k for k in _summaries if k[0] == org_str and k[1] == fid]:
                 _summaries.pop(skey, None)
+            for skey in [k for k in _lineup_summaries if k[0] == org_str and k[1] == fid]:
+                _lineup_summaries.pop(skey, None)
 
 
 def pin_open(organization_id, fixture_id, max_open=OPEN_PIN_LRU_LIMIT):
@@ -380,6 +386,16 @@ def get_rotation_summary(org_id, fixture_id, pbp_id):
 def set_rotation_summary(org_id, fixture_id, pbp_id, summary):
     with _lock:
         _summaries[(str(org_id), str(fixture_id), pbp_id)] = summary
+
+
+def get_lineup_summary(org_id, fixture_id, pbp_id):
+    with _lock:
+        return _lineup_summaries.get((str(org_id), str(fixture_id), pbp_id))
+
+
+def set_lineup_summary(org_id, fixture_id, pbp_id, summary):
+    with _lock:
+        _lineup_summaries[(str(org_id), str(fixture_id), pbp_id)] = summary
 
 
 def store_shirt(team_id, person_id, number, source):

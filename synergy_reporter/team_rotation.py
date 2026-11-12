@@ -504,15 +504,13 @@ def _ensure_summary(org_id, game, selected):
     return None
 
 
-def season_aggregate(source, fetch_starters=None, fetch_roster=None, fetch_player_rows=None):
-    """Walk each game once. Roster and player-stats bibs share one wave."""
-    del fetch_starters
+def load_fixture_facts(source, fetch_roster=None, fetch_player_rows=None):
+    """Roster and player-stat bibs for games this process has not asked yet."""
     if fetch_roster is None:
         fetch_roster = default_fetch_roster
     if fetch_player_rows is None:
         fetch_player_rows = default_fetch_player_rows
     org_id = source.get('org_id')
-    selected = source.get('team')
     games = list(source.get('games') or [])
     pending = [
         game for game in games
@@ -538,12 +536,22 @@ def season_aggregate(source, fetch_starters=None, fetch_roster=None, fetch_playe
             stats_error = True
         return fixture, roster_payload, stats_rows, roster_error and stats_error
 
-    if pending:
-        fetched = run_wave([lambda game=game: _one(game) for game in pending])
-        for fixture, roster_payload, stats_rows, both_failed in fetched:
-            if both_failed:
-                continue
-            _absorb_facts(org_id, fixture, roster_payload, stats_rows)
+    if not pending:
+        return
+    fetched = run_wave([lambda game=game: _one(game) for game in pending])
+    for fixture, roster_payload, stats_rows, both_failed in fetched:
+        if both_failed:
+            continue
+        _absorb_facts(org_id, fixture, roster_payload, stats_rows)
+
+
+def season_aggregate(source, fetch_starters=None, fetch_roster=None, fetch_player_rows=None):
+    """Walk each game once. Roster and player-stats bibs share one wave."""
+    del fetch_starters
+    load_fixture_facts(source, fetch_roster, fetch_player_rows)
+    org_id = source.get('org_id')
+    selected = source.get('team')
+    games = list(source.get('games') or [])
     prepared = []
     for game in games:
         summary = _ensure_summary(org_id, game, selected)

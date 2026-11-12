@@ -648,7 +648,9 @@ class TeamStatsShowOppTests(unittest.TestCase):
             node.value for node in _walk(tree)
             if isinstance(node, dmc.TabsTab)
         ]
-        self.assertEqual(tabs, ['tab-bs', 'tab-rotation', 'tab-shot-chart'])
+        self.assertEqual(tabs, [
+            'tab-bs', 'tab-rotation', 'tab-shot-chart', 'tab-lineup', 'tab-matchups',
+        ])
         opponent = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-opponent')
         self.assertIsInstance(opponent, dmc.Select)
         self.assertEqual(opponent.value, 'all')
@@ -1109,7 +1111,17 @@ class TeamStatsShotChartTests(unittest.TestCase):
         self.assertIn("var shot = skip;", text)
         self.assertIn("shot = __SHOT_LOADING__;", text)
         self.assertIn("!same(team, current.team)", text)
-        self.assertIn("return [__CHART_LOADING__, __SHOT_LOADING__];", text)
+        self.assertIn(
+            "return [__CHART_LOADING__, __SHOT_LOADING__, __TABLE_LOADING__, __TABLE_LOADING__];",
+            text,
+        )
+        self.assertIn("lineup = __TABLE_LOADING__;", text)
+        self.assertIn("matchup = __TABLE_LOADING__;", text)
+        self.assertIn("var lineup = skip;", text)
+        self.assertIn("tab === 'tab-lineup'", text)
+        self.assertIn("tab === 'tab-matchups'", text)
+        self.assertIn("Output('ts-lineup', 'style')", text)
+        self.assertIn("Output('ts-matchups', 'style')", text)
         self.assertIn("Output('ts-show-opp', 'style')", text)
         self.assertIn("tab === 'tab-shot-chart'", text)
 
@@ -1150,6 +1162,208 @@ class TeamStatsShotChartTests(unittest.TestCase):
             and (getattr(node, 'style', None) or {}).get('aspectRatio')
         ]
         self.assertEqual(len(courts), 2)
+
+
+def _text_bits(node):
+    found = []
+    for item in _walk(node):
+        children = getattr(item, 'children', None)
+        if isinstance(children, str):
+            found.append(children)
+    return found
+
+
+class TeamStatsLineupTabTests(unittest.TestCase):
+    def test_lineup_controls_stay_outside_the_body(self):
+        tree = team_stats_page.layout()
+        pane = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-lineup')
+        self.assertEqual(pane.style, {'display': 'none'})
+        body = next(node for node in _walk(pane) if getattr(node, 'id', None) == 'ts-lineup-body')
+        self.assertNotIn('ts-lineup-show-opp', {getattr(node, 'id', None) for node in _walk(body)})
+        self.assertFalse(any(isinstance(node, dmc.SegmentedControl) for node in _walk(body)))
+        switch = next(node for node in _walk(pane) if getattr(node, 'id', None) == 'ts-lineup-show-opp')
+        self.assertIsInstance(switch, dmc.Switch)
+        self.assertEqual(switch.label, 'Show Opp')
+        self.assertEqual(switch.size, 'sm')
+        self.assertEqual(switch.color, 'gray')
+        self.assertFalse(bool(switch.checked))
+        size = next(node for node in _walk(pane) if getattr(node, 'id', None) == 'ts-lineup-size')
+        self.assertEqual([item['label'] for item in size.data], [
+            '5 Players', '4 Players', '3 Players', '2 Players',
+        ])
+        self.assertEqual(size.value, '5')
+        matchups = next(node for node in _walk(tree) if getattr(node, 'id', None) == 'ts-matchups')
+        self.assertEqual(matchups.style, {'display': 'none'})
+        self.assertFalse(any(
+            isinstance(node, (dmc.SegmentedControl, dmc.Switch)) for node in _walk(matchups)
+        ))
+
+    def test_callbacks_ignore_period_and_the_page_switch(self):
+        lineup = [
+            item for item in _callbacks('ts-lineup-body.children')
+            if not item.get('clientside_function')
+        ]
+        matchups = [
+            item for item in _callbacks('ts-matchups-body.children')
+            if not item.get('clientside_function')
+        ]
+        self.assertEqual(len(lineup), 1)
+        self.assertEqual(len(matchups), 1)
+        self.assertTrue(lineup[0]['prevent_initial_call'])
+        self.assertTrue(matchups[0]['prevent_initial_call'])
+        lineup_inputs = _pairs(lineup[0]['inputs'])
+        lineup_state = _pairs(lineup[0]['state'])
+        self.assertIn(('ts-lineup-size', 'value'), lineup_inputs)
+        self.assertNotIn(('ts-lineup-show-opp', 'checked'), lineup_inputs)
+        self.assertIn(('ts-lineup-show-opp', 'checked'), lineup_state)
+        for item in (lineup[0], matchups[0]):
+            names = {dep[0] for dep in _pairs(item['inputs']) + _pairs(item['state'])}
+            self.assertNotIn('ts-period', names)
+            self.assertNotIn('ts-show-opp', names)
+            self.assertNotIn('ts-shot-period', names)
+        self.assertNotIn('ts-lineup-size', {dep[0] for dep in _pairs(matchups[0]['inputs'])})
+
+    def test_hidden_tab_does_not_load(self):
+        with patch.object(team_stats_page, 'rotation_games') as games:
+            with self.assertRaises(PreventUpdate):
+                team_stats_page.render_team_lineup(
+                    'tab-bs', {'ok': True}, 'aces', 'all', 'all', 'all', '5', False,
+                    'PLG', 's', 'REGULAR', None,
+                )
+            with self.assertRaises(PreventUpdate):
+                team_stats_page.render_team_matchups(
+                    'tab-rotation', {'ok': True}, 'aces', 'all', 'all', 'all',
+                    'PLG', 's', 'REGULAR', None,
+                )
+        games.assert_not_called()
+
+    def test_all_teams_asks_for_one_team_without_a_fetch(self):
+        with patch.object(team_stats_page, 'rotation_games') as games:
+            lineup = team_stats_page.render_team_lineup(
+                'tab-lineup', {'ok': True}, 'all', 'all', 'all', 'all', '5', False,
+                'PLG', 's', 'REGULAR', None,
+            )
+            matchups = team_stats_page.render_team_matchups(
+                'tab-matchups', {'ok': True}, 'all', 'all', 'all', 'all',
+                'PLG', 's', 'REGULAR', None,
+            )
+        games.assert_not_called()
+        self.assertIn('Select a team.', _text_bits(lineup))
+        self.assertIn('Choose one team.', _text_bits(lineup))
+        self.assertIn('Select a team.', _text_bits(matchups))
+
+    def test_pending_scope_uses_the_table_skeleton(self):
+        intent = {'league': 'EASL', 'season': 's', 'game_type': 'REGULAR', 'nonce': 1}
+        applied = {'league': 'PLG', 'season': 'old', 'game_type': 'REGULAR', 'ok': True}
+        view = team_stats_page.render_team_lineup(
+            'tab-lineup', applied, 'aces', 'all', 'all', 'all', '5', False,
+            'PLG', 's', 'REGULAR', intent,
+        )
+        self.assertIsInstance(view, dmc.Stack)
+        self.assertGreaterEqual(
+            len([node for node in _walk(view) if isinstance(node, dmc.Skeleton)]),
+            1,
+        )
+
+    def test_failed_scope_is_an_alert(self):
+        with patch.object(team_stats_page, 'rotation_games') as games:
+            view = team_stats_page.render_team_matchups(
+                'tab-matchups', {'ok': False}, 'aces', 'all', 'all', 'all',
+                'PLG', 's', 'REGULAR', None,
+            )
+        games.assert_not_called()
+        self.assertIsInstance(view, dmc.Alert)
+        self.assertIn(ERROR_GAME, _text_bits(view))
+
+    def test_empty_games_and_empty_tables_use_their_copy(self):
+        empty_games = {'ok': True, 'select_team': False, 'empty': True, 'games': []}
+        with patch.object(team_stats_page, 'rotation_games', return_value=empty_games):
+            view = team_stats_page.render_team_lineup(
+                'tab-lineup', {'ok': True}, 'aces', 'all', 'all', 'all', '5', False,
+                'PLG', 's', 'REGULAR', None,
+            )
+        self.assertIn('No games in this view.', _text_bits(view))
+        source = {
+            'ok': True, 'select_team': False, 'empty': False,
+            'games': [{'fixture_id': 'g1'}], 'team': 'aces',
+        }
+        with patch.object(team_stats_page, 'rotation_games', return_value=source), \
+                patch.object(team_stats_page, 'season_lineup_records', return_value=[]), \
+                patch.object(team_stats_page, 'season_matchup_records', return_value=[]):
+            lineup = team_stats_page.render_team_lineup(
+                'tab-lineup', {'ok': True}, 'aces', 'all', 'all', 'all', '5', False,
+                'PLG', 's', 'REGULAR', None,
+            )
+            matchups = team_stats_page.render_team_matchups(
+                'tab-matchups', {'ok': True}, 'aces', 'all', 'all', 'all',
+                'PLG', 's', 'REGULAR', None,
+            )
+        self.assertIn('No lineups for this view.', _text_bits(lineup))
+        self.assertIn('No 5-player matchups for this view.', _text_bits(matchups))
+        self.assertIn('Switch Game Type, Team, Opponent, Stadium, or Home/Away.', _text_bits(lineup))
+
+    def test_lineup_grid_paginates_sizes_below_five(self):
+        source = {
+            'ok': True, 'select_team': False, 'empty': False,
+            'games': [{'fixture_id': 'g1'}], 'team': 'aces',
+        }
+        records = [
+            {'Lineup': 'Lin-Wu', 'Min': '1:00', '+/-': 0, '_opp': False, '_pair': 'p'},
+            {'Lineup': 'Lin-Wu', 'Min': '', '+/-': '', '_opp': True, '_pair': 'p'},
+        ]
+        with patch.object(team_stats_page, 'rotation_games', return_value=source), \
+                patch.object(team_stats_page, 'season_lineup_records', return_value=records):
+            sized = team_stats_page.render_team_lineup(
+                'tab-lineup', {'ok': True}, 'aces', 'all', 'all', 'all', '4', True,
+                'PLG', 's', 'REGULAR', None,
+            )
+            full = team_stats_page.render_team_lineup(
+                'tab-lineup', {'ok': True}, 'aces', 'all', 'all', 'all', '5', False,
+                'PLG', 's', 'REGULAR', None,
+            )
+        grid = next(node for node in _walk(sized) if getattr(node, 'id', None) == 'ts-lineup-grid')
+        self.assertIn('braves-lineup-grid', grid.className)
+        self.assertEqual(grid.dashGridOptions['paginationPageSize'], 40)
+        self.assertEqual(grid.dashGridOptions['isExternalFilterPresent']['function'], 'false')
+        self.assertEqual(grid.rowData[0]['+/-'], 0)
+        self.assertTrue(grid.rowData[1]['_opp'])
+        fields = []
+
+        def _fields(columns):
+            for column in columns:
+                if column.get('children'):
+                    _fields(column['children'])
+                elif column.get('field'):
+                    fields.append(column['field'])
+
+        _fields(grid.columnDefs)
+        self.assertEqual(len(fields), 27)
+        self.assertNotIn('_opp', fields)
+        full_grid = next(node for node in _walk(full) if getattr(node, 'id', None) == 'ts-lineup-grid')
+        self.assertNotIn('pagination', full_grid.dashGridOptions)
+
+    def test_matchup_grid_keeps_both_names(self):
+        source = {
+            'ok': True, 'select_team': False, 'empty': False,
+            'games': [{'fixture_id': 'g1'}], 'team': 'aces',
+        }
+        records = [
+            {'Lineup': 'Lin-Wu', 'Min': '1:00', '+/-': 3, '_opp': False, '_pair': 'p', '_filter': 'Lin-Wu Chen'},
+            {'Lineup': 'Chen-Liu', 'Min': '', '+/-': '', '_opp': True, '_pair': 'p', '_filter': 'Lin-Wu Chen'},
+        ]
+        with patch.object(team_stats_page, 'rotation_games', return_value=source), \
+                patch.object(team_stats_page, 'season_matchup_records', return_value=records):
+            view = team_stats_page.render_team_matchups(
+                'tab-matchups', {'ok': True}, 'aces', 'all', 'all', 'all',
+                'PLG', 's', 'REGULAR', None,
+            )
+        paper = next(
+            node for node in _walk(view)
+            if getattr(node, 'className', None) == 'braves-grid-wrap'
+        )
+        grid = next(node for node in _walk(paper) if getattr(node, 'id', None) == 'ts-matchup-grid')
+        self.assertEqual(grid.rowData[1]['Lineup'], 'Chen-Liu')
+        self.assertNotIn('pagination', grid.dashGridOptions)
 
 
 def _svg(src):

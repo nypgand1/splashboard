@@ -3,6 +3,7 @@ import os
 
 from dash import dcc, html, no_update
 import dash_mantine_components as dmc
+import pandas as pd
 
 from synergy_inbounder.logs import data as log_data
 from synergy_reporter.report_components import (
@@ -122,6 +123,58 @@ def _matchup_wrap(hidden=True):
         ],
         id='wrap-matchups',
         style=style,
+    )
+
+
+_LINEUP_COLUMNS = (
+    'Lineup', 'Min', '+/-', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+    'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS',
+    'PF', 'FD', 'PTS', 'PIP', 'SCP', 'FBP', 'POT', 'PPP',
+)
+
+
+def _lineup_frame(records):
+    rows = [
+        {column: (row or {}).get(column, '') for column in _LINEUP_COLUMNS}
+        for row in records or []
+    ]
+    return pd.DataFrame(rows, columns=list(_LINEUP_COLUMNS))
+
+
+def team_lineup_grid(records, size, show_opp):
+    """One season lineup grid. Size 5 is not paginated."""
+    try:
+        size_int = int(size)
+    except (TypeError, ValueError):
+        size_int = 5
+    if size_int < 2:
+        size_int = 2
+    elif size_int > 5:
+        size_int = 5
+    show = bool(show_opp)
+    page_size = (40 if show else 20) if size_int < 5 else None
+    return _ag_grid_from_df(
+        _lineup_frame(records),
+        page_size=page_size,
+        filterable_cols=['Lineup'],
+        lineup_size=size_int,
+        row_records=list(records or []),
+        pair_rows=True,
+        show_opp=show,
+        grid_id='ts-lineup-grid',
+    )
+
+
+def team_matchup_grid(records):
+    """One season matchup grid. Both rows stay mounted."""
+    return dmc.Paper(
+        _matchup_grid('ts-matchup-grid', records),
+        withBorder=True,
+        radius='md',
+        shadow='xs',
+        mb='md',
+        className='braves-grid-wrap',
+        style={'overflowX': 'auto'},
     )
 
 

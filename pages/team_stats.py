@@ -31,6 +31,12 @@ from synergy_inbounder.settings import (
 )
 from synergy_reporter.rotation import period_label
 from synergy_reporter.shot_chart import COURT_IMAGE_STYLE, court_data_uri, season_zones
+from synergy_reporter.team_lineups import (
+    EMPTY_LINEUPS,
+    EMPTY_MATCHUPS,
+    season_lineup_records,
+    season_matchup_records,
+)
 from synergy_reporter.team_rotation import (
     ROTATION_EMPTY,
     ROTATION_SELECT,
@@ -60,6 +66,7 @@ from domain.schedule_filters import (
     default_season_id as _default_season,
     selectable_season_options as _season_data,
 )
+from ui.game_tabs.lineup_matchups import team_lineup_grid, team_matchup_grid
 from ui.tables.stat_cards import (
     COUNT_TAILS as _COUNT_TAILS,
     KEY_STAT_GROUPS as _KEY_GROUPS,
@@ -151,6 +158,55 @@ def _shot_pane():
             card_id='ts-shot-card',
         ),
         id='ts-shot',
+        style={'display': 'none'},
+    )
+
+
+def _lineup_pane():
+    return html.Div(
+        [
+            dcc.Store(id='ts-lineup-show-opp-sync'),
+            dmc.Group(
+                [
+                    dmc.SegmentedControl(
+                        id='ts-lineup-size',
+                        data=[
+                            {'label': '5 Players', 'value': '5'},
+                            {'label': '4 Players', 'value': '4'},
+                            {'label': '3 Players', 'value': '3'},
+                            {'label': '2 Players', 'value': '2'},
+                        ],
+                        value='5',
+                        radius='md',
+                        size='xs',
+                    ),
+                    dmc.Switch(
+                        id='ts-lineup-show-opp',
+                        label='Show Opp',
+                        checked=False,
+                        size='sm',
+                        color='gray',
+                        ms='auto',
+                    ),
+                ],
+                justify='flex-start',
+                align='center',
+                wrap='wrap',
+                gap='sm',
+                mb='sm',
+                w='100%',
+            ),
+            html.Div(id='ts-lineup-body'),
+        ],
+        id='ts-lineup',
+        style={'display': 'none'},
+    )
+
+
+def _matchup_pane():
+    return html.Div(
+        html.Div(id='ts-matchups-body'),
+        id='ts-matchups',
         style={'display': 'none'},
     )
 
@@ -306,6 +362,16 @@ def layout():
                         value='tab-shot-chart',
                         leftSection=icon('tabler:ball-basketball', width=14),
                     ),
+                    dmc.TabsTab(
+                        'Lineup Stats',
+                        value='tab-lineup',
+                        leftSection=icon('tabler:users', width=14),
+                    ),
+                    dmc.TabsTab(
+                        'Matchups',
+                        value='tab-matchups',
+                        leftSection=icon('tabler:users-group', width=14),
+                    ),
                 ]),
                 id='ts-tabs',
                 value='tab-bs',
@@ -397,6 +463,8 @@ def layout():
             html.Div(_loading_body(), id='ts-body'),
             _rotation_pane(),
             _shot_pane(),
+            _lineup_pane(),
+            _matchup_pane(),
         ],
         gap='md',
     )
@@ -405,6 +473,7 @@ def layout():
 _LOADING_BODY = json.dumps(_jsonable(_loading_body()))
 _CHART_LOADING = json.dumps(_jsonable(loading_skeleton('chart')))
 _SHOT_LOADING = json.dumps(_jsonable(shot_chart_skeleton()))
+_TABLE_LOADING = json.dumps(_jsonable(loading_skeleton('table')))
 _ROTATION_PICK = json.dumps(_jsonable(empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)))
 
 clientside_callback(
@@ -469,15 +538,17 @@ clientside_callback(
     function(intent) {
         var skip = window.dash_clientside.no_update;
         if (!intent || intent.nonce == null) {
-            return [skip, skip];
+            return [skip, skip, skip, skip];
         }
-        return [__CHART_LOADING__, __SHOT_LOADING__];
+        return [__CHART_LOADING__, __SHOT_LOADING__, __TABLE_LOADING__, __TABLE_LOADING__];
     }
     """.replace('__CHART_LOADING__', _CHART_LOADING).replace(
         '__SHOT_LOADING__', _SHOT_LOADING,
-    ),
+    ).replace('__TABLE_LOADING__', _TABLE_LOADING),
     Output('ts-rotation', 'children', allow_duplicate=True),
     Output('ts-shot-body', 'children', allow_duplicate=True),
+    Output('ts-lineup-body', 'children', allow_duplicate=True),
+    Output('ts-matchups-body', 'children', allow_duplicate=True),
     Input('ts-intent', 'data'),
     prevent_initial_call=True,
 )
@@ -499,7 +570,7 @@ clientside_callback(
             && same(stadium, current.stadium)
             && same(site, current.site)
         ) {
-            return [skip, skip, skip];
+            return [skip, skip, skip, skip, skip];
         }
         var cards = skip;
         if (current.team && current.team !== 'all' && (team === 'all' || team == null)) {
@@ -507,22 +578,32 @@ clientside_callback(
         }
         var chart = __CHART_LOADING__;
         var shot = skip;
+        var lineup = skip;
+        var matchup = skip;
         if (team === 'all' || team == null) {
             chart = __ROTATION_PICK__;
             shot = __ROTATION_PICK__;
+            lineup = __ROTATION_PICK__;
+            matchup = __ROTATION_PICK__;
         } else if (!same(team, current.team)) {
             shot = __SHOT_LOADING__;
+            lineup = __TABLE_LOADING__;
+            matchup = __TABLE_LOADING__;
         }
-        return [cards, chart, shot];
+        return [cards, chart, shot, lineup, matchup];
     }
     """.replace('__LOADING_BODY__', _LOADING_BODY).replace(
         '__CHART_LOADING__', _CHART_LOADING,
     ).replace('__SHOT_LOADING__', _SHOT_LOADING).replace(
+        '__TABLE_LOADING__', _TABLE_LOADING,
+    ).replace(
         '__ROTATION_PICK__', _ROTATION_PICK,
     ),
     Output('ts-body', 'children', allow_duplicate=True),
     Output('ts-rotation', 'children', allow_duplicate=True),
     Output('ts-shot-body', 'children', allow_duplicate=True),
+    Output('ts-lineup-body', 'children', allow_duplicate=True),
+    Output('ts-matchups-body', 'children', allow_duplicate=True),
     Input('ts-team', 'value'),
     Input('ts-opponent', 'value'),
     Input('ts-stadium', 'value'),
@@ -603,15 +684,11 @@ clientside_callback(
     """
     function(tab) {
         var hidden = {display: 'none'};
-        var rotation = tab === 'tab-rotation';
-        var shot = tab === 'tab-shot-chart';
-        if (rotation) {
-            return [hidden, hidden, null, hidden, null];
-        }
-        if (shot) {
-            return [hidden, hidden, hidden, null, hidden];
-        }
-        return [null, null, hidden, hidden, null];
+        if (tab === 'tab-rotation') return [hidden, hidden, null, hidden, null, hidden, hidden];
+        if (tab === 'tab-shot-chart') return [hidden, hidden, hidden, null, hidden, hidden, hidden];
+        if (tab === 'tab-lineup') return [hidden, hidden, hidden, hidden, hidden, null, hidden];
+        if (tab === 'tab-matchups') return [hidden, hidden, hidden, hidden, hidden, hidden, null];
+        return [null, null, hidden, hidden, null, hidden, hidden];
     }
     """,
     Output('ts-period-bar', 'style'),
@@ -619,7 +696,24 @@ clientside_callback(
     Output('ts-rotation', 'style'),
     Output('ts-shot', 'style'),
     Output('ts-show-opp', 'style'),
+    Output('ts-lineup', 'style'),
+    Output('ts-matchups', 'style'),
     Input('ts-tabs', 'value'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(checked) {
+        if (window.applyLineupShowOpp) {
+            window.applyLineupShowOpp(!!checked);
+        }
+        return !!checked;
+    }
+    """,
+    Output('ts-lineup-show-opp-sync', 'data'),
+    Input('ts-lineup-show-opp', 'checked'),
     prevent_initial_call=True,
 )
 
@@ -1333,3 +1427,108 @@ def render_team_shot_chart(
         _opp_chart_name(source.get('opponent'), names),
         opp_zones,
     )
+
+
+def _open_team_source(
+    tab, expected, applied, team, opponent, stadium, site,
+    league, season_id, game_type, intent, failure,
+):
+    """Notice for a hidden or unready tab, or the filtered game source."""
+    if tab != expected:
+        raise PreventUpdate
+    applied = applied if isinstance(applied, dict) else {}
+    if _scope_pending(intent, applied):
+        return loading_skeleton('table')
+    if applied.get('ok') is False:
+        return error_alert(ERROR_GAME)
+    league = applied.get('league') or league or 'PLG'
+    if applied.get('season') is not None:
+        season_id = applied.get('season')
+    if applied.get('game_type') is not None:
+        game_type = applied.get('game_type')
+    if not team or team == TEAM_ALL:
+        return empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)
+    try:
+        source = rotation_games(
+            league, season_id, game_type, opponent, stadium, site, team,
+        )
+    except Exception:
+        log_unexpected.exception(failure)
+        return error_alert(ERROR_GAME)
+    if not source.get('ok'):
+        return error_alert(source.get('message') or ERROR_GAME)
+    if source.get('select_team'):
+        return empty_state(ROTATION_SELECT, ROTATION_SELECT_NEXT)
+    if source.get('empty') or not source.get('games'):
+        return empty_state(EMPTY_TEAM_STATS, EMPTY_TEAM_STATS_NEXT)
+    return source
+
+
+@callback(
+    Output('ts-lineup-body', 'children'),
+    Input('ts-tabs', 'value'),
+    Input('ts-applied', 'data'),
+    Input('ts-team', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    Input('ts-lineup-size', 'value'),
+    State('ts-lineup-show-opp', 'checked'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-intent', 'data'),
+    prevent_initial_call=True,
+)
+def render_team_lineup(
+    tab, applied, team, opponent, stadium, site, size, show_opp,
+    league, season_id, game_type, intent=None,
+):
+    source = _open_team_source(
+        tab, 'tab-lineup', applied, team, opponent, stadium, site,
+        league, season_id, game_type, intent, 'team lineup page load failed',
+    )
+    if not isinstance(source, dict):
+        return source
+    try:
+        records = season_lineup_records(source, size)
+    except Exception:
+        log_unexpected.exception('team lineup aggregate failed')
+        return error_alert(ERROR_GAME)
+    if not records:
+        return empty_state(EMPTY_LINEUPS, EMPTY_TEAM_STATS_NEXT)
+    return team_lineup_grid(records, size, show_opp)
+
+
+@callback(
+    Output('ts-matchups-body', 'children'),
+    Input('ts-tabs', 'value'),
+    Input('ts-applied', 'data'),
+    Input('ts-team', 'value'),
+    Input('ts-opponent', 'value'),
+    Input('ts-stadium', 'value'),
+    Input('ts-site', 'value'),
+    State('ts-league', 'value'),
+    State('ts-season', 'value'),
+    State('ts-game-type', 'value'),
+    State('ts-intent', 'data'),
+    prevent_initial_call=True,
+)
+def render_team_matchups(
+    tab, applied, team, opponent, stadium, site,
+    league, season_id, game_type, intent=None,
+):
+    source = _open_team_source(
+        tab, 'tab-matchups', applied, team, opponent, stadium, site,
+        league, season_id, game_type, intent, 'team matchups page load failed',
+    )
+    if not isinstance(source, dict):
+        return source
+    try:
+        records = season_matchup_records(source)
+    except Exception:
+        log_unexpected.exception('team matchups aggregate failed')
+        return error_alert(ERROR_GAME)
+    if not records:
+        return empty_state(EMPTY_MATCHUPS, EMPTY_TEAM_STATS_NEXT)
+    return team_matchup_grid(records)
