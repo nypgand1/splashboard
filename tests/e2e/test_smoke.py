@@ -172,13 +172,13 @@ def test_home_team_filter_sits_by_season_and_results_label(page, e2e_server):
     assert team_box['x'] + team_box['width'] <= type_box['x'] + 1
     widths = page.evaluate(
         '''() => {
-            const wrap = document.querySelector('#home-team-wrap .home-team-sizer');
-            const probes = [...wrap.querySelectorAll('.home-team-sizer-probe')];
+            const wrap = document.querySelector('#home-team-wrap .select-sizer');
+            const probes = [...wrap.querySelectorAll('.select-sizer-probe')];
             const longest = probes.reduce((best, probe) => (
                 probe.getBoundingClientRect().width > best.getBoundingClientRect().width
                     ? probe : best
             ));
-            const select = wrap.querySelector('.home-team-sizer-control');
+            const select = wrap.querySelector('.select-sizer-control');
             return {
                 probe: longest.getBoundingClientRect().width,
                 select: select.getBoundingClientRect().width,

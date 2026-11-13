@@ -2,7 +2,7 @@
     window.dash_clientside = window.dash_clientside || {};
     window.dash_clientside.page_nav = window.dash_clientside.page_nav || {};
 
-    function cleanPath(pathname) {
+    function normalizeNavPath(pathname) {
         var path = typeof pathname === 'string' && pathname ? pathname : window.location.pathname;
         if (!path) {
             path = '/';
@@ -13,8 +13,8 @@
         return path;
     }
 
-    function sectionState(pathname) {
-        var path = cleanPath(pathname);
+    function resolveNavSectionState(pathname) {
+        var path = normalizeNavPath(pathname);
         if (path === '/' || path === '/game' || path.indexOf('/game/') === 0) {
             return {section: 'schedule', page: path === '/'};
         }
@@ -24,20 +24,20 @@
         return {section: '', page: false};
     }
 
-    function sectionOf(node) {
+    function readItemSection(node) {
         var match = String(node.className || '').match(/app-section-([a-z0-9-]+)/);
         return match ? match[1] : '';
     }
 
     var currentPath = '';
 
-    function mark(pathname) {
-        var state = sectionState(pathname);
+    function applyNavCurrentState(pathname) {
+        var state = resolveNavSectionState(pathname);
         var nodes = document.querySelectorAll('.app-page-link, .app-page-menu-item');
         var index;
         for (index = 0; index < nodes.length; index += 1) {
             var node = nodes[index];
-            var on = state.section !== '' && sectionOf(node) === state.section;
+            var on = state.section !== '' && readItemSection(node) === state.section;
             if (on) {
                 node.setAttribute('data-current', 'true');
             } else {
@@ -51,7 +51,7 @@
         }
     }
 
-    function nodeHasPageItem(node) {
+    function containsNavPageItem(node) {
         if (!node || node.nodeType !== 1) {
             return false;
         }
@@ -61,7 +61,7 @@
         return !!(node.querySelector && node.querySelector('.app-page-menu-item, .app-page-link'));
     }
 
-    function measure(nav) {
+    function measureInlinePageNav(nav) {
         var bar = nav.closest('.app-navbar-bar');
         var brand = bar && bar.querySelector('.app-navbar-brand-link');
         var links = nav.querySelector('.app-page-links');
@@ -81,32 +81,32 @@
         }
     }
 
-    function watch(nav) {
+    function observePageNavResize(nav) {
         if (nav.__pageNavWatch || !window.ResizeObserver) {
             return;
         }
         var bar = nav.closest('.app-navbar-bar') || nav;
         var observer = new ResizeObserver(function () {
-            measure(nav);
+            measureInlinePageNav(nav);
         });
         observer.observe(bar);
         nav.__pageNavWatch = observer;
     }
 
-    function sync(pathname) {
+    function syncPageNav(pathname) {
         if (typeof pathname === 'string' && pathname) {
             currentPath = pathname;
         } else if (!currentPath) {
             currentPath = window.location.pathname;
         }
         document.querySelectorAll('.app-page-nav').forEach(function (nav) {
-            watch(nav);
-            measure(nav);
+            observePageNavResize(nav);
+            measureInlinePageNav(nav);
         });
-        mark(currentPath);
+        applyNavCurrentState(currentPath);
     }
 
-    function watchPortal() {
+    function observeDropdownPortal() {
         if (!document.body || document.body.__pageNavPortal) {
             return;
         }
@@ -115,8 +115,8 @@
             var record;
             for (index = 0; index < records.length; index += 1) {
                 record = records[index];
-                if (nodeHasPageItem(record.target) || addedPageItem(record.addedNodes)) {
-                    mark(currentPath || window.location.pathname);
+                if (containsNavPageItem(record.target) || hasAddedNavPageItem(record.addedNodes)) {
+                    applyNavCurrentState(currentPath || window.location.pathname);
                     return;
                 }
             }
@@ -125,41 +125,41 @@
         document.body.__pageNavPortal = observer;
     }
 
-    function addedPageItem(nodes) {
+    function hasAddedNavPageItem(nodes) {
         var index;
         for (index = 0; index < nodes.length; index += 1) {
-            if (nodeHasPageItem(nodes[index])) {
+            if (containsNavPageItem(nodes[index])) {
                 return true;
             }
         }
         return false;
     }
 
-    window.dash_clientside.page_nav.sync = sync;
+    window.dash_clientside.page_nav.sync = syncPageNav;
 
-    function boot() {
-        sync();
-        window.setTimeout(sync, 0);
-        window.setTimeout(sync, 300);
+    function schedulePageNavSync() {
+        syncPageNav();
+        window.setTimeout(syncPageNav, 0);
+        window.setTimeout(syncPageNav, 300);
         if (document.fonts && document.fonts.ready) {
             document.fonts.ready.then(function () {
-                sync();
+                syncPageNav();
             });
         }
     }
 
     window.addEventListener('popstate', function () {
-        sync();
+        syncPageNav();
     });
 
-    function start() {
-        watchPortal();
-        boot();
+    function bootPageNav() {
+        observeDropdownPortal();
+        schedulePageNavSync();
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', start);
+        document.addEventListener('DOMContentLoaded', bootPageNav);
     } else {
-        start();
+        bootPageNav();
     }
 })();

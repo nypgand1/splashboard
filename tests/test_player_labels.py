@@ -174,7 +174,7 @@ class PlayerColumnContractTests(unittest.TestCase):
 
     def test_report_paint_drops_underscore_columns(self):
         import os
-        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report_canvas.js')
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report_blocks.js')
         with open(path, encoding='utf-8') as handle:
             js = handle.read()
         body = js.split('function parseSplit', 1)[1].split('function rotationFigure', 1)[0]
@@ -182,7 +182,7 @@ class PlayerColumnContractTests(unittest.TestCase):
 
     def test_phone_css_swaps_the_team_name_lines(self):
         import os
-        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css')
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'app.css')
         with open(path, encoding='utf-8') as handle:
             css = handle.read()
         start = css.find('.team-name-narrow')

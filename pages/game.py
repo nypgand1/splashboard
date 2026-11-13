@@ -102,6 +102,7 @@ from ui.game_tabs.box_score import (
     _bs_frames,
     _bs_player_outputs,
     _bs_shell,
+    _box_score_wrap,
     _format_metric,
     _player_grid_options,
     _player_model,
@@ -189,15 +190,9 @@ from ui.tables.ag_grid import (
     _stamp_designed_widths,
 )
 from ui.tables.stat_cards import (
-    ADVANCED_CARD_TITLE,
-    KEY_CARD_TITLE,
-    KEY_STAT_GROUPS as _KEY_STAT_GROUPS,
-    KEY_STAT_LEAVES as _KEY_STAT_LEAVES,
-    PACE_CARD_TITLE,
     boundary_columns as _boundary_columns,
     dmc_table_from_df as _dmc_table_from_df,
     parse_numeric_stat as _parse_numeric_stat,
-    scroll_card_paper as _bs_scroll_card,
     stat_header_label as _stat_header,
     stat_th as _th,
 )
@@ -208,131 +203,6 @@ register_page(
     top_nav=True,
     path_template='/game/<league>/<game_id>'
 )
-
-
-def _bs_player_block(index, dot_color):
-    return html.Div(
-        [
-            dmc.Group(
-                [
-                    dmc.Box(style={
-                        'width': '8px',
-                        'height': '8px',
-                        'borderRadius': '50%',
-                        'backgroundColor': dot_color,
-                    }),
-                    dmc.Text('', id=f'bs-player-title-{index}', fw=800, fz='16px'),
-                ],
-                gap=8,
-                align='center',
-                mt='md',
-                mb=10,
-            ),
-            dmc.Paper(
-                dag.AgGrid(
-                    id=f'bs-player-grid-{index}',
-                    rowData=[],
-                    columnDefs=[],
-                    defaultColDef={
-                        'sortable': True,
-                        'filter': False,
-                        'resizable': True,
-                        'suppressMovable': True,
-                        'cellClassRules': {'ag-sorted-col-bg': 'params.column.isSortActive()'},
-                        'cellDataType': False,
-                    },
-                    dashGridOptions={
-                        'domLayout': 'autoHeight',
-                        'suppressHorizontalScroll': False,
-                        'suppressMovableColumns': True,
-                        'enableBrowserTooltips': True,
-                        'tooltipShowDelay': 200,
-                    },
-                    className='ag-theme-alpine braves-clean-ag-grid',
-                    style={'width': '100%'},
-                    getRowId='params.data._row',
-                ),
-                id=f'bs-player-wrap-{index}',
-                withBorder=True,
-                radius='md',
-                shadow='xs',
-                mb='md',
-                className='braves-grid-wrap',
-                style={'overflowX': 'auto'},
-            ),
-        ],
-        id=f'bs-player-block-{index}',
-    )
-
-
-def _box_score_wrap():
-    matrix = html.Div(
-        [
-            html.Div(loading_skeleton('cards'), id='bs-skeleton'),
-            html.Div(id='bs-status', style={'display': 'none'}),
-            html.Div(
-                [
-                    html.Div(id='bs-last-update'),
-                    dmc.SimpleGrid(
-                        cols={"base": 1, "lg": 3},
-                        spacing='12px',
-                        children=[
-                            _bs_scroll_card('bs-score-scroll', 'Score'),
-                            _bs_scroll_card('bs-fouls-scroll', 'Fouls'),
-                            _bs_scroll_card('bs-tout-scroll', 'Timeouts'),
-                        ],
-                        style={'marginBottom': '12px'},
-                    ),
-                ],
-                id='bs-matrix-body',
-                style={'display': 'none'},
-            ),
-        ],
-        id='bs-matrix',
-    )
-    bar = dmc.Group(
-        [
-            dmc.SegmentedControl(
-                id='bs-period-control',
-                data=[{'label': 'All', 'value': 'all'}],
-                value='all',
-                radius='md',
-                size='xs',
-            ),
-        ],
-        id='bs-period-bar',
-        mb='sm',
-        wrap='wrap',
-        gap='sm',
-        style={'display': 'none'},
-    )
-    detail = html.Div(
-        html.Div(
-            [
-                dmc.SimpleGrid(
-                    cols={"base": 1, "lg": 2},
-                    spacing='12px',
-                    children=[
-                        _bs_scroll_card('bs-pace-scroll', PACE_CARD_TITLE),
-                        _bs_scroll_card('bs-advanced-scroll', ADVANCED_CARD_TITLE),
-                    ],
-                    style={'marginBottom': '12px'},
-                ),
-                dmc.Box(
-                    _bs_scroll_card('bs-key-scroll', KEY_CARD_TITLE),
-                    mb='sm',
-                ),
-                dmc.Box(_bs_scroll_card('bs-team-scroll'), mb='sm'),
-                _bs_player_block(0, '#94a3b8'),
-                _bs_player_block(1, '#00b4d8'),
-            ],
-            id='bs-detail-body',
-            style={'display': 'none'},
-        ),
-        id='bs-detail',
-    )
-    body = html.Div(id='pane-bs', children=[matrix, bar, detail])
-    return html.Div(body, id='wrap-bs')
 
 
 def layout(game_id=None, league='plg'):
@@ -1331,36 +1201,9 @@ def sync_box_score(bs_store, period, game_id, active_tab, match_info, column_sta
 clientside_callback(
     """
     function(gameId) {
-        window.__bsScrollKeep = false;
-        window.__bsScrollSaved = {};
-        document.querySelectorAll(
-            '#bs-matrix-body .braves-table-scroll, #bs-detail-body .braves-table-scroll, #bs-detail-body .braves-grid-wrap'
-        ).forEach(function(el) {
-            el.scrollLeft = 0;
-            el.scrollTop = 0;
-        });
-        ['bs-player-grid-0', 'bs-player-grid-1'].forEach(function(id) {
-            var api = null;
-            try {
-                api = window.dash_ag_grid && window.dash_ag_grid.getApi && window.dash_ag_grid.getApi(id);
-            } catch (err) {
-                api = null;
-            }
-            if (api && !(api.isDestroyed && api.isDestroyed()) && api.resetColumnState) {
-                api.resetColumnState();
-            }
-            var root = document.getElementById(id);
-            if (!root) {
-                return;
-            }
-            root.querySelectorAll(
-                '.ag-body-viewport, .ag-center-cols-viewport, .ag-body-horizontal-scroll-viewport'
-            ).forEach(function(node) {
-                node.scrollTop = 0;
-                node.scrollLeft = 0;
-            });
-        });
-        window.__bsScrollKeep = true;
+        if (window.splashboardResetBoxScoreScroll) {
+            window.splashboardResetBoxScoreScroll();
+        }
         return window.dash_clientside.no_update;
     }
     """,

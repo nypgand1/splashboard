@@ -1,0 +1,520 @@
+/* ==========================================================================
+   Braves Japanese Clean & Modern (Light Mode)
+   Design Tokens, AppShell, Navigation, Tabs, Filters, and Schedule Chrome
+   ========================================================================== */
+
+:root {
+    --font-sans: -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", Roboto, sans-serif;
+    --bg: #f8fafc;
+    --navbar-bg: rgba(255, 255, 255, 0.9);
+    --navbar-border: #00b4d8;
+    --brand: #0077b6;
+    --brand-2: #00b4d8;
+    --tab-inactive: #64748b;
+    --tab-inactive-bg: #eef2f6;
+    --thead-bg: #f1f5f9;
+    --thead-text: #0f172a;
+    --row-alt: #fbfdff;
+    --row-hover: #e0f2fe;
+    --text-main: #1e293b;
+    --text-sub: #64748b;
+    --border: #e2e8f0;
+    --card-bg: #ffffff;
+}
+
+body {
+    background-color: #dbe1e8 !important;
+    color: var(--text-main) !important;
+    font-family: var(--font-sans) !important;
+    margin: 0;
+    padding: 0;
+}
+
+/* ==========================================================================
+   AppShell & Navbar
+   ========================================================================== */
+
+.app-shell {
+    --app-shell-header-height: 72px !important;
+    --app-shell-header-offset: 0px !important;
+    width: calc(100% - 48px) !important;
+    max-width: 1440px;
+    margin: 24px auto !important;
+    background-color: #ffffff;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15);
+    overflow: visible;
+    min-height: calc(100vh - 48px);
+    box-sizing: border-box;
+}
+
+.app-navbar,
+.app-shell .mantine-AppShell-header {
+    position: relative !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
+    inset: auto !important;
+    width: 100% !important;
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+    background-color: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 2px solid var(--navbar-border);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+    box-sizing: border-box;
+    height: 72px !important;
+    overflow: hidden;
+}
+
+.app-navbar-frame {
+    height: 100%;
+}
+
+.app-navbar-bar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    align-content: center;
+    column-gap: 20px;
+    row-gap: 2px;
+    height: 100%;
+    padding: 8px var(--mantine-spacing-md);
+    box-sizing: border-box;
+}
+
+.app-navbar-brand-link {
+    display: flex;
+    align-items: center;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    align-self: center;
+    flex: none;
+}
+
+.app-page-nav {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.app-page-nav[data-mode="menu"] {
+    justify-content: flex-end;
+}
+
+.app-page-links {
+    display: flex;
+    flex: none;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0;
+}
+
+.app-page-link {
+    position: relative;
+    display: inline-block;
+    flex: none;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #1e293b;
+    text-decoration: none;
+}
+
+.app-page-link + .app-page-link {
+    margin-inline-start: 21px;
+}
+
+.app-page-link + .app-page-link::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: -11px;
+    inset-block: 0;
+    width: 1px;
+    background: #cbd5e1;
+}
+
+.app-page-link::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    height: 2px;
+    background: transparent;
+}
+
+.app-page-link[data-current="true"] {
+    color: var(--brand);
+    font-weight: 700;
+}
+
+.app-page-link[data-current="true"]::after {
+    background: var(--brand);
+}
+
+.app-page-link:hover {
+    color: #0f172a;
+}
+
+.app-page-link[data-current="true"]:hover {
+    color: var(--brand);
+}
+
+@media (forced-colors: active) {
+    .app-page-link + .app-page-link::before {
+        background: CanvasText;
+    }
+
+    .app-page-link[data-current="true"]::after {
+        background: Highlight;
+    }
+}
+
+.app-page-link:focus-visible,
+.app-navbar-menu-button:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
+.app-page-nav:not([data-mode="menu"]) .app-navbar-menu {
+    display: none;
+}
+
+.app-page-nav[data-mode="menu"] .app-page-links {
+    position: absolute;
+    width: max-content;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.app-navbar-credit {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+    align-self: start;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.2;
+    letter-spacing: 0.2px;
+    color: var(--text-sub);
+    white-space: nowrap;
+}
+
+.app-navbar-menu {
+    flex: none;
+}
+
+.app-navbar-menu-button {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #1e293b;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+.mantine-Menu-dropdown .app-page-menu-item {
+    color: #1e293b;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.mantine-Menu-dropdown .app-page-menu-item[data-current="true"] {
+    color: var(--brand);
+    font-weight: 600;
+}
+
+.app-main-content {
+    background-color: var(--bg);
+    padding: 18px !important;
+    padding-top: 18px !important;
+    min-height: calc(100vh - 120px);
+    box-sizing: border-box;
+    border-bottom-left-radius: 14px;
+    border-bottom-right-radius: 14px;
+}
+
+.braves-clean-tabs .mantine-Tabs-list {
+    border-bottom: 1px solid var(--border);
+    gap: 4px;
+}
+
+.braves-clean-tabs .mantine-Tabs-tab {
+    border-top-left-radius: 10px !important;
+    border-top-right-radius: 10px !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border: 1px solid var(--border) !important;
+    border-bottom: none !important;
+    background-color: var(--tab-inactive-bg) !important;
+    color: var(--tab-inactive) !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    padding: 8px 18px !important;
+    transition: all 0.15s ease !important;
+}
+
+.braves-clean-tabs .mantine-Tabs-tab:hover {
+    background-color: #e2e8f0 !important;
+    color: var(--text-main) !important;
+}
+
+.braves-clean-tabs .mantine-Tabs-tab[data-active="true"] {
+    background: linear-gradient(135deg, var(--brand), var(--brand-2)) !important;
+    color: #ffffff !important;
+    border-color: var(--brand) !important;
+    box-shadow: 0 2px 8px rgba(0, 119, 182, 0.25) !important;
+}
+
+@media (max-width: 1024px) and (min-width: 769px) {
+    .app-shell {
+        width: calc(100% - 24px) !important;
+        margin: 12px auto !important;
+        border-radius: 12px;
+    }
+    .app-navbar {
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+    }
+    .app-main-content {
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+        min-height: calc(100vh - 96px);
+    }
+}
+
+@media (max-width: 768px) {
+    .app-shell {
+        --app-shell-header-height: 72px !important;
+        width: 100% !important;
+        margin: 0 !important;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15);
+        background-color: transparent;
+        max-width: 100% !important;
+        min-height: 100vh;
+    }
+    .app-navbar,
+    .app-shell .mantine-AppShell-header {
+        height: 72px !important;
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+    }
+    .app-main-content {
+        border-bottom-left-radius: 10px;
+        border-bottom-right-radius: 10px;
+        padding: 12px !important;
+        min-height: calc(100vh - 72px);
+    }
+    .braves-clean-tabs .mantine-Tabs-list {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        scrollbar-width: none !important;
+        padding-bottom: 2px !important;
+    }
+    .braves-clean-tabs .mantine-Tabs-list::-webkit-scrollbar {
+        display: none !important;
+    }
+    .braves-clean-tabs .mantine-Tabs-tab {
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+    }
+}
+
+@media (max-width: 767px) {
+    .braves-clean-tabs .mantine-Tabs-list {
+        display: grid !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        overflow-x: visible !important;
+        gap: 4px;
+    }
+
+    .braves-clean-tabs .mantine-Tabs-tab {
+        flex-shrink: 1 !important;
+        width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+        justify-content: center;
+        white-space: nowrap !important;
+        border-radius: 10px !important;
+        border-bottom: 1px solid var(--border) !important;
+        padding: 8px 6px !important;
+        font-size: 13px !important;
+    }
+
+    .braves-clean-tabs .mantine-Tabs-tab [data-position="left"] {
+        margin-inline-end: 4px !important;
+    }
+}
+
+/* ==========================================================================
+   Filter Packs & Select Width Sizers
+   ========================================================================== */
+
+.filter-pack {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.filter-cluster {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.filter-cluster-inner {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
+    width: max-content;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.filter-pack[data-mode="split"] > .filter-cluster-type,
+.filter-pack[data-mode="stack"] > .filter-cluster-team,
+.filter-pack[data-mode="stack"] > .filter-cluster-type {
+    flex-basis: 100%;
+}
+
+.filter-pack-match[data-mode="split"] > .filter-cluster-opp {
+    flex-basis: 100%;
+}
+
+.filter-pack-place[data-mode="split"] > .filter-cluster-site {
+    flex-basis: 100%;
+}
+
+.select-sizer {
+    display: inline-grid;
+    vertical-align: middle;
+    max-width: 100%;
+}
+
+.select-sizer-probes {
+    display: contents;
+}
+
+.select-sizer-probe,
+.select-sizer-control {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+.select-sizer-probe {
+    visibility: hidden;
+    white-space: nowrap;
+    pointer-events: none;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    font-size: var(--mantine-font-size-xs);
+    font-weight: 400;
+    padding-left: 12px;
+    padding-right: 40px;
+}
+
+.select-sizer-control {
+    width: 0;
+    min-width: 100%;
+}
+
+/* ==========================================================================
+   Schedule Rows & Game Banner
+   ========================================================================== */
+
+a.home-schedule-row {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+.home-schedule-row {
+    min-height: 56px;
+    border-bottom: 1px solid var(--border);
+}
+
+.home-schedule-score-line,
+.home-schedule-meta-line,
+.home-schedule-meta-cluster {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.home-schedule-score-line,
+.home-schedule-meta-line {
+    width: 100%;
+}
+
+.home-score-well {
+    flex-shrink: 0;
+}
+
+.team-name-narrow {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    /* iPhone Chrome still paints this line when only display:none is set. */
+    .team-name-wide {
+        display: none !important;
+        visibility: hidden !important;
+        position: absolute !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+    }
+    .team-name-narrow {
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    .home-schedule-row-body,
+    .game-info-banner {
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+    }
+    .home-schedule-score-line {
+        gap: 4px !important;
+    }
+}
+
+.home-schedule-list .home-schedule-row:last-child {
+    border-bottom: none;
+}
+
+.home-schedule-row-clickable {
+    cursor: pointer;
+}
+
+.home-schedule-row-clickable:hover {
+    background-color: var(--row-hover);
+}
+
+.home-schedule-row-static {
+    cursor: default;
+}

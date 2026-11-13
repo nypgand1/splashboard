@@ -239,7 +239,7 @@ class HomeTeamFilterTests(unittest.TestCase):
         )
         probes = [
             node.children for node in _walk(tree)
-            if getattr(node, 'className', None) == 'home-team-sizer-probe'
+            if getattr(node, 'className', None) == 'select-sizer-probe'
         ]
         self.assertIn('All Teams', probes)
         self.assertIn('Kings', probes)

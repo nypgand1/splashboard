@@ -2,7 +2,7 @@
     window.dash_clientside = window.dash_clientside || {};
     window.dash_clientside.filter_pack = window.dash_clientside.filter_pack || {};
 
-    function contentWidth(cluster) {
+    function measureClusterContentWidth(cluster) {
         if (!cluster) {
             return 0;
         }
@@ -29,12 +29,12 @@
         return inner.scrollWidth;
     }
 
-    function gapOf(pack) {
+    function readPackGapPx(pack) {
         var gap = parseFloat(window.getComputedStyle(pack).columnGap);
         return isFinite(gap) ? gap : 0;
     }
 
-    function sumWidths(widths, gap) {
+    function sumClusterWidths(widths, gap) {
         var need = 0;
         var count = 0;
         var index;
@@ -50,34 +50,34 @@
         return need;
     }
 
-    function setMode(pack, mode) {
+    function setFilterPackMode(pack, mode) {
         if (pack.getAttribute('data-mode') !== mode) {
             pack.setAttribute('data-mode', mode);
         }
     }
 
-    function measurePair(pack, selA, selB) {
+    function measureTwoClusterPack(pack, selA, selB) {
         var first = pack.querySelector(':scope > ' + selA);
         var second = pack.querySelector(':scope > ' + selB);
-        var gap = gapOf(pack);
+        var gap = readPackGapPx(pack);
         var mode = 'wide';
-        if (sumWidths([contentWidth(first), contentWidth(second)], gap) > pack.clientWidth + 1) {
+        if (sumClusterWidths([measureClusterContentWidth(first), measureClusterContentWidth(second)], gap) > pack.clientWidth + 1) {
             mode = 'split';
         }
-        setMode(pack, mode);
+        setFilterPackMode(pack, mode);
     }
 
-    function measure(pack) {
+    function measureFilterPack(pack) {
         if (pack.classList.contains('filter-pack-scope')) {
-            measurePair(pack, '.filter-cluster-league', '.filter-cluster-type');
+            measureTwoClusterPack(pack, '.filter-cluster-league', '.filter-cluster-type');
             return;
         }
         if (pack.classList.contains('filter-pack-match')) {
-            measurePair(pack, '.filter-cluster-team', '.filter-cluster-opp');
+            measureTwoClusterPack(pack, '.filter-cluster-team', '.filter-cluster-opp');
             return;
         }
         if (pack.classList.contains('filter-pack-place')) {
-            measurePair(pack, '.filter-cluster-stadium', '.filter-cluster-site');
+            measureTwoClusterPack(pack, '.filter-cluster-stadium', '.filter-cluster-site');
             return;
         }
         var clusters = pack.querySelectorAll(':scope > .filter-cluster');
@@ -95,30 +95,11 @@
                 typeShow = node;
             }
         }
-        var leagueW = contentWidth(league);
-        var teamW = contentWidth(team);
-        var typeW = contentWidth(typeShow);
-        var gap = parseFloat(window.getComputedStyle(pack).columnGap);
-        if (!isFinite(gap)) {
-            gap = 0;
-        }
-        var widths = [];
-        if (leagueW > 0) {
-            widths.push(leagueW);
-        }
-        if (teamW > 0) {
-            widths.push(teamW);
-        }
-        if (typeW > 0) {
-            widths.push(typeW);
-        }
-        var need = 0;
-        widths.forEach(function (width, item) {
-            need += width;
-            if (item) {
-                need += gap;
-            }
-        });
+        var leagueW = measureClusterContentWidth(league);
+        var teamW = measureClusterContentWidth(team);
+        var typeW = measureClusterContentWidth(typeShow);
+        var gap = readPackGapPx(pack);
+        var need = sumClusterWidths([leagueW, teamW, typeW], gap);
         var mode = 'wide';
         if (need > pack.clientWidth + 1) {
             if (teamW <= 0) {
@@ -128,40 +109,74 @@
                 mode = pair <= pack.clientWidth + 1 ? 'split' : 'stack';
             }
         }
-        if (pack.getAttribute('data-mode') !== mode) {
-            pack.setAttribute('data-mode', mode);
-        }
+        setFilterPackMode(pack, mode);
     }
 
-    function watch(pack) {
+    function observeFilterPackResize(pack) {
         if (pack.__filterPackWatch || !window.ResizeObserver) {
             return;
         }
         var observer = new ResizeObserver(function () {
-            measure(pack);
+            measureFilterPack(pack);
         });
         observer.observe(pack);
         pack.__filterPackWatch = observer;
     }
 
-    function sync() {
+    function syncFilterPacks() {
         document.querySelectorAll('.filter-pack').forEach(function (pack) {
-            watch(pack);
-            measure(pack);
+            observeFilterPackResize(pack);
+            measureFilterPack(pack);
         });
     }
 
-    window.dash_clientside.filter_pack.sync = sync;
+    function fillProbeHost(id, options, fallback) {
+        var host = document.getElementById(id);
+        if (!host) {
+            return;
+        }
+        var labels = [];
+        (options || []).forEach(function (item) {
+            if (item && item.label) {
+                labels.push(String(item.label));
+            } else if (typeof item === 'string' && item) {
+                labels.push(item);
+            }
+        });
+        if (!labels.length) {
+            labels.push(fallback);
+        }
+        while (host.firstChild) {
+            host.removeChild(host.firstChild);
+        }
+        labels.forEach(function (label) {
+            var span = document.createElement('span');
+            span.className = 'select-sizer-probe';
+            span.setAttribute('aria-hidden', 'true');
+            span.textContent = label;
+            host.appendChild(span);
+        });
+    }
 
-    function boot() {
-        sync();
-        window.setTimeout(sync, 0);
-        window.setTimeout(sync, 300);
+    function fillSelectSizerProbes(teamOptions, opponentLabels, stadiumOptions) {
+        fillProbeHost('ts-team-probes', teamOptions, 'All Teams');
+        fillProbeHost('ts-opponent-probes', opponentLabels, 'vs All Teams');
+        fillProbeHost('ts-stadium-probes', stadiumOptions, 'All Stadiums');
+        syncFilterPacks();
+    }
+
+    window.dash_clientside.filter_pack.sync = syncFilterPacks;
+    window.dash_clientside.filter_pack.fillProbes = fillSelectSizerProbes;
+
+    function bootFilterPacks() {
+        syncFilterPacks();
+        window.setTimeout(syncFilterPacks, 0);
+        window.setTimeout(syncFilterPacks, 300);
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
+        document.addEventListener('DOMContentLoaded', bootFilterPacks);
     } else {
-        boot();
+        bootFilterPacks();
     }
 })();

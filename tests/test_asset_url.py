@@ -38,11 +38,19 @@ class AssetIndexTests(unittest.TestCase):
         css = app.app._generate_css_dist_html()
         scripts = app.app._generate_scripts_html()
         root = Path(__file__).resolve().parents[1]
+        app_css = asset_token(root / 'assets' / 'app.css')
+        tables_css = asset_token(root / 'assets' / 'tables.css')
         report_css = asset_token(root / 'assets' / 'report.css')
         report_js = asset_token(root / 'assets' / 'report_canvas.js')
+        report_blocks_js = asset_token(root / 'assets' / 'report_blocks.js')
+        report_pdf_js = asset_token(root / 'assets' / 'report_pdf.js')
+        self.assertIn(f'/assets/app.css?m={app_css}', css)
+        self.assertIn(f'/assets/tables.css?m={tables_css}', css)
         self.assertIn(f'/assets/report.css?m={report_css}', css)
         self.assertNotIn('report.css?m=315532801', css)
+        self.assertIn(f'/assets/report_blocks.js?m={report_blocks_js}', scripts)
         self.assertIn(f'/assets/report_canvas.js?m={report_js}', scripts)
+        self.assertIn(f'/assets/report_pdf.js?m={report_pdf_js}', scripts)
         self.assertNotIn('report_canvas.js?m=315532801', scripts)
 
     def test_import_links_assets_before_any_request(self):
@@ -55,6 +63,10 @@ class AssetIndexTests(unittest.TestCase):
         # first GET of /team-stats, before FastAPI would have run this hook.
         css = app.app._generate_css_dist_html()
         scripts = app.app._generate_scripts_html()
+        self.assertIn('/assets/app.css?m=', css)
+        self.assertIn('/assets/tables.css?m=', css)
         self.assertIn('/assets/report.css?m=', css)
         self.assertIn('/assets/page_nav.js?m=', scripts)
+        self.assertIn('/assets/report_blocks.js?m=', scripts)
         self.assertIn('/assets/report_canvas.js?m=', scripts)
+        self.assertIn('/assets/report_pdf.js?m=', scripts)

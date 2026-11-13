@@ -635,37 +635,10 @@ clientside_callback(
 clientside_callback(
     """
     function(teamOptions, opponentLabels, stadiumOptions) {
-        function fill(id, options, fallback) {
-            var host = document.getElementById(id);
-            if (!host) {
-                return;
-            }
-            var labels = [];
-            (options || []).forEach(function (item) {
-                if (item && item.label) {
-                    labels.push(String(item.label));
-                } else if (typeof item === 'string' && item) {
-                    labels.push(item);
-                }
-            });
-            if (!labels.length) {
-                labels.push(fallback);
-            }
-            while (host.firstChild) {
-                host.removeChild(host.firstChild);
-            }
-            labels.forEach(function (label) {
-                var span = document.createElement('span');
-                span.className = 'home-team-sizer-probe';
-                span.setAttribute('aria-hidden', 'true');
-                span.textContent = label;
-                host.appendChild(span);
-            });
-        }
-        fill('ts-team-probes', teamOptions, 'All Teams');
-        fill('ts-opponent-probes', opponentLabels, 'vs All Teams');
-        fill('ts-stadium-probes', stadiumOptions, 'All Stadiums');
         var api = window.dash_clientside && window.dash_clientside.filter_pack;
+        if (api && api.fillProbes) {
+            api.fillProbes(teamOptions, opponentLabels, stadiumOptions);
+        }
         if (api && api.sync) {
             api.sync();
             window.setTimeout(api.sync, 0);

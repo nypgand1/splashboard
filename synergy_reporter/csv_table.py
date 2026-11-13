@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Client-side Report CSV import rules. No Dash and no disk I/O.
 
-The browser copy lives in assets/report_canvas.js and must accept the same
+The browser copy lives in assets/report_blocks.js and must accept the same
 text, limits, titles, and PPP colors.
 """
 
