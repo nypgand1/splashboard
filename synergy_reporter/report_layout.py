@@ -117,6 +117,7 @@ def pdf_export_spec():
         'filename': 'match_date_yyyymmdd',
         'filename_fallback': PDF_FILENAME_FALLBACK,
         'engine': 'jspdf_dom',
+        'compress': True,
         'text': 'selectable',
         'visual': 'approximate',
         'font': 'Noto Sans TC',

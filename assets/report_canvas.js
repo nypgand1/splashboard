@@ -502,7 +502,7 @@
     }
 
     function isBlankZero(col, val) {
-        if (col === '+/-') {
+        if (col === '+/-' || col === '#') {
             return false;
         }
         if (typeof val === 'string' && (val.indexOf('%') !== -1 || val.charAt(0) === '.')) {
@@ -4461,7 +4461,7 @@
             return loadReportFont();
         }).then(function () {
             var JsPDF = window.jspdf.jsPDF;
-            var pdf = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+            var pdf = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
             registerReportFont(pdf);
             pdfMeasurer = pdf;
             pdfHeaderPxCache = {};

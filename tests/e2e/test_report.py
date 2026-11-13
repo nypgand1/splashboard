@@ -298,6 +298,24 @@ def test_report_player_zero_made_shows_zero_pct(page, e2e_server):
     assert '4\t.000' in text
     assert '0.0%' in text
     assert 'Player Stats' in text
+    jersey = page.evaluate(
+        '''() => {
+            const table = document.querySelector(
+                '#report-paper-page-3 .grid-stack-item[data-table-key="p_df_home"] .report-js-table'
+            );
+            if (!table) return { ok: false };
+            const row = [...table.querySelectorAll('tbody tr')].find((tr) =>
+                (tr.innerText || '').includes('HuangBo')
+            );
+            if (!row) return { ok: false };
+            const cells = [...row.querySelectorAll('td')].map((td) => (td.textContent || '').trim());
+            return { ok: true, jersey: cells[0], bs: cells[20], pts: cells[23] };
+        }'''
+    )
+    assert jersey['ok'] is True, jersey
+    assert jersey['jersey'] == '0', jersey
+    assert jersey['bs'] == '', jersey
+    assert jersey['pts'] == '10', jersey
 
 
 def test_report_page_one_has_static_rotation(page, e2e_server):

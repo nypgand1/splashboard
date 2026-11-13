@@ -314,6 +314,7 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(spec['filename'], 'match_date_yyyymmdd')
         self.assertEqual(spec['filename_fallback'], 'splashboard-report.pdf')
         self.assertEqual(spec['engine'], 'jspdf_dom')
+        self.assertTrue(spec['compress'])
         self.assertEqual(spec['text'], 'selectable')
         self.assertEqual(spec['visual'], 'approximate')
         self.assertEqual(spec['font'], 'Noto Sans TC')
@@ -339,6 +340,25 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(spec['fallback'], 'print')
         self.assertEqual(spec['export_busy'], 'disable_button')
         self.assertNotEqual(spec['engine'], 'html2canvas')
+
+    def test_report_keeps_jersey_zero_and_flate_compresses_pdf(self):
+        import os
+        js_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'assets',
+            'report_canvas.js',
+        )
+        with open(js_path, encoding='utf-8') as handle:
+            js = handle.read()
+        blank = js.split('function isBlankZero', 1)[1].split('function formatCell', 1)[0]
+        self.assertIn("col === '+/-' || col === '#'", blank)
+        self.assertIn("val === 0 || val === '0' || val === '0.0'", blank)
+        export_fn = js.split('function exportPapersToPdf', 1)[1].split('function validateImageFile', 1)[0]
+        self.assertIn('compress: true', export_fn)
+        self.assertNotIn("'FAST'", export_fn)
+        self.assertNotIn('"FAST"', export_fn)
+        measurer = js.split('function pdfMeasurerDoc', 1)[1].split('function armPdfHeaderMeasure', 1)[0]
+        self.assertNotIn('compress: true', measurer)
 
     def test_pdf_filename_uses_match_date(self):
         if report_layout is None:
