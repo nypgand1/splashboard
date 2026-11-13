@@ -44,3 +44,17 @@ class AssetIndexTests(unittest.TestCase):
         self.assertNotIn('report.css?m=315532801', css)
         self.assertIn(f'/assets/report_canvas.js?m={report_js}', scripts)
         self.assertNotIn('report_canvas.js?m=315532801', scripts)
+
+    def test_import_links_assets_before_any_request(self):
+        self.assertTrue(app.app._got_first_request['setup_server'])
+        css_files = app.app.css._resources._resources
+        script_files = app.app.scripts._resources._resources
+        self.assertTrue(any(item.get('asset_path') == 'report.css' for item in css_files))
+        self.assertTrue(any(item.get('asset_path') == 'page_nav.js' for item in script_files))
+        # index() interpolates these two strings into every path, including a
+        # first GET of /team-stats, before FastAPI would have run this hook.
+        css = app.app._generate_css_dist_html()
+        scripts = app.app._generate_scripts_html()
+        self.assertIn('/assets/report.css?m=', css)
+        self.assertIn('/assets/page_nav.js?m=', scripts)
+        self.assertIn('/assets/report_canvas.js?m=', scripts)

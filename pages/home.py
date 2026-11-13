@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 
@@ -28,6 +29,15 @@ from synergy_inbounder.runtime_cache import (
     id_refresh_state,
     season_refresh_state,
 )
+from domain.schedule_filters import (
+    LEAGUE_EASL,
+    LEAGUE_OPTIONS,
+    LEAGUE_PLG,
+    default_season_id,
+    fixture_type_options as game_type_options,
+    plain_fixture_type,
+    seasons_for,
+)
 from synergy_inbounder.settings import (
     EASL_SEASON_ID,
     EASL_SEASONS,
@@ -37,7 +47,7 @@ from synergy_inbounder.settings import (
     SYNERGY_SEASONS,
 )
 from synergy_inbounder.parser import Parser
-from synergy_reporter.team_season import plain_fixture_type
+from synergy_reporter.schedule_menu import named_side_options
 from synergy_inbounder.game_status import (
     format_score_display,
     score_is_clickable,
@@ -61,6 +71,7 @@ from ui_kit import (
     matchup_score_parts,
     meta_cluster,
     status_badge,
+    to_jsonable as _jsonable,
 )
 
 register_page(
@@ -82,26 +93,8 @@ TEAM_ALL = 'all'
 TEAM_ALL_LABEL = 'All Teams'
 TEAM_INPUT_PAD = 12
 TEAM_CHEVRON = 28
-LEAGUE_PLG = 'PLG'
-LEAGUE_EASL = 'EASL'
-LEAGUE_OPTIONS = [
-    {'label': LEAGUE_PLG, 'value': LEAGUE_PLG},
-    {'label': LEAGUE_EASL, 'value': LEAGUE_EASL},
-]
 HOME_LAST_UPDATE_PENDING = 'Last Update: —'
 _TAIPEI = datetime.timezone(datetime.timedelta(hours=8))
-
-
-def default_season_id(league):
-    if league == LEAGUE_EASL:
-        return EASL_SEASON_ID
-    return SYNERGY_SEASON_ID
-
-
-def seasons_for(league):
-    if league == LEAGUE_EASL:
-        return EASL_SEASONS
-    return SYNERGY_SEASONS
 
 
 def initial_home_filters():
@@ -235,14 +228,6 @@ def apply_home_filters(
     return data, scope
 
 
-@callback(
-    Output('home-game-list', 'children'),
-    Output('home-filter-store', 'data', allow_duplicate=True),
-    Input('home-interval', 'n_intervals'),
-    Input('home-scope-store', 'data'),
-    State('home-filter-store', 'data'),
-    prevent_initial_call='initial_duplicate',
-)
 def load_home_game_list(n_intervals=0, scope=None, filters=None):
     first = _first_home_load(n_intervals)
     triggered = _triggered_id()
@@ -323,6 +308,20 @@ def load_home_game_list(n_intervals=0, scope=None, filters=None):
 
 
 @callback(
+    Output('home-game-list', 'children'),
+    Output('home-filter-store', 'data', allow_duplicate=True),
+    Input('home-interval', 'n_intervals'),
+    Input('home-scope-store', 'data'),
+    State('home-filter-store', 'data'),
+    prevent_initial_call='initial_duplicate',
+)
+async def serve_home_game_list(n_intervals=0, scope=None, filters=None):
+    return await asyncio.to_thread(
+        load_home_game_list, n_intervals, scope, filters,
+    )
+
+
+@callback(
     Output('home-filter-store', 'data', allow_duplicate=True),
     Output('home-scope-store', 'data'),
     Output('home-game-type', 'value'),
@@ -369,20 +368,6 @@ def update_home_view(records, show, game_type, team=None):
     league = head.get('league') if isinstance(head, dict) and head.get('league') else LEAGUE_PLG
     rows = _apply_live_clocks(rows, show, game_type, league, team)
     return render_schedule_list(rows, show, game_type, team)
-
-
-def _jsonable(node):
-    if isinstance(node, Component):
-        spec = node.to_plotly_json()
-        spec['props'] = {
-            key: _jsonable(value) for key, value in spec['props'].items()
-        }
-        return spec
-    if isinstance(node, (list, tuple)):
-        return [_jsonable(item) for item in node]
-    if isinstance(node, dict):
-        return {key: _jsonable(value) for key, value in node.items()}
-    return node
 
 
 clientside_callback(
@@ -570,24 +555,13 @@ def _named_side(record, id_key, name_key):
 
 
 def team_menu(records):
-    found = {}
-    for record in records or []:
-        if not isinstance(record, dict):
-            continue
-        for pair in (
-            _named_side(record, 'teamIdHome', 'homeTeam'),
-            _named_side(record, 'teamIdAway', 'awayTeam'),
-        ):
-            if pair is None:
-                continue
-            entity_id, name = pair
-            found.setdefault(entity_id, name)
-    ordered = sorted(found.items(), key=lambda item: (item[1], item[0]))
-    options = [{'label': TEAM_ALL_LABEL, 'value': TEAM_ALL}]
-    options.extend(
-        {'label': name, 'value': entity_id} for entity_id, name in ordered
-    )
-    return options, len(ordered) >= 2
+    """Named clubs on the rows this page passes. Home passes the whole season."""
+    def name_of(record, side):
+        if side == 'home':
+            return _named_side(record, 'teamIdHome', 'homeTeam')
+        return _named_side(record, 'teamIdAway', 'awayTeam')
+
+    return named_side_options(records, name_of, TEAM_ALL_LABEL, TEAM_ALL)
 
 
 def coerce_team(records, team):
@@ -618,20 +592,6 @@ def game_type_for_show(records, show, game_type, team):
     return game_type_after_show_change(
         candidates_for_team(records, team), show, game_type,
     )
-
-
-def game_type_options(records):
-    options = []
-    seen = set()
-    for record in records or []:
-        if not isinstance(record, dict):
-            continue
-        value = plain_fixture_type(record.get('fixtureType'))
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        options.append({'label': value.title(), 'value': value})
-    return options
 
 
 def _stage(record):
@@ -863,6 +823,7 @@ def _compact_row(record):
         gap=4,
         px='md',
         py='sm',
+        className='home-schedule-row-body',
     )
     fixture_id = record.get('fixtureId') or ''
     if 'scoreClickable' in record:

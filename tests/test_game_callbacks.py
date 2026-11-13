@@ -69,15 +69,15 @@ class WarmupGateTests(unittest.TestCase):
 
 
 class IntervalGateTests(unittest.TestCase):
-    def test_finished_disables_interval(self):
-        self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'FINISHED'})))
-        self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'CONFIRMED'})))
+    def test_finished_keeps_the_interval_on(self):
+        self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'FINISHED'})))
+        self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'CONFIRMED'})))
         self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'SCHEDULED'})))
         self.assertTrue(game_page.set_interval_disabled(json.dumps({'status': 'CANCELLED'})))
         self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'IN_PROGRESS'})))
         self.assertFalse(game_page.set_interval_disabled(json.dumps({'status': 'PENDING'})))
-        self.assertTrue(game_page.set_interval_disabled('not-json'))
-        self.assertTrue(game_page.set_interval_disabled(None))
+        self.assertFalse(game_page.set_interval_disabled('not-json'))
+        self.assertFalse(game_page.set_interval_disabled(None))
 
 
 class HiddenTabTests(unittest.TestCase):
@@ -269,6 +269,9 @@ class LiveRefreshWiringTests(unittest.TestCase):
         playhead = specs('rotation_view_store.data')
         self.assertEqual(len(playhead), 1)
         self.assertIn(('match_info_store', 'data'), _dep_pairs(playhead[0]['inputs']))
+        playhead_ids = {item['id'] for item in playhead[0]['inputs']}
+        self.assertNotIn('rotation-period', playhead_ids)
+        self.assertNotIn('rotation-graph', playhead_ids)
 
         chip = specs('rotation-live.style')
         self.assertEqual(len(chip), 1)
@@ -295,98 +298,59 @@ class RotationViewTests(unittest.TestCase):
             'teams': [{'side': 'home', 'players': []}],
         }
 
-    def test_period_zoom_and_all_reset(self):
-        store = json.dumps(self._payload())
-        view = game_page.apply_rotation_view_event(
-            'rotation-period', '1', False, [], None, store, 'g1', {}, {},
-        )
-        self.assertEqual(view['x0'], 0.0)
-        self.assertEqual(view['x1'], 120.0)
-        self.assertEqual(view['t'], 0.0)
-        self.assertEqual(view['slice_width'], 120.0)
-        reset = game_page.apply_rotation_view_event(
-            'rotation-period', 'all', False, [], None, store, 'g1', view, {},
-        )
-        self.assertIsNone(reset['x0'])
-        self.assertIsNone(reset['x1'])
-        self.assertIsNone(reset['slice_width'])
-        self.assertEqual(reset['t'], 0.0)
-
-    def test_run_click_returns_to_all_and_sets_playhead(self):
+    def test_run_click_sets_playhead(self):
         store = json.dumps(self._payload())
         view = game_page.apply_rotation_view_event(
             {'type': 'rotation-run', 'index': 0},
-            '1',
             False,
             [1],
             None,
             store,
             'g1',
-            {'period': '1', 'x0': 0.0, 'x1': 120.0, 'slice_width': 120.0, 't': 0.0},
+            {'t': 0.0, 'x0': 0.0, 'x1': 120.0},
             {},
         )
         self.assertEqual(view['t'], 30.0)
-        self.assertEqual(view['period'], 'all')
-        self.assertIsNone(view['x0'])
-        self.assertIsNone(view['x1'])
-        self.assertIsNone(view['slice_width'])
+        self.assertFalse(view['follow_live'])
+        for key in ('period', 'x0', 'x1', 'slice_width', 'axis_rev'):
+            self.assertNotIn(key, view)
 
     def test_kill_trigger_does_not_move_the_playhead(self):
         store = json.dumps(self._payload())
         view = game_page.apply_rotation_view_event(
             {'type': 'rotation-kill', 'index': 0},
-            '1',
             False,
             [],
             None,
             store,
             'g1',
-            {'period': '1', 'x0': 0.0, 'x1': 120.0, 'slice_width': 120.0, 't': 0.0},
+            {'t': 0.0},
             {},
         )
         self.assertIs(view, no_update)
-
-    def test_relayout_updates_period_chip_from_window(self):
-        store = json.dumps(self._payload())
-        view = game_page.apply_rotation_view_event(
-            'rotation-graph.relayoutData',
-            '1',
-            False,
-            [],
-            None,
-            store,
-            'g1',
-            {'period': '1', 'x0': 0.0, 'x1': 120.0, 'slice_width': 120.0, 'axis_rev': 0},
-            {},
-            relayout_data={'xaxis.range[0]': 80.0, 'xaxis.range[1]': 200.0},
-        )
-        self.assertEqual(view['period'], '2')
-        self.assertEqual(view['x0'], 80.0)
-        self.assertEqual(view['slice_width'], 120.0)
 
     def test_graph_click_sets_playhead_to_clicked_time_not_bar_end(self):
         store = json.dumps(self._payload())
         view = game_page.apply_rotation_view_event(
             'rotation-click-t',
-            'all',
             False,
             [],
             55.0,
             store,
             'g1',
-            {'x0': None, 'x1': None, 't': None},
+            {'t': None},
             {},
         )
         self.assertEqual(view['t'], 55.0)
-        self.assertIsNone(view['x0'])
+        self.assertNotIn('x0', view)
 
-    def test_period_chip_sets_playhead_to_period_start(self):
-        store = json.dumps(self._payload())
+    def test_show_dnp_toggles_without_a_window(self):
         view = game_page.apply_rotation_view_event(
-            'rotation-period', '2', False, [], None, store, 'g1', {}, {},
+            'rotation-show-dnp', True, [], None, '{}', 'g1', {'show_dnp': False}, {},
         )
-        self.assertEqual(view['t'], 120.0)
-        self.assertEqual(view['x0'], 120.0)
+        self.assertTrue(view['show_dnp'])
+        for key in ('period', 'x0', 'x1', 'slice_width', 'axis_rev'):
+            self.assertNotIn(key, view)
 
     def test_finished_playhead_defaults_to_game_start(self):
         payload = self._payload()
@@ -415,7 +379,7 @@ class RotationViewTests(unittest.TestCase):
 
     def _store_event(self, trigger, view, status):
         return game_page.apply_rotation_view_event(
-            trigger, 'all', False, [], None, self._live_store(), 'g1', view,
+            trigger, False, [], None, self._live_store(), 'g1', view,
             {'status': status},
         )
 
@@ -439,27 +403,23 @@ class RotationViewTests(unittest.TestCase):
         )
         self.assertTrue(view['saw_live'])
         self.assertEqual(view['t'], 20.0)
-        self.assertEqual(view['x0'], 0.0)
-        self.assertEqual(view['x1'], 120.0)
+        self.assertFalse(view['follow_live'])
+        self.assertNotIn('x0', view)
 
     def test_live_to_finished_resets_once(self):
         parked = {
-            'saw_live': True, 'follow_live': False, 't': 50.0, 'period': '1',
-            'x0': 0.0, 'x1': 120.0, 'slice_width': 120.0, 'axis_rev': 3,
+            'saw_live': True, 'follow_live': False, 't': 50.0,
             'show_dnp': True,
         }
         for status in ('FINISHED', 'CONFIRMED'):
             reset = self._store_event('match_info_store', dict(parked), status)
             self.assertIsNone(reset['t'])
             self.assertFalse(reset['follow_live'])
-            self.assertEqual(reset['period'], 'all')
-            self.assertIsNone(reset['x0'])
-            self.assertIsNone(reset['x1'])
-            self.assertIsNone(reset['slice_width'])
             self.assertTrue(reset['finished_reset'])
-            self.assertEqual(reset['axis_rev'], 4)
             self.assertTrue(reset['saw_live'])
             self.assertTrue(reset['show_dnp'])
+            for key in ('period', 'x0', 'x1', 'slice_width', 'axis_rev'):
+                self.assertNotIn(key, reset)
             again = self._store_event('rotation_store', dict(reset, t=70.0), status)
             self.assertIs(again, no_update)
 
@@ -473,15 +433,15 @@ class RotationViewTests(unittest.TestCase):
 
     def test_game_id_resets_view(self):
         view = game_page.apply_rotation_view_event(
-            'game_id', 'all', True, [], None, '{}', 'g2',
-            {'period': '1', 't': 9, 'x0': 1, 'x1': 2, 'show_dnp': True},
+            'game_id', True, [], None, '{}', 'g2',
+            {'t': 9, 'show_dnp': True},
             {},
         )
         self.assertEqual(view, game_page.DEFAULT_ROTATION_VIEW)
 
     def test_game_id_clears_live_and_reset_flags(self):
         view = game_page.apply_rotation_view_event(
-            'game_id', 'all', False, [], None, '{}', 'g2',
+            'game_id', False, [], None, '{}', 'g2',
             {'saw_live': True, 'finished_reset': True, 't': 50.0},
             {},
         )
@@ -508,7 +468,6 @@ class RotationViewTests(unittest.TestCase):
         store = json.dumps(self._payload())
         view = game_page.apply_rotation_view_event(
             'rotation-click-t',
-            'all',
             False,
             [],
             40.0,
@@ -528,7 +487,6 @@ class RotationViewTests(unittest.TestCase):
         })
         view = game_page.apply_rotation_view_event(
             'rotation-live',
-            'all',
             False,
             [],
             None,
@@ -1324,7 +1282,7 @@ class LivePaintTests(unittest.TestCase):
         self.assertEqual(posted['home_score'], '88')
         self.assertEqual(posted['status'], 'FINISHED')
         self.assertNotIn('banner_ready', posted)
-        self.assertTrue(game_page.set_interval_disabled(outputs[5]))
+        self.assertFalse(game_page.set_interval_disabled(outputs[5]))
 
     def test_finish_failure_keeps_a_snapshot_and_errors_on_the_first_load(self):
         from synergy_inbounder.communicator import SynergyAuthError
@@ -1346,5 +1304,65 @@ class LivePaintTests(unittest.TestCase):
                 patch.object(game_page, 'report_generation', return_value=2):
             auth = game_page.publish_finished_snapshot(1, 'g1', 'plg')
         self.assertTrue(all(json.loads(item)['_ui'] == 'error' for item in auth))
+
+
+def _walk(node):
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            yield from _walk(item)
+        return
+    if node is None or isinstance(node, (str, int, float, bool)):
+        return
+    yield node
+    children = getattr(node, 'children', None)
+    if children is not None:
+        yield from _walk(children)
+
+
+class DuplicateOutputKeyTests(unittest.TestCase):
+    def test_renderer_output_keys_are_unique(self):
+        from collections import Counter
+
+        from dash._callback import GLOBAL_CALLBACK_LIST
+        from dash._utils import split_callback_id
+
+        keys = []
+        for spec in GLOBAL_CALLBACK_LIST:
+            parts = split_callback_id(spec['output'])
+            items = parts if isinstance(parts, list) else [parts]
+            for item in items:
+                keys.append(f"{item['id']}.{item['property']}")
+        duplicates = {key: count for key, count in Counter(keys).items() if count > 1}
+        self.assertEqual(duplicates, {})
+
+    def test_one_reader_writes_the_game_stores(self):
+        from dash._callback import GLOBAL_CALLBACK_LIST
+
+        readers = [
+            item for item in GLOBAL_CALLBACK_LIST
+            if 'rotation_store.data' in str(item.get('output'))
+            and 'interval-component.interval' in str(item.get('output'))
+        ]
+        self.assertEqual(len(readers), 1)
+        self.assertEqual(
+            [(item['id'], item['property']) for item in readers[0]['inputs']],
+            [
+                ('interval-component', 'n_intervals'),
+                ('game_id', 'children'),
+                ('game_league', 'children'),
+            ],
+        )
+        state = {(item['id'], item['property']) for item in readers[0]['state']}
+        self.assertIn(('bs_store', 'data'), state)
+        self.assertIn(('match_info_store', 'data'), state)
+        self.assertIn(('interval-component', 'interval'), state)
+        self.assertNotIn('finished-snapshot-sentinel', {item['id'] for item in readers[0]['inputs']})
+
+    def test_game_layout_has_no_sentinel_store(self):
+        matches = [
+            node for node in _walk(game_page.layout('g1', 'plg'))
+            if getattr(node, 'id', None) == 'finished-snapshot-sentinel'
+        ]
+        self.assertEqual(matches, [])
 
 

@@ -1371,6 +1371,8 @@ class DmcInfrastructureContractTests(unittest.TestCase):
         self.assertIn('AppShellMain', code)
         self.assertIn('"primaryColor": "bravesBlue"', code)
         self.assertNotIn('"cyan"', code)
+        self.assertIn('header={"height": 72}', code)
+        self.assertNotIn('header={"height": 56}', code)
 
 
 class NavbarDmcContractTests(unittest.TestCase):
@@ -1384,15 +1386,27 @@ class NavbarDmcContractTests(unittest.TestCase):
         self.assertNotIn('dbc.Navbar', code)
 
     def test_create_navbar_renders_dmc_with_brand_and_menu(self):
-        from navbar import create_navbar
+        from navbar import PAGE_LINKS, create_navbar
         nav = create_navbar()
         markup = str(nav)
         self.assertIn('Splashboard', markup)
         self.assertIn('TFB', markup)
-        self.assertIn('Home', markup)
+        self.assertIn('Schedule', markup)
+        self.assertIn('Team Stats', markup)
+        self.assertNotIn('Home', markup)
+        self.assertNotIn('tabler:home', markup)
+        self.assertNotIn('tabler:chart-histogram', markup)
+        self.assertNotIn('#f1f5f9', markup)
+        self.assertIn('app-page-nav', markup)
+        self.assertIn('Pages', markup)
+        self.assertIn('app-section-schedule', markup)
+        self.assertIn('app-section-team-stats', markup)
+        self.assertIn('app-navbar-menu-button', markup)
+        self.assertIn('Menu', markup)
         self.assertIn('Design by Wei-Hao Lin', markup)
         self.assertIn('app-navbar-credit', markup)
         self.assertFalse(_credit_is_inside_anchor(nav))
+        self.assertEqual([page['label'] for page in PAGE_LINKS], ['Schedule', 'Team Stats'])
 
 
 def _credit_is_inside_anchor(node, inside_anchor=False):

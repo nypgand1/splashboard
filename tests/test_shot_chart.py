@@ -4,6 +4,7 @@ import unittest
 import pandas as pd
 
 from synergy_reporter.post_game_report import PostGameReport
+from synergy_reporter.select_menu import select_menu_plan
 from synergy_reporter.shot_chart import (
     COLD,
     HOT,
@@ -12,10 +13,10 @@ from synergy_reporter.shot_chart import (
     court_markup,
     court_zones,
     report_shot_chart_payload,
+    season_zones,
     format_fg_percent,
     period_chips,
     player_options,
-    shot_menu_plan,
     zone_appearance,
 )
 
@@ -213,8 +214,58 @@ class CourtZoneTests(unittest.TestCase):
     def test_one_heave_does_not_flip_the_team_basket(self):
         events = [_shot(x=90, y=50, personId="other") for _ in range(8)]
         events.append(_shot(x=10, y=50, personId="heave", success=True))
-        zones = court_zones(events, "away", player_id="heave")
-        self.assertTrue(all(zone["fg"] == "-" for zone in zones))
+        zones = _by_area(court_zones(events, "away", player_id="heave"))
+        self.assertEqual(zones[13]["fg"], "-")
+        self.assertEqual(zones[1]["fg"], "-")
+
+    def test_tied_basket_logs_and_still_folds_right(self):
+        events = [
+            _shot(x=90, y=50),
+            _shot(x=10, y=50, success=False),
+        ]
+        with self.assertLogs("synergy.data", level="WARNING") as caught:
+            zones = _by_area(court_zones(events, "away", fixture_id="g1"))
+        self.assertIn(
+            "shot chart basket tied fixture=g1 team=away period=1 left=1 right=1",
+            caught.output[0],
+        )
+        self.assertEqual(zones[1]["count"], "1 / 1")
+        self.assertEqual(zones[13]["fg"], "-")
+
+    def test_one_sided_period_does_not_log_a_tie(self):
+        with self.assertNoLogs("synergy.data", level="WARNING"):
+            court_zones([_shot(x=90, y=50)], "away", fixture_id="g1")
+
+    def test_season_sums_each_game_after_its_own_basket(self):
+        games = [
+            {
+                "fixture_id": "g1",
+                "home": "aces",
+                "away": "bears",
+                "pbp": [
+                    _shot(entityId="aces", x=6, y=50),
+                    _shot(entityId="bears", x=6, y=50, success=False),
+                ],
+            },
+            {
+                "fixture_id": "g2",
+                "home": "bears",
+                "away": "aces",
+                "pbp": [
+                    _shot(entityId="aces", x=94, y=50),
+                    _shot(entityId="bears", x=94, y=50),
+                ],
+            },
+            {
+                "fixture_id": "g3",
+                "home": "aces",
+                "away": "cubs",
+                "pbp": None,
+            },
+        ]
+        team, opp = season_zones(games, "aces", period="all")
+        self.assertEqual(_by_area(team)[1]["count"], "2 / 2")
+        self.assertEqual(_by_area(opp)[1]["count"], "1 / 2")
 
     def test_right_basket_mirrors_the_sideline(self):
         left = _by_area(court_zones([_shot(x=6, y=10)], "away"))
@@ -284,31 +335,31 @@ class CourtZoneTests(unittest.TestCase):
 
     def test_menu_opens_toward_the_side_that_fits_every_name(self):
         self.assertEqual(
-            shot_menu_plan(100, 140, 800, 10, 32),
+            select_menu_plan(100, 140, 800, 10, 32),
             {"side": "bottom", "height": 320, "inner": 320},
         )
         self.assertEqual(
-            shot_menu_plan(700, 740, 800, 10, 32),
+            select_menu_plan(700, 740, 800, 10, 32),
             {"side": "top", "height": 320, "inner": 320},
         )
         self.assertEqual(
-            shot_menu_plan(500, 540, 700, 20, 32),
+            select_menu_plan(500, 540, 700, 20, 32),
             {"side": "top", "height": 480, "inner": 480},
         )
         self.assertEqual(
-            shot_menu_plan(10, 40, 80, 2, 32),
+            select_menu_plan(10, 40, 80, 2, 32),
             {"side": "bottom", "height": 128, "inner": 128},
         )
         self.assertEqual(
-            shot_menu_plan(100, 140, 800, 10, 32, 4, 4),
+            select_menu_plan(100, 140, 800, 10, 32, 4, 4),
             {"side": "bottom", "height": 328, "inner": 320},
         )
         self.assertEqual(
-            shot_menu_plan(500, 540, 700, 20, 32, 4, 4),
+            select_menu_plan(500, 540, 700, 20, 32, 4, 4),
             {"side": "top", "height": 488, "inner": 480},
         )
         self.assertEqual(
-            shot_menu_plan(10, 40, 80, 2, 32, 4, 4),
+            select_menu_plan(10, 40, 80, 2, 32, 4, 4),
             {"side": "bottom", "height": 136, "inner": 128},
         )
 

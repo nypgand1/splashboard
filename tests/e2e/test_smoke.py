@@ -338,6 +338,145 @@ def test_home_viewports(page, e2e_server):
     assert page.locator('#home-show').count() == 1
 
 
+def _nav_box(page):
+    return page.evaluate(
+        """() => {
+            const brand = document.querySelector('.app-navbar-brand-link');
+            const credit = document.querySelector('.app-navbar-credit');
+            const link = document.querySelector('.app-page-link.app-section-schedule');
+            const stats = document.querySelector('.app-page-link.app-section-team-stats');
+            const header = document.querySelector('.app-navbar');
+            const nav = document.querySelector('.app-page-nav');
+            const current = document.querySelector('.app-page-link[data-current="true"]');
+            const after = current ? getComputedStyle(current, '::after') : null;
+            const before = stats ? getComputedStyle(stats, '::before') : null;
+            const br = brand.getBoundingClientRect();
+            const cr = credit.getBoundingClientRect();
+            const lr = link.getBoundingClientRect();
+            const sr = stats ? stats.getBoundingClientRect() : null;
+            const hr = header.getBoundingClientRect();
+            const cur = current ? current.getBoundingClientRect() : null;
+            const scheduleStyle = getComputedStyle(link);
+            const statsStyle = stats ? getComputedStyle(stats) : null;
+            return {
+                header: Math.round(hr.height),
+                mode: nav.getAttribute('data-mode'),
+                creditBelow: cr.top >= br.bottom - 1,
+                creditLeft: Math.abs(cr.left - br.left),
+                linkGap: lr.left - br.right,
+                sepGap: sr ? sr.left - lr.right : 0,
+                sepW: before ? before.width : '',
+                sepBg: before ? before.backgroundColor : '',
+                sepH: before ? Math.abs(parseFloat(before.height) - lr.height) : 99,
+                scheduleSize: scheduleStyle.fontSize,
+                scheduleWeight: scheduleStyle.fontWeight,
+                statsSize: statsStyle ? statsStyle.fontSize : '',
+                statsWeight: statsStyle ? statsStyle.fontWeight : '',
+                statsColor: statsStyle ? statsStyle.color : '',
+                underlineH: after ? after.height : '',
+                underlineMt: after ? after.marginTop : '',
+                underlineBg: after ? after.backgroundColor : '',
+                underlineW: cur && after ? Math.abs(parseFloat(after.width) - cur.width) : 99,
+            };
+        }"""
+    )
+
+
+def test_page_nav_links_menu_and_current_section(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-nav')?.getAttribute('data-mode') === 'links'"""
+    )
+    schedule = page.locator('.app-page-link.app-section-schedule')
+    stats = page.locator('.app-page-link.app-section-team-stats')
+    assert schedule.inner_text() == 'Schedule'
+    assert stats.inner_text() == 'Team Stats'
+    assert schedule.get_attribute('aria-current') == 'page'
+    assert stats.get_attribute('aria-current') is None
+    assert page.locator('.app-navbar-menu-button').is_visible() is False
+    box = _nav_box(page)
+    assert box['header'] == 72
+    assert box['mode'] == 'links'
+    assert box['creditBelow'] is True
+    assert box['creditLeft'] < 2
+    assert 16 <= box['linkGap'] <= 24
+    assert 18 <= box['sepGap'] <= 24
+    assert box['sepW'] == '1px'
+    assert box['sepBg'] == 'rgb(203, 213, 225)'
+    assert box['sepH'] <= 2
+    assert box['scheduleSize'] == '15px'
+    assert box['scheduleWeight'] == '700'
+    assert box['statsSize'] == '15px'
+    assert box['statsWeight'] == '600'
+    assert box['statsColor'] == 'rgb(30, 41, 59)'
+    assert '|' not in page.locator('#app-page-nav').inner_text()
+    assert box['underlineH'] == '2px'
+    assert box['underlineMt'] == '4px'
+    assert box['underlineBg'] == 'rgb(0, 119, 182)'
+    assert box['underlineW'] <= 2
+    stats.hover()
+    hovered = stats.evaluate('el => getComputedStyle(el).color')
+    assert hovered == 'rgb(15, 23, 42)'
+    schedule.hover()
+    current_hover = schedule.evaluate('el => getComputedStyle(el).color')
+    assert current_hover == 'rgb(0, 119, 182)'
+
+    stats.click()
+    page.wait_for_url('**/team-stats', timeout=15000)
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-link.app-section-team-stats')?.getAttribute('aria-current') === 'page'"""
+    )
+    assert schedule.get_attribute('aria-current') is None
+
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.wait_for_function(
+        """() => {
+            const link = document.querySelector('.app-page-link.app-section-schedule');
+            return link && link.getAttribute('data-current') === 'true' && !link.getAttribute('aria-current');
+        }"""
+    )
+    assert page.locator('.app-page-link.app-section-team-stats').get_attribute('data-current') is None
+
+    page.set_viewport_size({'width': 300, 'height': 700})
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-nav')?.getAttribute('data-mode') === 'menu'"""
+    )
+    assert page.locator('.app-page-link').first.is_visible() is False
+    button = page.locator('.app-navbar-menu-button')
+    assert button.is_visible() is True
+    assert button.inner_text().strip() == 'Menu'
+    fill = button.evaluate('el => getComputedStyle(el).backgroundColor')
+    assert fill in ('rgba(0, 0, 0, 0)', 'transparent')
+    menu_type = button.evaluate(
+        'el => { const s = getComputedStyle(el); return [s.fontSize, s.fontWeight]; }'
+    )
+    assert menu_type == ['15px', '600']
+    narrow = _nav_box(page)
+    assert narrow['header'] == 72
+    assert narrow['creditBelow'] is True
+    button.click()
+    page.locator('.mantine-Menu-dropdown').wait_for(timeout=5000)
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-menu-item.app-section-schedule')?.getAttribute('data-current') === 'true'"""
+    )
+    assert page.locator('.mantine-Menu-dropdown svg').count() == 0
+    item = page.locator('.app-page-menu-item.app-section-schedule')
+    assert item.inner_text().strip() == 'Schedule'
+    assert item.get_attribute('data-current') == 'true'
+    assert item.get_attribute('aria-current') is None
+    assert page.locator('.app-page-menu-item.app-section-team-stats').inner_text().strip() == 'Team Stats'
+    idle = page.locator('.app-page-menu-item.app-section-team-stats').evaluate(
+        'el => { const s = getComputedStyle(el); return [s.fontSize, s.fontWeight, s.color]; }'
+    )
+    assert idle == ['13px', '500', 'rgb(30, 41, 59)']
+    current_item = item.evaluate(
+        'el => { const s = getComputedStyle(el); return [s.fontWeight, s.color]; }'
+    )
+    assert current_item == ['600', 'rgb(0, 119, 182)']
+    assert '|' not in page.locator('.mantine-Menu-dropdown').inner_text()
+
+
 def _select_tab(page, name):
     page.locator('[role="tab"]').filter(has_text=name).first.click()
     time.sleep(0.5)
@@ -428,6 +567,37 @@ def _game_tab_strip(page):
     )
 
 
+def _rotation_dnp_place(page):
+    place = page.evaluate(
+        '''() => {
+            const sw = document.getElementById('rotation-show-dnp');
+            const wrap = document.getElementById('wrap-rotation');
+            const live = document.getElementById('rotation-live');
+            const run = document.querySelector('[id*="rotation-run"]');
+            if (!sw || !wrap) return null;
+            const sr = sw.getBoundingClientRect();
+            const wr = wrap.getBoundingClientRect();
+            const lr = live ? live.getBoundingClientRect() : null;
+            const rr = run ? run.getBoundingClientRect() : null;
+            const row = run && run.parentElement ? run.parentElement.getBoundingClientRect() : null;
+            return {
+                gap: wr.right - sr.right,
+                liveDisplay: live ? getComputedStyle(live).display : '',
+                liveLeft: lr ? lr.left : null,
+                switchLeft: sr.left,
+                runTop: rr ? rr.top : null,
+                switchBottom: sr.bottom,
+                rowWidth: row ? row.width : null,
+                wrapWidth: wr.width,
+            };
+        }'''
+    )
+    assert place, 'rotation Show DNP is missing'
+    assert place['gap'] < 24
+    assert place['gap'] > -1
+    return place
+
+
 def _rotation_right_lane(page):
     lane = page.evaluate('(' + _ROTATION_LANE_JS + ')()')
     assert lane, 'rotation plot layout not ready'
@@ -467,10 +637,15 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
             const runs = [...document.querySelectorAll('#wrap-rotation button')].filter(
                 (b) => (b.id || '').includes('rotation-run')
             );
+            const gd = document.querySelector('#rotation-graph .js-plotly-plot');
+            const ticks = (gd && gd.layout && gd.layout.xaxis3 && gd.layout.xaxis3.ticktext) || [];
             return {
                 lastUpdate: !!(wrap && wrap.textContent.includes('Last Update')),
                 hasPaper: !!paper,
-                hasPeriod: !!(wrap && wrap.textContent.includes('All') && wrap.textContent.includes('1Q')),
+                hasPeriod: !!document.querySelector('#rotation-period'),
+                periodTicks: ticks.map((item) => String(item)),
+                dragmode: gd && gd.layout ? gd.layout.dragmode : null,
+                xFixed: !!(gd && gd.layout && gd.layout.xaxis && gd.layout.xaxis.fixedrange),
                 hasDnp: !!(wrap && wrap.textContent.includes('Show DNP')),
                 border: cs.borderTopWidth || '',
                 graphW: Math.round(rect.width),
@@ -485,7 +660,10 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert not rot.get('missing')
     assert rot['hasPaper'] is True
     assert rot['lastUpdate'] is True
-    assert rot['hasPeriod'] is True
+    assert rot['hasPeriod'] is False
+    assert '1Q' in rot['periodTicks']
+    assert rot['dragmode'] is False
+    assert rot['xFixed'] is True
     assert rot['hasDnp'] is True
     assert rot['tableScroll'] is False
     assert rot['runsCount'] >= 1
@@ -500,6 +678,10 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert wide_lane['rightKillShown'] is True
     assert wide_lane['keepsNames'] is True
     assert wide_lane['leftKillText'] == '3+ STOPS,3+ STOPS'
+    finished_wide = _rotation_dnp_place(page)
+    assert finished_wide['liveDisplay'] == 'none'
+    assert finished_wide['runTop'] >= finished_wide['switchBottom'] - 1
+    assert abs(finished_wide['rowWidth'] - finished_wide['wrapWidth']) < 24
 
     page.set_viewport_size({'width': 375, 'height': 812})
     page.wait_for_timeout(800)
@@ -525,6 +707,9 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
     assert not narrow.get('missing')
     assert narrow['graphW'] != 1220
     assert narrow['graphW'] < 400
+    finished_narrow = _rotation_dnp_place(page)
+    assert finished_narrow['liveDisplay'] == 'none'
+    assert finished_narrow['runTop'] >= finished_narrow['switchBottom'] - 1
     page.wait_for_function(_ROTATION_LANE_NARROW)
     before_rev = page.evaluate(
         '''() => {
@@ -532,7 +717,7 @@ def test_game_tabs_and_rotation_paper(page, e2e_server):
             return (gd && gd.layout && gd.layout.uirevision) || '';
         }'''
     )
-    page.locator('#rotation-period').get_by_text('1Q', exact=True).click()
+    page.locator('#rotation-show-dnp').click()
     page.wait_for_function(
         '''(before) => {
             const gd = document.querySelector('#rotation-graph .js-plotly-plot');
@@ -630,6 +815,27 @@ def _click_rotation_time(page, t, yaxis='yaxis'):
     assert coords, 'rotation plot axes not ready'
     page.mouse.click(coords['x'], coords['y'])
     return coords
+
+
+def test_rotation_show_dnp_stays_right_while_live(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/plg/{LIVE_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Rotation')
+    _reveal_loading(page, 'wrap-rotation')
+    page.locator('#rotation-live').wait_for(state='visible', timeout=20000)
+    page.locator('#wrap-rotation .js-plotly-plot').wait_for(state='visible', timeout=20000)
+    wide = _rotation_dnp_place(page)
+    assert wide['liveDisplay'] != 'none'
+    assert wide['liveLeft'] < wide['switchLeft']
+    assert wide['runTop'] >= wide['switchBottom'] - 1
+
+    page.set_viewport_size({'width': 375, 'height': 812})
+    page.wait_for_timeout(400)
+    narrow = _rotation_dnp_place(page)
+    assert narrow['liveDisplay'] != 'none'
+    assert narrow['liveLeft'] < narrow['switchLeft']
+    assert narrow['runTop'] >= narrow['switchBottom'] - 1
 
 
 def test_rotation_playhead_follows_click_time(page, e2e_server):
@@ -1096,7 +1302,7 @@ def test_shot_chart_tab(page, e2e_server):
             const padTop = parseFloat(style.paddingTop) || 0;
             const padBottom = parseFloat(style.paddingBottom) || 0;
             const heights = options.map((node) => node.getBoundingClientRect().height);
-            const plan = window.splashboardShotMenuPlan(
+            const plan = window.splashboardSelectMenuPlan(
                 input.getBoundingClientRect(), window.innerHeight, heights, heights.length, padTop, padBottom
             );
             const drop = dropdown.getBoundingClientRect();
@@ -1115,11 +1321,11 @@ def test_shot_chart_tab(page, e2e_server):
     )
     assert page.evaluate(
         '''() => {
-            const fit = window.splashboardShotMenuPlan({top: 100, bottom: 140}, 800, 32, 10);
-            const up = window.splashboardShotMenuPlan({top: 700, bottom: 740}, 800, 32, 10);
-            const tiny = window.splashboardShotMenuPlan({top: 10, bottom: 40}, 80, 32, 2);
-            const padded = window.splashboardShotMenuPlan({top: 100, bottom: 140}, 800, 32, 10, 4, 4);
-            const snapped = window.splashboardShotMenuPlan({top: 500, bottom: 540}, 700, 32, 20, 4, 4);
+            const fit = window.splashboardSelectMenuPlan({top: 100, bottom: 140}, 800, 32, 10);
+            const up = window.splashboardSelectMenuPlan({top: 700, bottom: 740}, 800, 32, 10);
+            const tiny = window.splashboardSelectMenuPlan({top: 10, bottom: 40}, 80, 32, 2);
+            const padded = window.splashboardSelectMenuPlan({top: 100, bottom: 140}, 800, 32, 10, 4, 4);
+            const snapped = window.splashboardSelectMenuPlan({top: 500, bottom: 540}, 700, 32, 20, 4, 4);
             return fit.side === 'bottom' && fit.height === 320 && fit.inner === 320
                 && up.side === 'top' && up.height === 320
                 && tiny.side === 'bottom' && tiny.height === 128

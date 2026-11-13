@@ -7,22 +7,20 @@ from synergy_reporter.rotation import (
     KILL_COLOR,
     KILL_ROW,
     LOWER_SEAM_INK,
-    apply_camera_relayout,
     away_lane_height,
     build_rotation_figure,
     build_rotation_payload,
     report_rotation_figure,
     stop_seam_spacing,
-    clamp_time_window,
     clock_to_seconds,
     contrast_text_color,
+    detect_kills,
     detect_runs,
     format_kill_label,
     format_run_label,
     live_playhead_t,
     margin_tick_span,
     period_clock_label,
-    period_for_window,
     period_label,
     relative_luminance,
     score_text_colors,
@@ -430,6 +428,50 @@ class KillDetectionTests(unittest.TestCase):
         self.assertAlmostEqual(kill['start'], 20.0)
         self.assertAlmostEqual(kill['end'], 100.0)
 
+    def test_halftime_splits_a_stop_streak_and_overtime_does_not(self):
+        home, away = 'home-id', 'away-id'
+        before = [
+            {'offense': away, 'points': 0, 'start': 10, 'end': 20},
+            {'offense': away, 'points': 0, 'start': 30, 'end': 40},
+        ]
+        after = [
+            {'offense': away, 'points': 0, 'start': 70, 'end': 80},
+        ]
+        self.assertEqual(detect_kills(before + after, home, away, halftime=65), [])
+        self.assertEqual(detect_kills(before + after, home, away)[0]['stops'], 3)
+        both = before + [
+            {'offense': away, 'points': 0, 'start': 50, 'end': 60},
+        ] + [
+            {'offense': away, 'points': 0, 'start': 80, 'end': 90},
+            {'offense': away, 'points': 0, 'start': 100, 'end': 110},
+            {'offense': away, 'points': 0, 'start': 120, 'end': 130},
+        ]
+        kills = detect_kills(both, home, away, halftime=65)
+        self.assertEqual([kill['stops'] for kill in kills], [3, 3])
+        self.assertLess(kills[0]['end'], 65)
+        self.assertGreaterEqual(kills[1]['start'], 65)
+        late = [
+            {'offense': away, 'points': 0, 'start': 2700, 'end': 2710},
+            {'offense': away, 'points': 0, 'start': 2720, 'end': 2730},
+            {'offense': away, 'points': 0, 'start': 2800, 'end': 2810},
+        ]
+        self.assertEqual(detect_kills(late, home, away, halftime=1440)[0]['stops'], 3)
+
+    def test_payload_splits_stops_across_halftime(self):
+        home, away = 'home-id', 'away-id'
+        payload = _kill_payload(home, away, [
+            {'periodId': 2, 'clock': 'PT01M00S', 'eventType': 'period', 'subType': 'start'},
+            {'periodId': 2, 'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 2, 'clock': 'PT00M20S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 2, 'clock': 'PT00M05S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 3, 'clock': 'PT01M00S', 'eventType': 'period', 'subType': 'start'},
+            {'periodId': 3, 'clock': 'PT00M40S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 3, 'clock': 'PT00M20S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+            {'periodId': 3, 'clock': 'PT00M05S', 'eventType': 'turnover', 'subType': 'badPass', 'entityId': away},
+        ])
+        self.assertEqual([kill['stops'] for kill in payload['kills']], [3, 3])
+        self.assertLess(payload['kills'][0]['end'], payload['kills'][1]['start'])
+
     def test_technical_free_throw_does_not_break_or_count(self):
         home, away = 'home-id', 'away-id'
         payload = _kill_payload(home, away, [
@@ -730,12 +772,15 @@ class RotationFigureTests(unittest.TestCase):
         self.assertTrue(fig.layout.autosize)
         self.assertNotEqual(fig.layout.width, 1220)
         self.assertTrue(fig.layout.width in (None, 0) or fig.layout.width is False)
-        self.assertEqual(fig.layout.dragmode, 'pan')
-        self.assertEqual(fig.layout.xaxis.minallowed, 0)
-        self.assertEqual(fig.layout.xaxis.maxallowed, 120)
-        self.assertTrue(fig.layout.yaxis.fixedrange)
-        self.assertTrue(fig.layout.yaxis2.fixedrange)
-        self.assertTrue(fig.layout.yaxis3.fixedrange)
+        self.assertIs(fig.layout.dragmode, False)
+        self.assertEqual(fig.layout.uirevision, 'full')
+        for name in (
+            'xaxis', 'xaxis2', 'xaxis3',
+            'yaxis', 'yaxis2', 'yaxis3', 'yaxis4', 'yaxis5', 'yaxis6',
+        ):
+            self.assertIs(fig.layout[name].fixedrange, True)
+        self.assertIsNone(fig.layout.xaxis.minallowed)
+        self.assertIsNone(fig.layout.xaxis.maxallowed)
 
     def test_report_rotation_figure_has_no_playhead(self):
         fig = report_rotation_figure(self._payload())
@@ -837,9 +882,15 @@ class RotationFigureTests(unittest.TestCase):
         self.assertFalse(any('Sit' in label for label in labels(hidden)))
         self.assertTrue(any('Sit' in label for label in labels(shown)))
 
-    def test_zoom_range_sets_xaxis(self):
-        fig = build_rotation_figure(self._payload(), x_range=(10, 50))
-        self.assertEqual(list(fig.layout.xaxis.range), [10, 50])
+    def test_x_range_is_always_the_full_game(self):
+        fig = build_rotation_figure(self._payload())
+        report = report_rotation_figure(self._payload())
+        for figure in (fig, report):
+            self.assertIs(figure.layout.dragmode, False)
+            for name in ('xaxis', 'xaxis2', 'xaxis3'):
+                axis = figure.layout[name]
+                self.assertEqual(list(axis.range), [0, 120])
+                self.assertIs(axis.fixedrange, True)
 
     def test_game_end_line_matches_quarter_dividers(self):
         payload = self._payload()
@@ -1100,59 +1151,6 @@ class RunLabelTests(unittest.TestCase):
             periods,
         )
         self.assertEqual(label, '1Q 08:24–06:24  4 STOPS')
-
-
-class CameraWindowTests(unittest.TestCase):
-    def test_clamp_stops_at_game_edges_and_keeps_width(self):
-        self.assertEqual(clamp_time_window(-20, 100, 240, 120), (0.0, 120.0))
-        self.assertEqual(clamp_time_window(150, 300, 240, 120), (120.0, 240.0))
-        self.assertEqual(clamp_time_window(0, 240, 240, 120), (60.0, 180.0))
-
-    def test_period_follows_majority_overlap_else_keeps_current(self):
-        periods = [
-            {'id': 1, 'start': 0.0, 'end': 120.0},
-            {'id': 2, 'start': 120.0, 'end': 240.0},
-        ]
-        self.assertEqual(period_for_window(0, 120, periods, current='1'), '1')
-        self.assertEqual(period_for_window(80, 200, periods, current='1'), '2')
-        self.assertEqual(period_for_window(90, 150, periods, current='1'), '1')
-
-    def test_relayout_keeps_slice_width_and_snaps_pinch(self):
-        periods = [
-            {'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0},
-            {'id': 2, 'label': '2Q', 'seconds': 120, 'start': 120.0, 'end': 240.0},
-        ]
-        view = {
-            'period': '1',
-            'x0': 0.0,
-            'x1': 120.0,
-            'slice_width': 120.0,
-            'axis_rev': 0,
-        }
-        panned = apply_camera_relayout(
-            {'xaxis.range[0]': 80.0, 'xaxis.range[1]': 200.0}, view, periods,
-        )
-        self.assertEqual(panned['x0'], 80.0)
-        self.assertEqual(panned['x1'], 200.0)
-        self.assertEqual(panned['slice_width'], 120.0)
-        self.assertEqual(panned['period'], '2')
-        self.assertEqual(panned['axis_rev'], 0)
-        pinched = apply_camera_relayout(
-            {'xaxis.range': [0.0, 240.0]}, view, periods,
-        )
-        self.assertEqual(pinched['x1'] - pinched['x0'], 120.0)
-        self.assertGreater(pinched['axis_rev'], 0)
-
-    def test_all_mode_relayout_cannot_leave_full_game(self):
-        periods = [{'id': 1, 'start': 0.0, 'end': 240.0}]
-        view = {'period': 'all', 'x0': None, 'x1': None, 'slice_width': None, 'axis_rev': 0}
-        out = apply_camera_relayout(
-            {'xaxis.range[0]': 10.0, 'xaxis.range[1]': 130.0}, view, periods,
-        )
-        self.assertIsNone(out['x0'])
-        self.assertIsNone(out['x1'])
-        self.assertEqual(out['period'], 'all')
-        self.assertGreater(out['axis_rev'], 0)
 
 
 class LivePlayheadTests(unittest.TestCase):

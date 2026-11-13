@@ -164,46 +164,147 @@
         return update;
     }
 
-    function finish(retry) {
-        window._rotationRightLanePending = false;
-        if (window._rotationRightLaneAgain) {
-            window._rotationRightLaneAgain = false;
-            apply(false);
-            return;
+    function createLaneController(getNode, matchesFn, updateFn, pendingKey, againKey) {
+        function finish(retry) {
+            window[pendingKey] = false;
+            if (window[againKey]) {
+                window[againKey] = false;
+                apply(false);
+                return;
+            }
+            var again = getNode();
+            if (again && !matchesFn(again, wantsNarrow()) && !retry) {
+                apply(true);
+            }
         }
-        var again = plotNode();
-        if (again && !laneMatches(again, wantsNarrow()) && !retry) {
-            apply(true);
+
+        function apply(retry) {
+            var gd = getNode();
+            if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
+                return;
+            }
+            var narrow = wantsNarrow();
+            if (matchesFn(gd, narrow)) {
+                return;
+            }
+            if (window[pendingKey]) {
+                window[againKey] = true;
+                return;
+            }
+            window[pendingKey] = true;
+            var result;
+            try {
+                result = window.Plotly.relayout(gd, updateFn(gd, narrow));
+            } catch (err) {
+                finish(retry);
+                return;
+            }
+            if (result && typeof result.then === 'function') {
+                result.then(function () { finish(retry); }, function () { finish(retry); });
+            } else {
+                finish(retry);
+            }
         }
+
+        return apply;
     }
 
-    function apply(retry) {
-        var gd = plotNode();
-        if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
-            return;
-        }
-        var narrow = wantsNarrow();
-        if (laneMatches(gd, narrow)) {
-            return;
-        }
-        if (window._rotationRightLanePending) {
-            window._rotationRightLaneAgain = true;
-            return;
-        }
-        window._rotationRightLanePending = true;
-        var result;
-        try {
-            result = window.Plotly.relayout(gd, laneUpdate(gd, narrow));
-        } catch (err) {
-            finish(retry);
-            return;
-        }
-        if (result && typeof result.then === 'function') {
-            result.then(function () { finish(retry); }, function () { finish(retry); });
-        } else {
-            finish(retry);
-        }
+    var apply = createLaneController(
+        plotNode,
+        laneMatches,
+        laneUpdate,
+        '_rotationRightLanePending',
+        '_rotationRightLaneAgain'
+    );
+
+    function teamNode() {
+        return document.querySelector('#ts-rotation-graph .js-plotly-plot')
+            || document.querySelector('#ts-rotation-graph .plotly-graph-div');
     }
+
+    function axisKeys(layout) {
+        var keys = [];
+        var key;
+        for (key in layout) {
+            if (Object.prototype.hasOwnProperty.call(layout, key) && /^yaxis\d*$/.test(key)) {
+                keys.push(key);
+            }
+        }
+        return keys;
+    }
+
+    function isRight(axis) {
+        return !!(axis && axis.side === 'right');
+    }
+
+    function isNameAxis(axis) {
+        return !!(axis && axis.categoryarray && axis.categoryarray.length && !isRight(axis));
+    }
+
+    function teamLaneMatches(gd, narrow) {
+        var layout = gd.layout;
+        if (!layout) {
+            return true;
+        }
+        var keys = axisKeys(layout);
+        var rights = [];
+        var i;
+        for (i = 0; i < keys.length; i++) {
+            if (isRight(layout[keys[i]])) {
+                rights.push(keys[i]);
+            }
+        }
+        if (!rights.length) {
+            return true;
+        }
+        var margin = layout.margin || {};
+        if (margin.r !== (narrow ? NARROW_R : WIDE_R)) {
+            return false;
+        }
+        if (margin.l !== (narrow ? NARROW_L : WIDE_L)) {
+            return false;
+        }
+        for (i = 0; i < rights.length; i++) {
+            if (narrow ? !hidden(layout[rights[i]]) : hidden(layout[rights[i]])) {
+                return false;
+            }
+        }
+        for (i = 0; i < keys.length; i++) {
+            if (isNameAxis(layout[keys[i]]) && !sameTicks(layout[keys[i]], narrow)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function teamLaneUpdate(gd, narrow) {
+        var update = {
+            'margin.r': narrow ? NARROW_R : WIDE_R,
+            'margin.l': narrow ? NARROW_L : WIDE_L
+        };
+        var keys = axisKeys(gd.layout || {});
+        var i;
+        var axis;
+        for (i = 0; i < keys.length; i++) {
+            axis = gd.layout[keys[i]];
+            if (isRight(axis)) {
+                update[keys[i] + '.visible'] = !narrow;
+            } else if (isNameAxis(axis)) {
+                update[keys[i] + '.automargin'] = false;
+                update[keys[i] + '.tickvals'] = axisLabels(axis);
+                update[keys[i] + '.ticktext'] = wantedTicks(axis, narrow);
+            }
+        }
+        return update;
+    }
+
+    var teamApply = createLaneController(
+        teamNode,
+        teamLaneMatches,
+        teamLaneUpdate,
+        '_teamRotationLanePending',
+        '_teamRotationLaneAgain'
+    );
 
     function bind() {
         if (window._rotationRightLaneBound) {
@@ -212,12 +313,24 @@
         window._rotationRightLaneBound = true;
         var mq = window.matchMedia(NARROW);
         if (typeof mq.addEventListener === 'function') {
-            mq.addEventListener('change', function () { apply(false); });
+            mq.addEventListener('change', function () {
+                apply(false);
+                teamApply(false);
+            });
         } else if (typeof mq.addListener === 'function') {
-            mq.addListener(function () { apply(false); });
+            mq.addListener(function () {
+                apply(false);
+                teamApply(false);
+            });
         }
-        document.addEventListener('plotly_afterplot', function () { apply(false); }, true);
-        window.setInterval(function () { apply(false); }, 200);
+        document.addEventListener('plotly_afterplot', function () {
+            apply(false);
+            teamApply(false);
+        }, true);
+        window.setInterval(function () {
+            apply(false);
+            teamApply(false);
+        }, 200);
     }
 
     if (document.readyState === 'loading') {

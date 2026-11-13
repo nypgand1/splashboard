@@ -421,6 +421,7 @@ class MatchupTabTests(unittest.TestCase):
         grid = next(node for node in walk(tree) if getattr(node, 'id', None) == 'matchup-grid')
         self.assertIn('braves-lineup-grid', grid.className)
         self.assertNotIn('pagination', grid.dashGridOptions)
+        self.assertNotIn('paginationPageSizeSelector', grid.dashGridOptions)
         self.assertIn(':view', grid.getRowId)
         self.assertIn(':other', grid.getRowId)
         lineup = _field(grid.columnDefs, 'Lineup')
@@ -515,13 +516,12 @@ class MatchupTabTests(unittest.TestCase):
             item for item in GLOBAL_CALLBACK_LIST
             if 'matchup_store.data' in str(item.get('output'))
         ]
-        live_specs = [
-            item for item in store_specs
-            if _output_entries(item) == [('matchup_store', 'data')]
-        ]
-        self.assertEqual(len(store_specs), 2)
-        self.assertEqual(len(live_specs), 1)
-        store_inputs = {(item['id'], item['property']) for item in live_specs[0]['inputs']}
+        self.assertEqual(len(store_specs), 1)
+        outputs = _output_entries(store_specs[0])
+        self.assertIn(('matchup_store', 'data'), outputs)
+        self.assertIn(('bs_store', 'data'), outputs)
+        self.assertIn(('rotation_store', 'data'), outputs)
+        store_inputs = {(item['id'], item['property']) for item in store_specs[0]['inputs']}
         self.assertIn(('interval-component', 'n_intervals'), store_inputs)
         self.assertIn(('game_id', 'children'), store_inputs)
         self.assertNotIn(('match_info_store', 'data'), store_inputs)

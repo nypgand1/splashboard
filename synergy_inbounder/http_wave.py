@@ -40,3 +40,15 @@ def run_wave(calls):
             return [future.result() for future in futures]
     finally:
         session.close()
+
+
+def run_tracked_wave(calls):
+    """Execute ``run_wave(calls)`` and return ``(results, used_network_bool)``."""
+    box = []
+    token = _cache_hits.set(box)
+    try:
+        results = run_wave(calls)
+    finally:
+        _cache_hits.reset(token)
+    used_network = any(not hit for hit in box)
+    return results, used_network

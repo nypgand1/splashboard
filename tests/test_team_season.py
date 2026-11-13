@@ -37,12 +37,14 @@ from synergy_reporter.post_game_report import PostGameReport
 from synergy_reporter.team_season import (
     EMPTY_TEAM_STATS,
     EMPTY_TEAM_STATS_NEXT,
+    _paint_pair,
     build_team_cards,
     choose_game_type,
     _finished_rows,
     fixture_type_options,
     period_chips_for_ids,
     plain_fixture_type,
+    schedule_chrome,
     team_stats_payload,
     type_needs_download,
 )
@@ -463,7 +465,7 @@ class TeamCardTests(unittest.TestCase):
         self.assertEqual(EMPTY_TEAM_STATS, 'No games in this view.')
         self.assertEqual(
             EMPTY_TEAM_STATS_NEXT,
-            'Switch Game Type, Opponent, Stadium, or Home/Away.',
+            'Switch Game Type, Team, Opponent, Stadium, or Home/Away.',
         )
 
     def test_chips_do_not_use_a_person_period_gate(self):
@@ -511,6 +513,7 @@ class SliceFilterTests(unittest.TestCase):
             opponent=kwargs.get('opponent', 'all'),
             stadium=kwargs.get('stadium', 'all'),
             site=kwargs.get('site', 'all'),
+            team=kwargs.get('team', 'all'),
         )
 
     def test_opponent_drops_that_team_and_renames_opp(self):
@@ -527,9 +530,50 @@ class SliceFilterTests(unittest.TestCase):
         labels = [item['label'] for item in built['opponent_options']]
         self.assertEqual(labels[0], 'vs All Teams')
         self.assertEqual(labels[1:], [
-            'vs Aces', 'vs Braves', 'vs Clippers', 'vs Dragons', 'vs Eagles',
+            'vs Aces', 'vs Braves', 'vs Clippers', 'vs Eagles',
         ])
         self.assertTrue(built['opponent_visible'])
+
+    def test_game_type_menu_lists_unplayed_clubs_and_drops_other_types(self):
+        fixtures = [
+            _fixture('reg', 'REGULAR', 'FINISHED', venueId='v1', teamIdHome='a', teamIdAway='b'),
+            _fixture('fin-later', 'FINAL', 'SCHEDULED', venueId='v9', teamIdHome='a', teamIdAway='d'),
+            _fixture('fin-done', 'FINAL', 'CONFIRMED', venueId='v3', teamIdHome='d', teamIdAway='a'),
+        ]
+        names = {
+            'a': 'Aces', 'b': 'Braves', 'd': 'Dragons',
+            'v1': 'Arena One', 'v3': 'Arena Three', 'v9': 'Future Hall',
+        }
+        built = build_team_cards(
+            fixtures,
+            pd.DataFrame([
+                _total('fin-done', 'a', points=4),
+                _total('fin-done', 'd', points=2),
+            ]),
+            pd.DataFrame(),
+            {},
+            names,
+            48,
+            'FINAL',
+            'all',
+            team='b',
+        )
+        self.assertEqual(
+            [item['label'] for item in built['team_options']],
+            ['All Teams', 'Aces', 'Dragons'],
+        )
+        self.assertTrue(built['team_visible'])
+        self.assertEqual(built['team'], 'all')
+        self.assertEqual(
+            [item['label'] for item in built['opponent_options']],
+            ['vs All Teams', 'vs Aces', 'vs Dragons'],
+        )
+        self.assertEqual(
+            [item['label'] for item in built['stadium_options']],
+            ['All Stadiums', 'Arena Three'],
+        )
+        self.assertNotIn('Braves', [item['label'] for item in built['team_options']])
+        self.assertNotIn('Future Hall', [item['label'] for item in built['stadium_options']])
 
     def test_stadium_and_site_stack_and_site_does_not_change_chips(self):
         stadium = self._built(stadium='v1')
@@ -582,8 +626,59 @@ class SliceFilterTests(unittest.TestCase):
         )
         self.assertFalse(built['opponent_visible'])
         self.assertEqual(built['opponent'], 'all')
+        self.assertFalse(built['team_visible'])
         self.assertFalse(built['stadium_visible'])
         self.assertEqual(_opp_text(built['cards'], 'team', 0, 'Team'), 'Opp')
+
+    def test_one_team_pins_a_summary_then_each_opponent(self):
+        built = self._built(team='a')
+        rows = built['cards']['team']['rows']
+        opp = built['cards']['team']['opp_rows']
+        self.assertEqual([row['Team']['text'] for row in rows], [
+            'Aces', 'Aces vs', 'Aces vs',
+        ])
+        self.assertEqual([row['Team']['text'] for row in opp], [
+            'Opp', 'Braves', 'Clippers',
+        ])
+        self.assertTrue(rows[0]['summary'])
+        self.assertFalse(rows[1].get('summary'))
+        self.assertEqual(_text(built['cards'], 'team', 'Aces', 'GP'), '3')
+        self.assertEqual(_text(built['cards'], 'team', 'Aces vs', 'GP'), '2')
+        self.assertTrue(built['show_opp_locked'])
+        self.assertNotIn('a', [item['value'] for item in built['opponent_options']])
+        self.assertIn('vs Aces', built['opponent_width_labels'])
+        self.assertIn('3', [item['value'] for item in built['period_chips']])
+
+    def test_named_opponent_is_one_matchup_without_a_summary(self):
+        built = self._built(team='a', opponent='b')
+        rows = built['cards']['team']['rows']
+        self.assertEqual([row['Team']['text'] for row in rows], ['Aces vs'])
+        self.assertFalse(rows[0].get('summary'))
+        self.assertEqual(built['cards']['team']['opp_rows'][0]['Team']['text'], 'Braves')
+        self.assertEqual(_text(built['cards'], 'team', 'Aces vs', 'GP'), '2')
+
+    def test_one_opponent_keeps_the_summary_beside_that_matchup(self):
+        built = self._built(team='a', stadium='v2')
+        rows = built['cards']['team']['rows']
+        self.assertEqual([row['Team']['text'] for row in rows], ['Aces', 'Aces vs'])
+        self.assertTrue(rows[0]['summary'])
+        self.assertEqual(rows[0]['PTS']['text'], rows[1]['PTS']['text'])
+        self.assertFalse(rows[0]['PTS']['winner'])
+        self.assertFalse(rows[1]['PTS']['winner'])
+
+    def test_summary_does_not_take_column_best(self):
+        summary = {'PTS': {'text': '30.0', 'winner': False}, 'summary': True}
+        low = {'PTS': {'text': '10.0', 'winner': False}}
+        high = {'PTS': {'text': '12.0', 'winner': False}}
+        _paint_pair([summary, low, high], [], ['PTS'])
+        self.assertFalse(summary['PTS']['winner'])
+        self.assertFalse(low['PTS']['winner'])
+        self.assertTrue(high['PTS']['winner'])
+
+    def test_team_chips_ignore_home_away(self):
+        home = self._built(team='a', site='home')
+        self.assertIn('3', [item['value'] for item in home['period_chips']])
+        self.assertEqual(_text(home['cards'], 'team', 'Aces', 'GP'), '2')
 
 
 class ColumnWinnerTests(unittest.TestCase):
@@ -667,7 +762,7 @@ class FrameStoreTests(unittest.TestCase):
 
         def _build():
             calls.append(1)
-            time.sleep(0.05)
+            time.sleep(0.15)
             return 'ok'
 
         results = []
@@ -785,3 +880,136 @@ class PayloadCacheTests(unittest.TestCase):
         self.assertNotIn('secret', payload['message'])
         self.assertFalse(payload['period_visible'])
         clear_runtime_caches()
+
+    def test_schedule_chrome_skips_totals_and_play_by_play(self):
+        season_patch, totals_patch, periods_patch, pbp_patch = self._patches()
+        season_id = dict(SYNERGY_SEASONS)['2025-26']
+        with season_patch, totals_patch as totals, periods_patch as periods, pbp_patch:
+            chrome = schedule_chrome('PLG', season_id, reset=True)
+        self.assertTrue(chrome['ok'])
+        self.assertTrue(chrome['needs_cards'])
+        self.assertEqual(chrome['team'], 'all')
+        self.assertEqual(self.pbp_calls, [])
+        self.assertFalse(totals.called)
+        self.assertFalse(periods.called)
+
+
+def _sort_cell(text):
+    return {'text': text, 'winner': False, 'opp_best': False}
+
+
+def _sort_row(name, pts, minutes='10:00', summary=False, pace='70.0', ppp='1.00'):
+    row = {
+        'Team': _sort_cell(name),
+        'GP': _sort_cell('' if name == 'Opp' else '2'),
+        'Min': _sort_cell('' if name == 'Opp' else minutes),
+        'PTS': _sort_cell(pts),
+        'TO': _sort_cell('1.0'),
+        'Pace': _sort_cell(pace),
+        'PPP': _sort_cell(ppp),
+    }
+    if summary:
+        row['summary'] = True
+    if name == 'Opp':
+        row['opp'] = True
+    return row
+
+
+class TeamCardSortTests(unittest.TestCase):
+    def _cards(self):
+        names = [('Aces', '10.0', '9:00', '60.0'), ('Braves', '20.0', '10:00', '80.0')]
+        rows = [_sort_row(name, pts, minutes, pace=pace) for name, pts, minutes, pace in names]
+        opp = [_sort_row('Opp', '4.0' if name == 'Aces' else '8.0') for name, _pts, _minutes, _pace in names]
+        cards = {}
+        for card_id, columns in (
+            ('team', ['Team', 'GP', 'Min', 'PTS', 'TO']),
+            ('key', ['Team', 'GP']),
+            ('pace', ['Team', 'GP', 'Pace']),
+            ('advanced', ['Team', 'GP', 'PPP']),
+        ):
+            cards[card_id] = {
+                'id': card_id,
+                'columns': columns,
+                'rows': rows,
+                'opp_rows': opp,
+            }
+        return cards
+
+    def _names(self, cards, card_id='team'):
+        return [row['Team']['text'] for row in cards[card_id]['rows']]
+
+    def test_stat_cycle_and_team_cycle(self):
+        from synergy_reporter.team_season import next_team_sort
+
+        desc = next_team_sort(None, 'PTS')
+        self.assertEqual(desc, {'column': 'PTS', 'direction': 'desc'})
+        asc = next_team_sort(desc, 'PTS')
+        self.assertEqual(asc['direction'], 'asc')
+        self.assertIsNone(next_team_sort(asc, 'PTS'))
+        team = next_team_sort(desc, 'Team')
+        self.assertEqual(team, {'column': 'Team', 'direction': 'asc'})
+        self.assertEqual(next_team_sort(team, 'Team')['direction'], 'desc')
+        self.assertIsNone(next_team_sort(next_team_sort(team, 'Team'), 'Team'))
+
+    def test_points_desc_keeps_opp_under_the_team_and_shares_the_order(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        ordered = order_team_cards(self._cards(), {'column': 'PTS', 'direction': 'desc'})
+        self.assertEqual(self._names(ordered), ['Braves', 'Aces'])
+        self.assertEqual(
+            [row['Team']['text'] for row in ordered['team']['opp_rows']],
+            ['Opp', 'Opp'],
+        )
+        self.assertEqual(ordered['team']['opp_rows'][0]['PTS']['text'], '8.0')
+        self.assertEqual(self._names(ordered, 'pace'), ['Braves', 'Aces'])
+        self.assertEqual(ordered['pace']['rows'][0]['Pace']['text'], '80.0')
+        self.assertEqual(self._names(ordered, 'advanced'), ['Braves', 'Aces'])
+
+    def test_blank_ranks_below_zero_and_minutes_sort_as_seconds(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        cards = self._cards()
+        cards['team']['rows'] = [
+            _sort_row('Aces', '0.0', '9:00'),
+            _sort_row('Braves', '', '10:00'),
+        ]
+        desc = order_team_cards(cards, {'column': 'PTS', 'direction': 'desc'})
+        asc = order_team_cards(cards, {'column': 'PTS', 'direction': 'asc'})
+        self.assertEqual(self._names(desc), ['Aces', 'Braves'])
+        self.assertEqual(self._names(asc), ['Braves', 'Aces'])
+        minutes = order_team_cards(cards, {'column': 'Min', 'direction': 'desc'})
+        self.assertEqual(self._names(minutes), ['Braves', 'Aces'])
+
+    def test_turnovers_desc_puts_the_larger_number_first(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        cards = self._cards()
+        cards['team']['rows'][0]['TO'] = _sort_cell('16.0')
+        cards['team']['rows'][1]['TO'] = _sort_cell('10.0')
+        ordered = order_team_cards(cards, {'column': 'TO', 'direction': 'desc'})
+        self.assertEqual(self._names(ordered), ['Aces', 'Braves'])
+
+    def test_summary_stays_pinned(self):
+        from synergy_reporter.team_season import order_team_cards
+
+        cards = self._cards()
+        cards['team']['rows'] = [
+            _sort_row('Aces', '1.0', summary=True),
+            _sort_row('Aces vs', '5.0'),
+            _sort_row('Aces vs', '30.0'),
+        ]
+        cards['team']['opp_rows'] = [
+            _sort_row('Opp', '1.0', summary=True),
+            _sort_row('Opp', '2.0'),
+            _sort_row('Opp', '9.0'),
+        ]
+        for name in ('key', 'pace', 'advanced'):
+            cards[name]['rows'] = list(cards['team']['rows'])
+            cards[name]['opp_rows'] = list(cards['team']['opp_rows'])
+        ordered = order_team_cards(cards, {'column': 'PTS', 'direction': 'desc'})
+        self.assertEqual(
+            [row['PTS']['text'] for row in ordered['team']['rows']],
+            ['1.0', '30.0', '5.0'],
+        )
+        self.assertTrue(ordered['team']['rows'][0].get('summary'))
+        self.assertEqual(ordered['team']['opp_rows'][1]['PTS']['text'], '9.0')

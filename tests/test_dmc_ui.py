@@ -288,7 +288,14 @@ class FourStateTests(unittest.TestCase):
         fig, graph_style, paper_style = game_page.update_rotation_graph(
             json.dumps(payload), {}, 'tab-rotation',
         )
-        self.assertIn(fig.layout.dragmode, ('pan', False))
+        self.assertIs(fig.layout.dragmode, False)
+        self.assertEqual(fig.layout.uirevision, 'roster')
+        self.assertIs(fig.layout.xaxis.fixedrange, True)
+        self.assertIs(fig.layout.yaxis.fixedrange, True)
+        dnp_fig, _, _ = game_page.update_rotation_graph(
+            json.dumps(payload), {'show_dnp': True}, 'tab-rotation',
+        )
+        self.assertEqual(dnp_fig.layout.uirevision, 'dnp')
         self.assertEqual(graph_style.get('width'), '100%')
         self.assertTrue(graph_style.get('height', '').endswith('px'))
         self.assertEqual(paper_style.get('overflow'), 'hidden')
@@ -297,7 +304,7 @@ class FourStateTests(unittest.TestCase):
     def test_rotation_callback_hosts_live_in_page_layout(self):
         tree = game_page.layout('g1')
         ids = {getattr(node, 'id', None) for node in walk(tree)}
-        self.assertIn('rotation-period', ids)
+        self.assertNotIn('rotation-period', ids)
         self.assertIn('rotation-show-dnp', ids)
         self.assertIn('rotation-graph', ids)
         self.assertIn('rotation-graph-paper', ids)
@@ -310,6 +317,35 @@ class FourStateTests(unittest.TestCase):
         self.assertTrue(find_type(tree, dmc.SegmentedControl))
         switches = [node for node in find_type(tree, dmc.Switch) if node.id == 'rotation-show-dnp']
         self.assertEqual(switches[0].label, 'Show DNP')
+        self.assertEqual(switches[0].size, 'sm')
+        self.assertEqual(switches[0].color, 'gray')
+        self.assertFalse(bool(switches[0].checked))
+        self.assertEqual(switches[0].ms, 'auto')
+        row = next(
+            node for node in walk(wrap)
+            if isinstance(node, dmc.Group)
+            and any(getattr(child, 'id', None) == 'rotation-live' for child in (node.children or []))
+            and any(getattr(child, 'id', None) == 'rotation-show-dnp' for child in (node.children or []))
+        )
+        self.assertEqual(row.justify, 'flex-start')
+        self.assertEqual(row.wrap, 'wrap')
+        self.assertEqual(row.w, '100%')
+        self.assertEqual(
+            [getattr(child, 'id', None) for child in row.children],
+            ['rotation-live', 'rotation-show-dnp'],
+        )
+        runs = game_page.render_rotation_children(json.dumps({
+            'periods': [{'id': 1, 'label': '1Q', 'seconds': 120, 'start': 0.0, 'end': 120.0}],
+            'teams': [{'team_id': 'h', 'team_name': 'Home', 'side': 'home', 'players': []}],
+            'runs': [{'side': 'home', 'home_pts': 10, 'away_pts': 2, 'start': 30.0, 'end': 60.0}],
+        }))
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].w, '100%')
+        self.assertTrue(all(
+            getattr(child, 'id', None) != 'rotation-show-dnp'
+            for child in runs[0].children
+        ))
+        self.assertFalse(any(isinstance(child, dmc.Switch) for child in runs[0].children))
         graphs = [node for node in walk(tree) if getattr(node, '_type', None) == 'Graph'
                   or node.__class__.__name__ == 'Graph']
         rotation_graph = next(node for node in graphs if getattr(node, 'id', None) == 'rotation-graph')
@@ -386,6 +422,7 @@ class FourStateTests(unittest.TestCase):
             opts = grid.dashGridOptions
             self.assertTrue(opts.get('pagination'))
             self.assertEqual(opts.get('paginationPageSize'), 20)
+            self.assertIs(opts.get('paginationPageSizeSelector'), False)
             self.assertEqual(opts.get('isExternalFilterPresent'), {'function': 'true'})
             lineup_col = next(col for col in grid.columnDefs if col.get('field') == 'Lineup')
             self.assertTrue(lineup_col.get('filter'))
@@ -396,15 +433,19 @@ class FourStateTests(unittest.TestCase):
         five_grids = find_type(five, dag.AgGrid)
         self.assertEqual(len(five_grids), 1)
         self.assertFalse(five_grids[0].dashGridOptions.get('pagination'))
+        self.assertNotIn('paginationPageSizeSelector', five_grids[0].dashGridOptions)
         shown = game_page.update_pane_lineup('4', 'tab-lineup', store, None, True)
         shown_grids = find_type(shown, dag.AgGrid)
         self.assertEqual(shown_grids[0].dashGridOptions.get('paginationPageSize'), 40)
+        self.assertIs(shown_grids[0].dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(
             shown_grids[0].dashGridOptions.get('isExternalFilterPresent'),
             {'function': 'false'},
         )
         five_on = game_page.update_pane_lineup('5', 'tab-lineup', store, None, True)
-        self.assertFalse(find_type(five_on, dag.AgGrid)[0].dashGridOptions.get('pagination'))
+        five_on_grid = find_type(five_on, dag.AgGrid)[0]
+        self.assertFalse(five_on_grid.dashGridOptions.get('pagination'))
+        self.assertNotIn('paginationPageSizeSelector', five_on_grid.dashGridOptions)
 
     def test_lineup_missing_size_uses_render_path_not_title(self):
         teams = ['Home', 'Away']
@@ -442,6 +483,7 @@ class FourStateTests(unittest.TestCase):
         grids = find_type(tree, dag.AgGrid)
         self.assertEqual(len(grids), 2)
         self.assertEqual(grids[0].dashGridOptions.get('paginationPageSize'), 20)
+        self.assertIs(grids[0].dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(grids[0].id, 'lineup-grid-0')
         lineup_col = next(col for col in grids[0].columnDefs if col.get('field') == 'Lineup')
         self.assertTrue(lineup_col.get('filter'))
@@ -468,6 +510,7 @@ class FourStateTests(unittest.TestCase):
         grid = grids[0]
         self.assertEqual(grid.id, 'lineup-grid-0')
         self.assertEqual(grid.dashGridOptions.get('paginationPageSize'), 20)
+        self.assertIs(grid.dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(grid.dashGridOptions['isExternalFilterPresent']['function'], 'true')
         self.assertIn(
             'params && params.data && params.data._opp',
@@ -478,6 +521,7 @@ class FourStateTests(unittest.TestCase):
             dag.AgGrid,
         )[0]
         self.assertEqual(shown.dashGridOptions.get('paginationPageSize'), 40)
+        self.assertIs(shown.dashGridOptions.get('paginationPageSizeSelector'), False)
         self.assertEqual(shown.dashGridOptions['isExternalFilterPresent']['function'], 'false')
         fields = []
 
@@ -1240,6 +1284,7 @@ class HomeScheduleTests(unittest.TestCase):
             ),
         ]))
         tree = home_page.render_schedule_list(records, 'upcoming', None)
+        self.assertEqual(len(_by_class(tree, 'home-schedule-row-body')), 1)
         score_line = _by_class(tree, 'home-schedule-score-line')[0]
         meta_line = _by_class(tree, 'home-schedule-meta-line')[0]
         well = _by_class(tree, 'home-score-well')[0]
@@ -1633,3 +1678,37 @@ class GameLayoutContractTests(unittest.TestCase):
         markup = str(layout)
         self.assertNotIn('bi bi-', markup)
         self.assertNotIn('Loading...', markup)
+
+
+class HomeListCallbackTests(unittest.TestCase):
+    def test_serve_home_game_list_runs_the_builder_off_the_main_thread(self):
+        import asyncio
+        import inspect
+        import threading
+
+        self.assertTrue(inspect.iscoroutinefunction(home_page.serve_home_game_list))
+        seen = {}
+
+        def builder(n_intervals=0, scope=None, filters=None):
+            seen['name'] = threading.current_thread().name
+            seen['main'] = threading.current_thread() is threading.main_thread()
+            return ('page', no_update)
+
+        with patch.object(home_page, 'load_home_game_list', builder):
+            result = asyncio.run(home_page.serve_home_game_list(1, {'league': 'PLG'}, {}))
+        self.assertEqual(result, ('page', no_update))
+        self.assertFalse(seen['main'])
+        self.assertNotEqual(seen['name'], threading.main_thread().name)
+
+    def test_index_retries_a_failed_stylesheet_once(self):
+        html = app.app.index_string
+        css_at = html.find('{%css%}')
+        head_end = html.find('</head>')
+        retry_at = html.find('data-retry', css_at)
+        self.assertGreater(css_at, 0)
+        self.assertGreater(retry_at, css_at)
+        self.assertLess(retry_at, head_end)
+        self.assertIn('link.sheet', html[css_at:head_end])
+        self.assertNotIn('setInterval', html)
+        self.assertIn('{%app_entry%}', html)
+        self.assertIn('{%scripts%}', html)

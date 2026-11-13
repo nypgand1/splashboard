@@ -1,133 +1,50 @@
 # -*- coding: utf-8 -*-
 import json
 import math
-import re
 
 import pandas as pd
 
+from domain.clocks import CLOCK_RE, clock_to_seconds
+from domain.ids import (
+    same_id as _same_id,
+    shirt_label as _shirt_label,
+    shirt_sort_key as _shirt_sort_key,
+)
+from domain.periods import period_label
 from synergy_inbounder.names import person_name, player_label
 from synergy_inbounder.possessions import annotate_possessions
-
-CLOCK_RE = re.compile(r'PT(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?', re.IGNORECASE)
-KILL_COLOR = '#e63946'
-KILL_ROW = '3+ STOPS'
-STOP_COUNT_FONT = 11
-RUN_LABEL_INK = 13
-COUNT_INK = 11
-SEAM_LINE = 11
-SUBPLOT_TITLE_FONT = 14
-RUN_SCORE_SHIFT = 2
-# The lower seam stays 55px. The first 14px is a reserved run slot, wider
-# than the painted 11px glyph. Then one clear 14px line, the 14px home
-# title, and the 11px count. The 2px shift is included.
-LOWER_SEAM_INK = (
-    RUN_SCORE_SHIFT
-    + SUBPLOT_TITLE_FONT
-    + SUBPLOT_TITLE_FONT
-    + SUBPLOT_TITLE_FONT
-    + COUNT_INK
+from synergy_inbounder.pre_processing_func import process_lineup_pbp
+from ui.charts.rotation_fig import (
+    BASE_VERTICAL_SPACING,
+    COUNT_INK,
+    FIGURE_MARGIN_B,
+    FIGURE_MARGIN_T,
+    KILL_COLOR,
+    KILL_ROW,
+    LOWER_SEAM_INK,
+    RUN_LABEL_INK,
+    RUN_SCORE_SHIFT,
+    SCORE_TEXT_DARK,
+    SCORE_TEXT_LIGHT,
+    SCORE_TEXT_LUMINANCE_THRESHOLD,
+    SCORE_TEXT_SIZE,
+    SEAM_LINE,
+    STOP_COUNT_FONT,
+    SUBPLOT_TITLE_FONT,
+    _add_kill_annotations,
+    _add_stop_counts,
+    _open_lower_seam,
+    _paint_team_titles,
+    _raise_bottom_title,
+    away_lane_height,
+    build_rotation_figure as _build_rotation_figure_impl,
+    contrast_text_color,
+    margin_tick_span,
+    relative_luminance,
+    report_rotation_figure,
+    score_text_colors,
+    stop_seam_spacing,
 )
-BASE_VERTICAL_SPACING = 0.06
-FIGURE_MARGIN_T = 40
-FIGURE_MARGIN_B = 48
-
-
-def clock_to_seconds(clock):
-    if clock is None or (isinstance(clock, float) and pd.isna(clock)):
-        return None
-    if isinstance(clock, (int, float)) and not isinstance(clock, bool):
-        return float(clock)
-    text = str(clock).strip()
-    if not text:
-        return None
-    match = CLOCK_RE.search(text)
-    if not match:
-        try:
-            parsed = pd.to_datetime(text, format='PT%MM%SS')
-        except (ValueError, TypeError):
-            return None
-        return float(parsed.minute * 60 + parsed.second)
-    minutes = int(match.group(1) or 0)
-    seconds = float(match.group(2) or 0)
-    return minutes * 60 + seconds
-
-
-def margin_tick_span(values, step=5):
-    abs_max = max((abs(value) for value in values), default=0)
-    return max(step, int(math.ceil(abs_max / float(step)) * step))
-
-
-SCORE_TEXT_DARK = '#1e293b'
-SCORE_TEXT_LIGHT = '#ffffff'
-SCORE_TEXT_SIZE = 14
-SCORE_TEXT_LUMINANCE_THRESHOLD = 0.45
-_RGB_RE = re.compile(r'rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)')
-
-
-def _srgb_to_linear(channel):
-    value = channel / 255.0
-    if value <= 0.04045:
-        return value / 12.92
-    return ((value + 0.055) / 1.055) ** 2.4
-
-
-def _parse_rgb(color):
-    if not color:
-        return (30, 41, 59)
-    text = str(color).strip()
-    match = _RGB_RE.match(text)
-    if match:
-        return tuple(float(match.group(i)) for i in (1, 2, 3))
-    if text.startswith('#') and len(text) == 7:
-        return tuple(int(text[i:i + 2], 16) for i in (1, 3, 5))
-    return (30, 41, 59)
-
-
-def relative_luminance(color):
-    red, green, blue = _parse_rgb(color)
-    return (
-        0.2126 * _srgb_to_linear(red)
-        + 0.7152 * _srgb_to_linear(green)
-        + 0.0722 * _srgb_to_linear(blue)
-    )
-
-
-def contrast_text_color(fill_color, threshold=SCORE_TEXT_LUMINANCE_THRESHOLD):
-    if relative_luminance(fill_color) < threshold:
-        return SCORE_TEXT_LIGHT
-    return SCORE_TEXT_DARK
-
-
-def score_text_colors(score_z, zmax, colorscale='PuBu'):
-    from plotly.colors import sample_colorscale
-
-    scale_max = max(1.0, float(zmax or 0))
-    colors = []
-    for row in score_z:
-        row_colors = []
-        for value in row:
-            if not value:
-                row_colors.append(SCORE_TEXT_DARK)
-                continue
-            t = min(1.0, max(0.0, float(value) / scale_max))
-            sampled = sample_colorscale(colorscale, [t])[0]
-            row_colors.append(contrast_text_color(sampled))
-        colors.append(row_colors)
-    return colors
-
-
-def period_label(period_id):
-    try:
-        period = int(period_id)
-    except (TypeError, ValueError):
-        return str(period_id)
-    if period <= 4:
-        return f'{period}Q'
-    if period >= 11:
-        ot_n = period - 10
-    else:
-        ot_n = period - 4
-    return 'OT' if ot_n == 1 else f'{ot_n}OT'
 
 
 def _parse_scores(value):
@@ -151,12 +68,6 @@ def _as_player_list(value):
     return []
 
 
-def _same_id(left, right):
-    if left is None or right is None:
-        return False
-    return str(left) == str(right)
-
-
 def _find_column(df, team_id):
     for column in df.columns:
         if _same_id(column, team_id):
@@ -170,24 +81,6 @@ def _infer_period_seconds(clocks):
     if not values:
         return 600
     return int(math.ceil(max(values) / 60.0) * 60) or 60
-
-
-def _shirt_label(person_id, id_table, roster_by_id):
-    name = person_name(id_table, person_id)
-    shirt = (roster_by_id.get(str(person_id)) or {}).get('shirtNumber')
-    if shirt in (None, ''):
-        return str(name)
-    return f'#{shirt} {name}'
-
-
-def _shirt_sort_key(shirt):
-    if shirt in (None, ''):
-        return (1, 10 ** 9, '')
-    text = str(shirt).strip()
-    try:
-        return (0, int(text), text)
-    except ValueError:
-        return (0, 10 ** 9, text)
 
 
 def _made_points(row):
@@ -334,21 +227,7 @@ def _first_peak(score_points, i, side, min_delta, max_opp_consecutive, halftime,
 
 
 def detect_runs(events_with_scores, min_delta=8, max_opp_consecutive=3, halftime=None, max_gap=RUN_MAX_GAP):
-    """
-    Detect basketball momentum runs.
-
-    A stretch qualifies when the net is at least `min_delta`, that side scored
-    at least `min_delta`, and the opponent scored at most 4. It ends at the
-    first instant that net is largest. The baseline is the earliest scoreboard
-    at which the whole stretch still qualifies. The clock starts at that side's
-    first basket. Four unanswered opponent points, a gap longer than `max_gap`
-    seconds between that side's baskets, or halftime (elapsed `halftime`) ends it.
-    Two runs that share a scoring event keep the larger net, then the shorter
-    one, then the earlier one.
-
-    events_with_scores: list of (elapsed, home_pts, away_pts)
-    returns: list of {'side', 'home_pts', 'away_pts', 'start', 'end', 'delta'}
-    """
+    """Detect basketball momentum runs."""
     if not events_with_scores or len(events_with_scores) < 2:
         return []
 
@@ -446,26 +325,6 @@ def format_kill_label(kill, periods):
     return f"{_clock_span(kill['start'], kill['end'], periods)}  {kill['stops']} STOPS"
 
 
-def stop_seam_spacing(figure_height, base=BASE_VERTICAL_SPACING):
-    """Paper gap between the Gantt and the margin, as a fraction of the plot area.
-
-    Run scores keep the inner 13px. Stop counts need the outer 11px. When the
-    base seam cannot hold both, grow it by one count line.
-    """
-    plot_h = max(1.0, float(figure_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
-    seam = base * plot_h
-    if seam < RUN_LABEL_INK + COUNT_INK:
-        seam += SEAM_LINE
-    return seam / plot_h
-
-
-def away_lane_height(base_height):
-    """Figure height once the lower seam clears the home run number."""
-    plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
-    seam = stop_seam_spacing(base_height) * plot_h
-    return float(base_height) + max(0.0, LOWER_SEAM_INK - seam)
-
-
 def _made_shot(value):
     return value == 1 or value is True
 
@@ -542,11 +401,24 @@ def _close_kill_streak(streak, side, kills):
     return []
 
 
-def detect_kills(trips, home_team_id, away_team_id):
-    """One kill is three or more consecutive opponent trips that score 0.
+def _split_kill_streak(streak, trip, halftime):
+    """Halftime is the only hard cut. A trip that starts at the cut begins a new streak."""
+    if not streak or halftime is None:
+        return False
+    try:
+        cut = float(halftime)
+        previous = float(streak[-1].get('start'))
+        start = float(trip.get('start'))
+        end = float(trip.get('end'))
+    except (TypeError, ValueError):
+        return False
+    if previous < cut <= start:
+        return True
+    return start < cut <= end and previous < cut
 
-    The defending side's own trips are skipped. A longer streak is one kill.
-    """
+
+def detect_kills(trips, home_team_id, away_team_id, halftime=None):
+    """One kill is three or more consecutive opponent trips that score 0."""
     kills = []
     for side, offense_id in (('home', away_team_id), ('away', home_team_id)):
         if offense_id is None:
@@ -555,112 +427,15 @@ def detect_kills(trips, home_team_id, away_team_id):
         for trip in trips or []:
             if not _same_id(trip.get('offense'), offense_id):
                 continue
-            if int(trip.get('points') or 0) <= 0:
-                streak.append(trip)
-            else:
+            if int(trip.get('points') or 0) > 0:
                 streak = _close_kill_streak(streak, side, kills)
+                continue
+            if _split_kill_streak(streak, trip, halftime):
+                streak = _close_kill_streak(streak, side, kills)
+            streak.append(trip)
         _close_kill_streak(streak, side, kills)
     kills.sort(key=lambda kill: (kill['start'], 0 if kill['side'] == 'home' else 1))
     return kills
-
-
-def clamp_time_window(x0, x1, game_end, width):
-    game_end = float(game_end or 0)
-    if game_end <= 0:
-        return 0.0, 0.0
-    width = min(max(float(width), 0.0), game_end)
-    if width <= 0:
-        return 0.0, game_end
-    center = (float(x0) + float(x1)) / 2.0
-    start = center - width / 2.0
-    if start < 0:
-        start = 0.0
-    if start + width > game_end:
-        start = game_end - width
-    if start < 0:
-        start = 0.0
-    return start, start + width
-
-
-def period_for_window(x0, x1, periods, current=None):
-    window = max(1e-6, float(x1) - float(x0))
-    best_id = None
-    best_overlap = -1.0
-    for period in periods or []:
-        overlap = max(0.0, min(float(x1), period['end']) - max(float(x0), period['start']))
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_id = period.get('id')
-    if best_id is None:
-        return current
-    if best_overlap / window > 0.5:
-        return str(best_id)
-    if current is not None:
-        return str(current)
-    return str(best_id)
-
-
-def parse_xaxis_range(relayout):
-    if not isinstance(relayout, dict):
-        return None
-    if 'xaxis.range[0]' in relayout and 'xaxis.range[1]' in relayout:
-        return float(relayout['xaxis.range[0]']), float(relayout['xaxis.range[1]'])
-    range_val = relayout.get('xaxis.range')
-    if isinstance(range_val, (list, tuple)) and len(range_val) == 2:
-        return float(range_val[0]), float(range_val[1])
-    return None
-
-
-def apply_camera_relayout(relayout, view, periods):
-    parsed = parse_xaxis_range(relayout)
-    if parsed is None:
-        return None
-    if not periods:
-        return None
-    game_end = float(periods[-1]['end'])
-    view = dict(view or {})
-    slice_width = view.get('slice_width')
-    expected = float(slice_width) if slice_width else game_end
-    x0, x1 = clamp_time_window(parsed[0], parsed[1], game_end, expected)
-    if expected >= game_end - 1e-6:
-        period_value = 'all'
-        new_x0, new_x1 = None, None
-        new_slice = None
-    else:
-        period_value = period_for_window(x0, x1, periods, view.get('period'))
-        new_x0, new_x1 = x0, x1
-        new_slice = expected
-    prev_x0, prev_x1 = view.get('x0'), view.get('x1')
-    if new_x0 is None:
-        camera_same = (
-            prev_x0 is None
-            and prev_x1 is None
-            and view.get('period') in (None, 'all')
-            and abs(parsed[0] - 0.0) < 0.5
-            and abs(parsed[1] - game_end) < 0.5
-        )
-    else:
-        camera_same = (
-            prev_x0 is not None
-            and prev_x1 is not None
-            and abs(prev_x0 - new_x0) < 0.5
-            and abs(prev_x1 - new_x1) < 0.5
-            and str(view.get('period')) == str(period_value)
-        )
-    if camera_same:
-        return None
-    snapped = (
-        abs((parsed[1] - parsed[0]) - (x1 - x0)) > 0.5
-        or abs(parsed[0] - x0) > 0.5
-        or abs(parsed[1] - x1) > 0.5
-    )
-    if snapped:
-        view['axis_rev'] = int(view.get('axis_rev') or 0) + 1
-    view['period'] = period_value
-    view['x0'] = new_x0
-    view['x1'] = new_x1
-    view['slice_width'] = new_slice
-    return view
 
 
 def live_playhead_t(payload):
@@ -695,9 +470,33 @@ def visible_players(team, show_dnp=False):
     players = list((team or {}).get('players') or [])
     if show_dnp:
         return players
-    visible = [player for player in players if not player.get('dnp')]
-    return visible
+    return [player for player in players if not player.get('dnp')]
 
+
+def walk_lineup(frame, starter_dict):
+    """Copy ``frame`` and run the Game page substitution walk."""
+    if frame is None:
+        walked = pd.DataFrame()
+    else:
+        walked = frame.copy()
+    process_lineup_pbp(walked, starter_dict or {})
+    return walked
+
+
+def team_on_court_seconds(payload, team_id):
+    """Seconds ``build_rotation_payload`` gave ``team_id``. DNP rows are omitted."""
+    if not payload or team_id is None:
+        return 0.0
+    for side in payload.get('teams') or []:
+        if not _same_id(side.get('team_id'), team_id):
+            continue
+        total = 0.0
+        for player in side.get('players') or []:
+            if player.get('dnp'):
+                continue
+            total += float(player.get('seconds') or 0)
+        return total
+    return 0.0
 
 
 def build_rotation_payload(
@@ -707,6 +506,7 @@ def build_rotation_payload(
     home_team_id,
     away_team_id,
     roster=None,
+    marks=True,
 ):
     id_table = id_table or {}
     starter_dict = starter_dict or {}
@@ -768,7 +568,6 @@ def build_rotation_payload(
     first_on_by_player = {str(team_id): {} for team_id in team_ids}
     seen_by_team = {str(team_id): set() for team_id in team_ids}
 
-    # Extract continuous stints
     for period in periods:
         period_rows = df[df['periodId'] == period['id']]
         events = []
@@ -803,19 +602,17 @@ def build_rotation_payload(
                         first_on_by_player[team_key][person_id] = start_t
                     if person_id not in stints_by_player[team_key]:
                         stints_by_player[team_key][person_id] = []
-                    
+
                     stints = stints_by_player[team_key][person_id]
-                    # Merge contiguous stints if matching
                     if stints and abs(stints[-1]['end'] - start_t) < 1e-3:
                         stints[-1]['end'] = end_t
                     else:
                         stints.append({'start': start_t, 'end': end_t})
 
-    # Extract score margin and score events with accurate scorer and shot type
     margin = [{'t': 0.0, 'margin': 0, 'home_score': 0, 'away_score': 0, 'desc': GAME_START_DESC, 'clock_label': '1Q 12:00' if periods else '0:00'}]
     score_events = [(0.0, 0, 0)]
     curr_h, curr_a = 0, 0
-    
+
     def _clean_shot_type(event_type, sub_type):
         s = sub_type if isinstance(sub_type, str) and sub_type.strip() else event_type
         if not isinstance(s, str):
@@ -848,14 +645,12 @@ def build_rotation_payload(
                     h_val = points
                 elif _same_id(key, away_team_id):
                     a_val = points
-            
-            # Only record if the score actually changed!
+
             if h_val == curr_h and a_val == curr_a:
                 continue
-                
+
             curr_h, curr_a = h_val, a_val
-            
-            # Scorer / event detail
+
             pid = row.get('personId')
             player_name = person_name(id_table, pid)
             if not player_name or player_name == str(pid).strip():
@@ -866,10 +661,10 @@ def build_rotation_payload(
                     player_name = ''
             shot_type = _clean_shot_type(row.get('eventType'), row.get('subType'))
             desc = f"{player_name} {shot_type}".strip() if player_name else shot_type
-            
+
             rem_sec = max(0, int(remaining))
             clock_label = f"{period['label']} {rem_sec // 60:02d}:{rem_sec % 60:02d}"
-            
+
             point = {
                 't': elapsed,
                 'margin': curr_h - curr_a,
@@ -899,11 +694,15 @@ def build_rotation_payload(
         score_events.append((game_end, curr_h, curr_a))
 
     halftime = next((period['end'] for period in periods if period.get('id') == 2), None)
-    runs = detect_runs(score_events, min_delta=8, halftime=halftime)
-    kills = detect_kills(possession_trips(df, periods), home_team_id, away_team_id)
+    if marks:
+        runs = detect_runs(score_events, min_delta=8, halftime=halftime)
+        kills = detect_kills(
+            possession_trips(df, periods), home_team_id, away_team_id, halftime=halftime,
+        )
+    else:
+        runs = []
+        kills = []
 
-
-    # Function to query net score margin diff between two timestamps for stint +/-
     def get_margin_at(t):
         if not margin:
             return 0
@@ -939,7 +738,6 @@ def build_rotation_payload(
             for s in stints_raw:
                 m_start = get_margin_at(s['start'])
                 m_end = get_margin_at(s['end'])
-                # Home team +/- is m_end - m_start; Away team +/- is -(m_end - m_start)
                 pm = (m_end - m_start) if side == 'home' else -(m_end - m_start)
                 stints.append({
                     'start': s['start'],
@@ -985,574 +783,13 @@ def build_rotation_payload(
     }
 
 
-def build_rotation_figure(payload, playhead=None, x_range=None, show_dnp=False, uirevision=None):
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-
-    teams = (payload or {}).get('teams') or []
-    periods = (payload or {}).get('periods') or []
-    margin = (payload or {}).get('margin') or []
-    runs = (payload or {}).get('runs') or []
-    home = next((team for team in teams if team.get('side') == 'home'), teams[0] if teams else None)
-    away = next((team for team in teams if team.get('side') == 'away'), teams[1] if len(teams) > 1 else None)
-
-    kills = (payload or {}).get('kills') or []
-    home_kills = [kill for kill in kills if kill.get('side') == 'home']
-    away_kills = [kill for kill in kills if kill.get('side') == 'away']
-    home_players = visible_players(home, show_dnp) or [{'label': '—', 'stints': []}]
-    away_players = visible_players(away, show_dnp) or [{'label': '—', 'stints': []}]
-    home_n = len(home_players) + 1 or 1
-    away_n = len(away_players) + 1 or 1
-
-    h_weight = max(0.25, min(0.45, (home_n * 22) / (home_n * 22 + away_n * 22 + 180)))
-    a_weight = max(0.25, min(0.45, (away_n * 22) / (home_n * 22 + away_n * 22 + 180)))
-    m_weight = max(0.18, 1.0 - h_weight - a_weight)
-
-    base_height = max(520, home_n * 22 + away_n * 22 + 200)
-
-    fig = make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        row_heights=[a_weight, m_weight, h_weight],
-        vertical_spacing=stop_seam_spacing(base_height),
-        subplot_titles=(
-            (away or {}).get('team_name') or 'Away',
-            '',
-            (home or {}).get('team_name') or 'Home',
-        ),
-    )
-    _paint_team_titles(fig)
-    total_height = _open_lower_seam(fig, base_height)
-
-
-    game_end = periods[-1]['end'] if periods else 1
-
-    home_color = '#0077b6'
-    away_color = '#94a3b8'
-    margin_line = '#0284c7'
-    home_fill = 'rgba(0, 119, 182, 0.20)'
-    away_fill = 'rgba(148, 163, 184, 0.25)'
-
-    def format_clock_str(t_seconds):
-        for period in periods:
-            if period['start'] <= t_seconds <= period['end']:
-                rem = max(0, int(period['end'] - t_seconds))
-                return f"{period['label']} {rem // 60:02d}:{rem % 60:02d}"
-        m = int(t_seconds // 60)
-        sec = int(t_seconds % 60)
-        return f"{m:02d}:{sec:02d}"
-
-    def format_duration(s):
-        m = int(s // 60)
-        sec = int(s % 60)
-        return f"{m:02d}:{sec:02d}"
-
-    def axis_label(player):
-        base = player.get('label') or ''
-        if playhead is None:
-            return base
-        if player_on_court(player, playhead):
-            return f'● {base}'
-        return f'  {base}'
-
-    def add_gantt(team, row, bar_color, players, side_kills, kill_edge):
-        players_rev = list(reversed(players))
-        y_cats = [axis_label(p) for p in players_rev]
-        # categoryarray[0] is the bottom of the panel. The top panel's last
-        # row and the bottom panel's first row face the margin.
-        if kill_edge == 'bottom':
-            y_cats = [KILL_ROW] + y_cats
-        else:
-            y_cats = y_cats + [KILL_ROW]
-        fig.add_trace(
-            go.Scatter(
-                x=[0] * len(y_cats),
-                y=y_cats,
-                mode='markers',
-                marker=dict(opacity=0),
-                hoverinfo='skip',
-                showlegend=False,
-            ),
-            row=row,
-            col=1,
-        )
-
-        for player in players_rev:
-            p_label = player.get('label') or ''
-            y_label = axis_label(player)
-            on_floor = playhead is None or player_on_court(player, playhead)
-            bar_opacity = 1.0 if on_floor else 0.32
-            stints = player.get('stints') or []
-            for stint in stints:
-                dur = stint['end'] - stint['start']
-                if dur <= 0:
-                    continue
-                c_start = format_clock_str(stint['start'])
-                c_end = format_clock_str(stint['end'])
-                dur_str = format_duration(dur)
-                pm = stint.get('pm', 0)
-                pm_str = f"+{pm}" if pm > 0 else f"{pm}"
-                hover_text = (
-                    f"<b>{p_label} ({pm_str})</b><br>"
-                    f"{c_start} – {c_end} ({dur_str})"
-                )
-                fig.add_trace(
-                    go.Bar(
-                        x=[dur],
-                        y=[y_label],
-                        base=[stint['start']],
-                        orientation='h',
-                        marker=dict(
-                            color=bar_color,
-                            opacity=bar_opacity,
-                            line=dict(color='rgba(255,255,255,0.6)', width=1),
-                        ),
-                        customdata=[[stint['start'], stint['end']]],
-                        hovertext=hover_text,
-                        hoverinfo='text',
-                        showlegend=False,
-                    ),
-                    row=row,
-                    col=1,
-                )
-        if side_kills:
-            for kill in sorted(side_kills, key=lambda item: item['start']):
-                fig.add_trace(
-                    go.Bar(
-                        x=[max(0.0, kill['end'] - kill['start'])],
-                        y=[KILL_ROW],
-                        base=[kill['start']],
-                        orientation='h',
-                        marker=dict(
-                            color=KILL_COLOR,
-                            opacity=1.0,
-                            line=dict(width=0),
-                        ),
-                        hovertext=format_kill_label(kill, periods),
-                        hoverinfo='text',
-                        showlegend=False,
-                    ),
-                    row=row,
-                    col=1,
-                )
-        axis = dict(
-            ticksuffix='  ',
-            categoryorder='array',
-            categoryarray=y_cats,
-        )
-        if KILL_ROW in y_cats:
-            axis.update(
-                tickmode='array',
-                tickvals=y_cats,
-                ticktext=['' if cat == KILL_ROW else cat for cat in y_cats],
-            )
-        fig.update_yaxes(row=row, col=1, **axis)
-        return y_cats
-
-    away_labels = add_gantt(away, 1, away_color, away_players, away_kills, 'bottom')
-
-    # 2. Score margin. Payload margin is home minus away. The chart plots
-    # away minus home so a lead grows toward that team's panel.
-    margin_x = [point['t'] for point in margin] or [0]
-    stored_y = [point['margin'] for point in margin] or [0]
-    margin_y = [-value for value in stored_y]
-    away_lead_y = [max(0, y) for y in margin_y]
-    home_lead_y = [min(0, y) for y in margin_y]
-
-    home_name = (home or {}).get('team_name') or 'Home'
-    away_name = (away or {}).get('team_name') or 'Away'
-
-    hover_texts = []
-    for point, chart_m in zip(margin, margin_y):
-        h_score = point.get('home_score', 0)
-        a_score = point.get('away_score', 0)
-        clock_lbl = point.get('clock_label') or format_clock_str(point['t'])
-        desc = point.get('desc', '')
-        if chart_m > 0:
-            diff_str = f"(+{chart_m})"
-        elif chart_m < 0:
-            diff_str = f"({chart_m})"
-        else:
-            diff_str = "(0)"
-
-        lines = [
-            f"<b>{clock_lbl}</b>",
-            f"{away_name} {a_score} - {h_score} {home_name} {diff_str}",
-        ]
-        if desc:
-            lines.append(f"{desc}")
-        hover_texts.append("<br>".join(lines))
-
-    span = margin_tick_span(margin_y, step=5)
-
-    # Home lead grows down, toward the home Gantt.
-    fig.add_trace(
-        go.Scatter(
-            x=margin_x,
-            y=home_lead_y,
-            mode='lines',
-            line=dict(color='rgba(0,0,0,0)', width=0, shape='hv'),
-            fill='tozeroy',
-            fillcolor=home_fill,
-            hoverinfo='skip',
-            showlegend=False,
-        ),
-        row=2,
-        col=1,
-    )
-
-    # Away lead grows up, toward the away Gantt.
-    fig.add_trace(
-        go.Scatter(
-            x=margin_x,
-            y=away_lead_y,
-            mode='lines',
-            line=dict(color='rgba(0,0,0,0)', width=0, shape='hv'),
-            fill='tozeroy',
-            fillcolor=away_fill,
-            hoverinfo='skip',
-            showlegend=False,
-        ),
-        row=2,
-        col=1,
-    )
-
-    # Margin Main Step-line Trace with Hover
-    fig.add_trace(
-        go.Scatter(
-            x=margin_x,
-            y=margin_y,
-            mode='lines',
-            line=dict(color=margin_line, width=2.0, shape='hv'),
-            hovertext=hover_texts,
-            hoverinfo='text',
-            showlegend=False,
-        ),
-        row=2,
-        col=1,
-    )
-
-    tickvals = list(range(-span, span + 1, 5))
-    fig.update_yaxes(
-        range=[-span, span],
-        tickmode='array',
-        tickvals=tickvals,
-        ticktext=[str(value) for value in tickvals],
-        zeroline=True,
-        zerolinecolor='#475569',
-        zerolinewidth=1.5,
-        showgrid=True,
-        gridcolor='#e2e8f0',
-        tickfont=dict(size=10),
-        ticksuffix='  ',
-        row=2,
-        col=1,
-    )
-
-
-    home_labels = add_gantt(home, 3, home_color, home_players, home_kills, 'top')
-
-    view_start, view_end = 0, game_end
-    if x_range and len(x_range) == 2 and x_range[0] is not None and x_range[1] is not None:
-        view_start, view_end = x_range
-    tickvals = [period['start'] + period['seconds'] / 2 for period in periods]
-    ticktext = [period['label'] for period in periods]
-
-    for axis_row in (1, 2, 3):
-        fig.update_xaxes(
-            range=[view_start, view_end],
-            minallowed=0,
-            maxallowed=game_end,
-            tickvals=tickvals,
-            ticktext=ticktext if axis_row == 3 else [],
-            showgrid=False,
-            row=axis_row,
-            col=1,
-        )
-        fig.update_yaxes(
-            fixedrange=True,
-            showgrid=(axis_row == 2),
-            row=axis_row,
-            col=1,
-        )
-
-    for period in periods[1:]:
-        fig.add_vline(
-            x=period['start'],
-            line_width=1,
-            line_color='#94a3b8',
-            line_dash='solid',
-        )
-    fig.add_vline(
-        x=game_end,
-        line_width=1,
-        line_color='#94a3b8',
-        line_dash='solid',
-    )
-    if playhead is not None:
-        fig.add_vline(
-            x=playhead,
-            line_width=2,
-            line_color='#0077b6',
-            line_dash='solid',
-        )
-
-    # Add full-height Run bands (vrect) across the whole figure and score annotations
-    for run in runs:
-        is_home = run['side'] == 'home'
-        fill = 'rgba(0, 119, 182, 0.15)' if is_home else 'rgba(148, 163, 184, 0.20)'
-        text_color = '#0077b6' if is_home else '#475569'
-        fig.add_vrect(
-            x0=run['start'],
-            x1=run['end'],
-            fillcolor=fill,
-            opacity=1.0,
-            layer='below',
-            line_width=0,
-        )
-        
-        # The away panel is on top, so its run ink grows up from the margin.
-        x_center = (run['start'] + run['end']) / 2
-        pts_label = f"{run['home_pts']}-{run['away_pts']}" if is_home else f"{run['away_pts']}-{run['home_pts']}"
-        on_top = not is_home
-        y_pos = span if on_top else -span
-        y_anchor = 'bottom' if on_top else 'top'
-        y_shift = 2 if on_top else -2
-        
-        fig.add_annotation(
-            x=x_center,
-            y=y_pos,
-            text=f"<b>{pts_label}</b>",
-            showarrow=False,
-            font=dict(size=11, color=text_color),
-            yanchor=y_anchor,
-            yshift=y_shift,
-            xref='x2',
-            yref='y2',
-        )
-
-
-    fig.update_layout(
-        height=total_height,
-        autosize=True,
-        dragmode='pan',
-        barmode='overlay',
-        margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#334155', size=12),
-        hovermode='closest',
-        uirevision=uirevision if uirevision is not None else f'{view_end - view_start:.3f}',
-    )
-
-    def layout_axis(ref):
-        if ref == 'y':
-            return 'yaxis'
-        return 'yaxis' + ref[1:]
-
-    def mirror_categories(dest, overlay, anchor, labels):
-        labels = list(labels or ['—'])
-        tick_labels = dict(
-            categoryorder='array',
-            categoryarray=labels,
-        )
-        if KILL_ROW in labels:
-            tick_labels.update(
-                tickmode='array',
-                tickvals=labels,
-                ticktext=['' if label == KILL_ROW else label for label in labels],
-            )
-        fig.update_layout(**{dest: dict(
-            overlaying=overlay,
-            side='right',
-            anchor=anchor,
-            domain=list(fig.layout[layout_axis(overlay)].domain),
-            range=[-0.5, len(labels) - 0.5],
-            **tick_labels,
-            tickprefix='  ',
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            ticks='',
-            fixedrange=True,
-            automargin=False,
-            tickfont=dict(size=12, color='#334155'),
-        )})
-        fig.add_trace(go.Scatter(
-            x=[view_start] * len(labels),
-            y=labels,
-            xaxis=anchor,
-            yaxis=dest.replace('yaxis', 'y'),
-            mode='markers',
-            marker=dict(opacity=0, size=0),
-            hoverinfo='skip',
-            showlegend=False,
-        ))
-
-    def mirror_numbers(dest, src_name, overlay, anchor):
-        src = fig.layout[src_name]
-        fig.update_layout(**{dest: dict(
-            overlaying=overlay,
-            side='right',
-            anchor=anchor,
-            domain=list(src.domain),
-            range=list(src.range),
-            tickmode='array',
-            tickvals=list(src.tickvals),
-            ticktext=[str(value) for value in src.ticktext],
-            tickprefix='  ',
-            showgrid=False,
-            zeroline=False,
-            showline=False,
-            ticks='',
-            fixedrange=True,
-            automargin=False,
-            tickfont=dict(size=src.tickfont.size or 10, color='#334155'),
-        )})
-        fig.add_trace(go.Scatter(
-            x=[view_start],
-            y=[0],
-            xaxis=anchor,
-            yaxis=dest.replace('yaxis', 'y'),
-            mode='markers',
-            marker=dict(opacity=0, size=0),
-            hoverinfo='skip',
-            showlegend=False,
-        ))
-
-    mirror_categories('yaxis4', 'y', 'x', away_labels)
-    mirror_numbers('yaxis5', 'yaxis2', 'y2', 'x2')
-    mirror_categories('yaxis6', 'y3', 'x3', home_labels)
-    _add_kill_annotations(fig)
-    _add_stop_counts(fig, kills, periods)
-    _raise_bottom_title(fig)
-    return fig
-
-
-def _open_lower_seam(fig, base_height):
-    """Keep the upper seam and the panel pixel sizes. Grow only the lower seam.
-
-    The added pixels go into the figure height. Run numbers stay on the margin
-    edge. The home team name, the home stop counts, and the home Gantt move
-    down with the bottom panel.
-    """
-    plot_h = max(1.0, float(base_height) - FIGURE_MARGIN_T - FIGURE_MARGIN_B)
-    seam = stop_seam_spacing(base_height) * plot_h
-    shortfall = max(0.0, LOWER_SEAM_INK - seam)
-    new_plot_h = plot_h + shortfall
-
-    def span_px(domain):
-        return (float(domain[1]) - float(domain[0])) * plot_h
-
-    top = fig.layout.yaxis.domain
-    margin = fig.layout.yaxis2.domain
-    bottom = fig.layout.yaxis3.domain
-    top_px = span_px(top)
-    margin_px = span_px(margin)
-    bottom_px = span_px(bottom)
-    upper_px = (float(top[0]) - float(margin[1])) * plot_h
-    lower_px = upper_px + shortfall
-
-    cursor = 1.0
-    top_hi = cursor
-    cursor -= top_px / new_plot_h
-    top_lo = cursor
-    cursor -= upper_px / new_plot_h
-    margin_top = cursor
-    cursor -= margin_px / new_plot_h
-    margin_bottom = cursor
-    cursor -= lower_px / new_plot_h
-    bottom_hi = cursor
-    cursor -= bottom_px / new_plot_h
-    bottom_lo = 0.0 if abs(cursor) < 1e-6 else cursor
-
-    fig.layout.yaxis.domain = (top_lo, top_hi)
-    fig.layout.yaxis2.domain = (margin_bottom, margin_top)
-    fig.layout.yaxis3.domain = (bottom_lo, bottom_hi)
-    return base_height + shortfall
-
-
-def _raise_bottom_title(fig):
-    """Shift the bottom panel's title up by one count line."""
-    panel_top = float(fig.layout.yaxis3.domain[1])
-    titles = [
-        ann for ann in fig.layout.annotations or []
-        if getattr(ann, 'xref', None) == 'paper'
-        and getattr(ann, 'yref', None) == 'paper'
-        and getattr(ann, 'yanchor', None) == 'bottom'
-        and ann.text
-        and ann.text != KILL_ROW
-        and not str(ann.text).isdigit()
-    ]
-    if len(titles) < 2:
-        return
-    bottom = min(titles, key=lambda ann: float(ann.y))
-    bottom.y = panel_top
-    bottom.yshift = STOP_COUNT_FONT
-
-
-def _add_kill_annotations(fig):
-    for yref, xref in (('y', 'x'), ('y3', 'x3')):
-        for x, anchor, shift in ((0, 'right', -6), (1, 'left', 6)):
-            fig.add_annotation(
-                x=x,
-                xref=f'{xref} domain',
-                y=KILL_ROW,
-                yref=yref,
-                text=KILL_ROW,
-                font=dict(size=12, color=KILL_COLOR),
-                xanchor=anchor,
-                showarrow=False,
-                xshift=shift,
-            )
-
-
-def _add_stop_counts(fig, kills, periods):
-    top_bottom = float(fig.layout.yaxis.domain[0])
-    bottom_top = float(fig.layout.yaxis3.domain[1])
-    for kill in kills or []:
-        on_top = kill.get('side') == 'away'
-        fig.add_annotation(
-            x=(float(kill['start']) + float(kill['end'])) / 2.0,
-            xref='x2',
-            y=top_bottom if on_top else bottom_top,
-            yref='paper',
-            text=str(int(kill['stops'])),
-            font=dict(size=STOP_COUNT_FONT, color=KILL_COLOR),
-            xanchor='center',
-            yanchor='top' if on_top else 'bottom',
-            showarrow=False,
-            hovertext=format_kill_label(kill, periods),
-        )
-
-
-def _paint_team_titles(fig):
-    """Team names keep 14px slate. Other annotations keep the font they were given."""
-    for ann in fig.layout.annotations or []:
-        if (
-            getattr(ann, 'xref', None) == 'paper'
-            and getattr(ann, 'yref', None) == 'paper'
-            and getattr(ann, 'yanchor', None) == 'bottom'
-            and ann.text
-            and ann.text != KILL_ROW
-            and not str(ann.text).isdigit()
-        ):
-            ann.font.size = SUBPLOT_TITLE_FONT
-            ann.font.color = '#1e293b'
-
-
-def report_rotation_figure(payload):
-    fig = build_rotation_figure(
+def build_rotation_figure(payload, playhead=None, show_dnp=False, uirevision=None):
+    return _build_rotation_figure_impl(
         payload,
-        playhead=None,
-        x_range=None,
-        show_dnp=False,
+        playhead=playhead,
+        show_dnp=show_dnp,
+        uirevision=uirevision,
+        visible_players_fn=visible_players,
+        player_on_court_fn=player_on_court,
+        format_kill_label_fn=format_kill_label,
     )
-    fig.update_layout(
-        font=dict(size=12, color='#334155'),
-        margin=dict(l=112, r=112, t=FIGURE_MARGIN_T, b=FIGURE_MARGIN_B),
-    )
-    _raise_bottom_title(fig)
-    return fig
-
