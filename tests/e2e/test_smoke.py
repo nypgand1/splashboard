@@ -338,6 +338,145 @@ def test_home_viewports(page, e2e_server):
     assert page.locator('#home-show').count() == 1
 
 
+def _nav_box(page):
+    return page.evaluate(
+        """() => {
+            const brand = document.querySelector('.app-navbar-brand-link');
+            const credit = document.querySelector('.app-navbar-credit');
+            const link = document.querySelector('.app-page-link.app-section-schedule');
+            const stats = document.querySelector('.app-page-link.app-section-team-stats');
+            const header = document.querySelector('.app-navbar');
+            const nav = document.querySelector('.app-page-nav');
+            const current = document.querySelector('.app-page-link[data-current="true"]');
+            const after = current ? getComputedStyle(current, '::after') : null;
+            const before = stats ? getComputedStyle(stats, '::before') : null;
+            const br = brand.getBoundingClientRect();
+            const cr = credit.getBoundingClientRect();
+            const lr = link.getBoundingClientRect();
+            const sr = stats ? stats.getBoundingClientRect() : null;
+            const hr = header.getBoundingClientRect();
+            const cur = current ? current.getBoundingClientRect() : null;
+            const scheduleStyle = getComputedStyle(link);
+            const statsStyle = stats ? getComputedStyle(stats) : null;
+            return {
+                header: Math.round(hr.height),
+                mode: nav.getAttribute('data-mode'),
+                creditBelow: cr.top >= br.bottom - 1,
+                creditLeft: Math.abs(cr.left - br.left),
+                linkGap: lr.left - br.right,
+                sepGap: sr ? sr.left - lr.right : 0,
+                sepW: before ? before.width : '',
+                sepBg: before ? before.backgroundColor : '',
+                sepH: before ? Math.abs(parseFloat(before.height) - lr.height) : 99,
+                scheduleSize: scheduleStyle.fontSize,
+                scheduleWeight: scheduleStyle.fontWeight,
+                statsSize: statsStyle ? statsStyle.fontSize : '',
+                statsWeight: statsStyle ? statsStyle.fontWeight : '',
+                statsColor: statsStyle ? statsStyle.color : '',
+                underlineH: after ? after.height : '',
+                underlineMt: after ? after.marginTop : '',
+                underlineBg: after ? after.backgroundColor : '',
+                underlineW: cur && after ? Math.abs(parseFloat(after.width) - cur.width) : 99,
+            };
+        }"""
+    )
+
+
+def test_page_nav_links_menu_and_current_section(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + '/', wait_until='domcontentloaded')
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-nav')?.getAttribute('data-mode') === 'links'"""
+    )
+    schedule = page.locator('.app-page-link.app-section-schedule')
+    stats = page.locator('.app-page-link.app-section-team-stats')
+    assert schedule.inner_text() == 'Schedule'
+    assert stats.inner_text() == 'Team Stats'
+    assert schedule.get_attribute('aria-current') == 'page'
+    assert stats.get_attribute('aria-current') is None
+    assert page.locator('.app-navbar-menu-button').is_visible() is False
+    box = _nav_box(page)
+    assert box['header'] == 72
+    assert box['mode'] == 'links'
+    assert box['creditBelow'] is True
+    assert box['creditLeft'] < 2
+    assert 16 <= box['linkGap'] <= 24
+    assert 18 <= box['sepGap'] <= 24
+    assert box['sepW'] == '1px'
+    assert box['sepBg'] == 'rgb(203, 213, 225)'
+    assert box['sepH'] <= 2
+    assert box['scheduleSize'] == '15px'
+    assert box['scheduleWeight'] == '700'
+    assert box['statsSize'] == '15px'
+    assert box['statsWeight'] == '600'
+    assert box['statsColor'] == 'rgb(30, 41, 59)'
+    assert '|' not in page.locator('#app-page-nav').inner_text()
+    assert box['underlineH'] == '2px'
+    assert box['underlineMt'] == '4px'
+    assert box['underlineBg'] == 'rgb(0, 119, 182)'
+    assert box['underlineW'] <= 2
+    stats.hover()
+    hovered = stats.evaluate('el => getComputedStyle(el).color')
+    assert hovered == 'rgb(15, 23, 42)'
+    schedule.hover()
+    current_hover = schedule.evaluate('el => getComputedStyle(el).color')
+    assert current_hover == 'rgb(0, 119, 182)'
+
+    stats.click()
+    page.wait_for_url('**/team-stats', timeout=15000)
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-link.app-section-team-stats')?.getAttribute('aria-current') === 'page'"""
+    )
+    assert schedule.get_attribute('aria-current') is None
+
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
+    page.wait_for_function(
+        """() => {
+            const link = document.querySelector('.app-page-link.app-section-schedule');
+            return link && link.getAttribute('data-current') === 'true' && !link.getAttribute('aria-current');
+        }"""
+    )
+    assert page.locator('.app-page-link.app-section-team-stats').get_attribute('data-current') is None
+
+    page.set_viewport_size({'width': 300, 'height': 700})
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-nav')?.getAttribute('data-mode') === 'menu'"""
+    )
+    assert page.locator('.app-page-link').first.is_visible() is False
+    button = page.locator('.app-navbar-menu-button')
+    assert button.is_visible() is True
+    assert button.inner_text().strip() == 'Menu'
+    fill = button.evaluate('el => getComputedStyle(el).backgroundColor')
+    assert fill in ('rgba(0, 0, 0, 0)', 'transparent')
+    menu_type = button.evaluate(
+        'el => { const s = getComputedStyle(el); return [s.fontSize, s.fontWeight]; }'
+    )
+    assert menu_type == ['15px', '600']
+    narrow = _nav_box(page)
+    assert narrow['header'] == 72
+    assert narrow['creditBelow'] is True
+    button.click()
+    page.locator('.mantine-Menu-dropdown').wait_for(timeout=5000)
+    page.wait_for_function(
+        """() => document.querySelector('.app-page-menu-item.app-section-schedule')?.getAttribute('data-current') === 'true'"""
+    )
+    assert page.locator('.mantine-Menu-dropdown svg').count() == 0
+    item = page.locator('.app-page-menu-item.app-section-schedule')
+    assert item.inner_text().strip() == 'Schedule'
+    assert item.get_attribute('data-current') == 'true'
+    assert item.get_attribute('aria-current') is None
+    assert page.locator('.app-page-menu-item.app-section-team-stats').inner_text().strip() == 'Team Stats'
+    idle = page.locator('.app-page-menu-item.app-section-team-stats').evaluate(
+        'el => { const s = getComputedStyle(el); return [s.fontSize, s.fontWeight, s.color]; }'
+    )
+    assert idle == ['13px', '500', 'rgb(30, 41, 59)']
+    current_item = item.evaluate(
+        'el => { const s = getComputedStyle(el); return [s.fontWeight, s.color]; }'
+    )
+    assert current_item == ['600', 'rgb(0, 119, 182)']
+    assert '|' not in page.locator('.mantine-Menu-dropdown').inner_text()
+
+
 def _select_tab(page, name):
     page.locator('[role="tab"]').filter(has_text=name).first.click()
     time.sleep(0.5)
