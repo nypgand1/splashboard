@@ -205,6 +205,7 @@ class FakeReport:
 
     def get_player_stats_json_dict(self):
         home = _player_book(REPORT_HOME_PLAYERS, 5)
+        home.loc[home.index[-1], '#'] = 0
         away = _player_book(REPORT_AWAY_PLAYERS, -3)
         away.loc[0, '2M'] = ''
         away.loc[0, '2A'] = 4

@@ -50,7 +50,7 @@ def create_navbar():
         className='app-navbar-brand-link',
     )
     credit = dmc.Text(
-        'Design by Wei-Hao Lin',
+        'Designed by Wei-Hao Lin',
         className='app-navbar-credit',
         span=True,
     )

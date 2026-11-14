@@ -2,7 +2,7 @@
 """Design tokens for Splashboard (日式簡約 Braves 青空藍).
 
 Single source of truth for Python-side colors, typography, and layout constants,
-aligned with CSS custom properties in ``assets/report.css``.
+aligned with CSS custom properties in ``assets/app.css`` and ``assets/report.css``.
 """
 
 BRAVES_BLUE_PRIMARY = '#0077b6'

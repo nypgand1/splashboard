@@ -7,16 +7,16 @@
     var KILL_ROW = '3+ STOPS';
     var NARROW_KILL = 'STOPS';
 
-    function plotNode() {
+    function findGameRotationNode() {
         return document.querySelector('#rotation-graph .js-plotly-plot')
             || document.querySelector('#rotation-graph .plotly-graph-div');
     }
 
-    function wantsNarrow() {
+    function isNarrowViewport() {
         return window.matchMedia(NARROW).matches;
     }
 
-    function isDomainKill(ann) {
+    function isDomainKillAnnotation(ann) {
         return !!(ann
             && (ann.text === KILL_ROW || ann.text === NARROW_KILL)
             && ann.y === KILL_ROW
@@ -24,19 +24,19 @@
             && ann.xref.indexOf('domain') !== -1);
     }
 
-    function isRightKill(ann) {
-        return isDomainKill(ann) && +ann.x === 1;
+    function isRightKillAnnotation(ann) {
+        return isDomainKillAnnotation(ann) && +ann.x === 1;
     }
 
-    function isLeftKill(ann) {
-        return isDomainKill(ann) && +ann.x === 0;
+    function isLeftKillAnnotation(ann) {
+        return isDomainKillAnnotation(ann) && +ann.x === 0;
     }
 
-    function hidden(axis) {
+    function isAxisHidden(axis) {
         return !!(axis && axis.visible === false);
     }
 
-    function axisLabels(axis) {
+    function readAxisLabels(axis) {
         if (!axis) {
             return [];
         }
@@ -46,7 +46,7 @@
         return axis.tickvals || [];
     }
 
-    function jerseyTick(label) {
+    function formatJerseyTick(label) {
         var text = label == null ? '' : String(label);
         if (text === KILL_ROW) {
             return '';
@@ -58,26 +58,26 @@
         return (match[1] || '') + match[2];
     }
 
-    function wideTick(label) {
+    function formatWideTick(label) {
         var text = label == null ? '' : String(label);
         return text === KILL_ROW ? '' : text;
     }
 
-    function wantedTicks(axis, narrow) {
-        var labels = axisLabels(axis);
+    function computeAxisTickText(axis, narrow) {
+        var labels = readAxisLabels(axis);
         var i;
         var out = [];
         for (i = 0; i < labels.length; i++) {
-            out.push(narrow ? jerseyTick(labels[i]) : wideTick(labels[i]));
+            out.push(narrow ? formatJerseyTick(labels[i]) : formatWideTick(labels[i]));
         }
         return out;
     }
 
-    function sameTicks(axis, narrow) {
+    function hasMatchingTicks(axis, narrow) {
         if (!axis) {
             return true;
         }
-        var want = wantedTicks(axis, narrow);
+        var want = computeAxisTickText(axis, narrow);
         var have = axis.ticktext || [];
         if (have.length !== want.length) {
             return want.length === 0;
@@ -91,7 +91,7 @@
         return true;
     }
 
-    function laneMatches(gd, narrow) {
+    function isGameLaneSynced(gd, narrow) {
         var layout = gd.layout;
         if (!layout || !layout.yaxis4) {
             return true;
@@ -103,37 +103,37 @@
         if (margin.l !== (narrow ? NARROW_L : WIDE_L)) {
             return false;
         }
-        if (narrow ? !hidden(layout.yaxis4) : hidden(layout.yaxis4)) {
+        if (narrow ? !isAxisHidden(layout.yaxis4) : isAxisHidden(layout.yaxis4)) {
             return false;
         }
-        if (layout.yaxis5 && (narrow ? !hidden(layout.yaxis5) : hidden(layout.yaxis5))) {
+        if (layout.yaxis5 && (narrow ? !isAxisHidden(layout.yaxis5) : isAxisHidden(layout.yaxis5))) {
             return false;
         }
-        if (layout.yaxis6 && (narrow ? !hidden(layout.yaxis6) : hidden(layout.yaxis6))) {
+        if (layout.yaxis6 && (narrow ? !isAxisHidden(layout.yaxis6) : isAxisHidden(layout.yaxis6))) {
             return false;
         }
-        if (!sameTicks(layout.yaxis, narrow) || !sameTicks(layout.yaxis3, narrow)) {
+        if (!hasMatchingTicks(layout.yaxis, narrow) || !hasMatchingTicks(layout.yaxis3, narrow)) {
             return false;
         }
         var anns = layout.annotations || [];
         var i;
         var wantLeft = narrow ? NARROW_KILL : KILL_ROW;
         for (i = 0; i < anns.length; i++) {
-            if (isRightKill(anns[i])) {
+            if (isRightKillAnnotation(anns[i])) {
                 if (narrow ? anns[i].visible !== false : anns[i].visible === false) {
                     return false;
                 }
                 if (anns[i].text !== KILL_ROW) {
                     return false;
                 }
-            } else if (isLeftKill(anns[i]) && anns[i].text !== wantLeft) {
+            } else if (isLeftKillAnnotation(anns[i]) && anns[i].text !== wantLeft) {
                 return false;
             }
         }
         return true;
     }
 
-    function laneUpdate(gd, narrow) {
+    function buildGameLaneUpdate(gd, narrow) {
         var update = {
             'margin.r': narrow ? NARROW_R : WIDE_R,
             'margin.l': narrow ? NARROW_L : WIDE_L,
@@ -144,20 +144,20 @@
             'yaxis3.automargin': false
         };
         if (gd.layout && gd.layout.yaxis) {
-            update['yaxis.tickvals'] = axisLabels(gd.layout.yaxis);
-            update['yaxis.ticktext'] = wantedTicks(gd.layout.yaxis, narrow);
+            update['yaxis.tickvals'] = readAxisLabels(gd.layout.yaxis);
+            update['yaxis.ticktext'] = computeAxisTickText(gd.layout.yaxis, narrow);
         }
         if (gd.layout && gd.layout.yaxis3) {
-            update['yaxis3.tickvals'] = axisLabels(gd.layout.yaxis3);
-            update['yaxis3.ticktext'] = wantedTicks(gd.layout.yaxis3, narrow);
+            update['yaxis3.tickvals'] = readAxisLabels(gd.layout.yaxis3);
+            update['yaxis3.ticktext'] = computeAxisTickText(gd.layout.yaxis3, narrow);
         }
         var anns = (gd.layout && gd.layout.annotations) || [];
         var i;
         for (i = 0; i < anns.length; i++) {
-            if (isRightKill(anns[i])) {
+            if (isRightKillAnnotation(anns[i])) {
                 update['annotations[' + i + '].visible'] = !narrow;
                 update['annotations[' + i + '].text'] = KILL_ROW;
-            } else if (isLeftKill(anns[i])) {
+            } else if (isLeftKillAnnotation(anns[i])) {
                 update['annotations[' + i + '].text'] = narrow ? NARROW_KILL : KILL_ROW;
             }
         }
@@ -165,25 +165,25 @@
     }
 
     function createLaneController(getNode, matchesFn, updateFn, pendingKey, againKey) {
-        function finish(retry) {
+        function completeLaneUpdate(retry) {
             window[pendingKey] = false;
             if (window[againKey]) {
                 window[againKey] = false;
-                apply(false);
+                syncLaneLayout(false);
                 return;
             }
             var again = getNode();
-            if (again && !matchesFn(again, wantsNarrow()) && !retry) {
-                apply(true);
+            if (again && !matchesFn(again, isNarrowViewport()) && !retry) {
+                syncLaneLayout(true);
             }
         }
 
-        function apply(retry) {
+        function syncLaneLayout(retry) {
             var gd = getNode();
             if (!gd || !gd.layout || !window.Plotly || typeof window.Plotly.relayout !== 'function') {
                 return;
             }
-            var narrow = wantsNarrow();
+            var narrow = isNarrowViewport();
             if (matchesFn(gd, narrow)) {
                 return;
             }
@@ -196,33 +196,33 @@
             try {
                 result = window.Plotly.relayout(gd, updateFn(gd, narrow));
             } catch (err) {
-                finish(retry);
+                completeLaneUpdate(retry);
                 return;
             }
             if (result && typeof result.then === 'function') {
-                result.then(function () { finish(retry); }, function () { finish(retry); });
+                result.then(function () { completeLaneUpdate(retry); }, function () { completeLaneUpdate(retry); });
             } else {
-                finish(retry);
+                completeLaneUpdate(retry);
             }
         }
 
-        return apply;
+        return syncLaneLayout;
     }
 
-    var apply = createLaneController(
-        plotNode,
-        laneMatches,
-        laneUpdate,
+    var syncGameRotationLane = createLaneController(
+        findGameRotationNode,
+        isGameLaneSynced,
+        buildGameLaneUpdate,
         '_rotationRightLanePending',
         '_rotationRightLaneAgain'
     );
 
-    function teamNode() {
+    function findTeamRotationNode() {
         return document.querySelector('#ts-rotation-graph .js-plotly-plot')
             || document.querySelector('#ts-rotation-graph .plotly-graph-div');
     }
 
-    function axisKeys(layout) {
+    function listYAxisKeys(layout) {
         var keys = [];
         var key;
         for (key in layout) {
@@ -233,24 +233,24 @@
         return keys;
     }
 
-    function isRight(axis) {
+    function isRightSideAxis(axis) {
         return !!(axis && axis.side === 'right');
     }
 
-    function isNameAxis(axis) {
-        return !!(axis && axis.categoryarray && axis.categoryarray.length && !isRight(axis));
+    function isLeftPlayerAxis(axis) {
+        return !!(axis && axis.categoryarray && axis.categoryarray.length && !isRightSideAxis(axis));
     }
 
-    function teamLaneMatches(gd, narrow) {
+    function isTeamLaneSynced(gd, narrow) {
         var layout = gd.layout;
         if (!layout) {
             return true;
         }
-        var keys = axisKeys(layout);
+        var keys = listYAxisKeys(layout);
         var rights = [];
         var i;
         for (i = 0; i < keys.length; i++) {
-            if (isRight(layout[keys[i]])) {
+            if (isRightSideAxis(layout[keys[i]])) {
                 rights.push(keys[i]);
             }
         }
@@ -265,48 +265,48 @@
             return false;
         }
         for (i = 0; i < rights.length; i++) {
-            if (narrow ? !hidden(layout[rights[i]]) : hidden(layout[rights[i]])) {
+            if (narrow ? !isAxisHidden(layout[rights[i]]) : isAxisHidden(layout[rights[i]])) {
                 return false;
             }
         }
         for (i = 0; i < keys.length; i++) {
-            if (isNameAxis(layout[keys[i]]) && !sameTicks(layout[keys[i]], narrow)) {
+            if (isLeftPlayerAxis(layout[keys[i]]) && !hasMatchingTicks(layout[keys[i]], narrow)) {
                 return false;
             }
         }
         return true;
     }
 
-    function teamLaneUpdate(gd, narrow) {
+    function buildTeamLaneUpdate(gd, narrow) {
         var update = {
             'margin.r': narrow ? NARROW_R : WIDE_R,
             'margin.l': narrow ? NARROW_L : WIDE_L
         };
-        var keys = axisKeys(gd.layout || {});
+        var keys = listYAxisKeys(gd.layout || {});
         var i;
         var axis;
         for (i = 0; i < keys.length; i++) {
             axis = gd.layout[keys[i]];
-            if (isRight(axis)) {
+            if (isRightSideAxis(axis)) {
                 update[keys[i] + '.visible'] = !narrow;
-            } else if (isNameAxis(axis)) {
+            } else if (isLeftPlayerAxis(axis)) {
                 update[keys[i] + '.automargin'] = false;
-                update[keys[i] + '.tickvals'] = axisLabels(axis);
-                update[keys[i] + '.ticktext'] = wantedTicks(axis, narrow);
+                update[keys[i] + '.tickvals'] = readAxisLabels(axis);
+                update[keys[i] + '.ticktext'] = computeAxisTickText(axis, narrow);
             }
         }
         return update;
     }
 
-    var teamApply = createLaneController(
-        teamNode,
-        teamLaneMatches,
-        teamLaneUpdate,
+    var syncTeamRotationLane = createLaneController(
+        findTeamRotationNode,
+        isTeamLaneSynced,
+        buildTeamLaneUpdate,
         '_teamRotationLanePending',
         '_teamRotationLaneAgain'
     );
 
-    function bind() {
+    function bindRotationRightLane() {
         if (window._rotationRightLaneBound) {
             return;
         }
@@ -314,28 +314,28 @@
         var mq = window.matchMedia(NARROW);
         if (typeof mq.addEventListener === 'function') {
             mq.addEventListener('change', function () {
-                apply(false);
-                teamApply(false);
+                syncGameRotationLane(false);
+                syncTeamRotationLane(false);
             });
         } else if (typeof mq.addListener === 'function') {
             mq.addListener(function () {
-                apply(false);
-                teamApply(false);
+                syncGameRotationLane(false);
+                syncTeamRotationLane(false);
             });
         }
         document.addEventListener('plotly_afterplot', function () {
-            apply(false);
-            teamApply(false);
+            syncGameRotationLane(false);
+            syncTeamRotationLane(false);
         }, true);
         window.setInterval(function () {
-            apply(false);
-            teamApply(false);
+            syncGameRotationLane(false);
+            syncTeamRotationLane(false);
         }, 200);
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', bind);
+        document.addEventListener('DOMContentLoaded', bindRotationRightLane);
     } else {
-        bind();
+        bindRotationRightLane();
     }
 })();

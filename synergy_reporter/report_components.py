@@ -247,8 +247,6 @@ def _block_body(block, bs_dict, lineup_store_data, match_info):
         if src:
             return html.Img(src=src, className="report-image-block")
         return html.Div("Drop an image here from Add image", className="report-image-placeholder")
-    if b_type == 'spacer':
-        return html.Div(className="report-spacer")
     if b_type == 'builtin_table':
         return render_builtin_table(
             block.get('table_key'),

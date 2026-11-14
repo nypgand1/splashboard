@@ -1,10 +1,10 @@
 (function () {
-    function plotNode() {
+    function findRotationPlotNode() {
         return document.querySelector('#rotation-graph .js-plotly-plot')
             || document.querySelector('#rotation-graph .plotly-graph-div');
     }
 
-    function dragBoxAt(gd, ev) {
+    function findSubplotDragRect(gd, ev) {
         var drags = gd.querySelectorAll('.nsewdrag');
         var i, rect, fallback;
         for (i = 0; i < drags.length; i++) {
@@ -22,12 +22,12 @@
         return fallback || null;
     }
 
-    function eventToTime(gd, ev) {
+    function mapEventToPlayheadTime(gd, ev) {
         var layout = gd && gd._fullLayout;
         if (!layout || !layout.xaxis || !layout.xaxis.range) {
             return null;
         }
-        var box = dragBoxAt(gd, ev);
+        var box = findSubplotDragRect(gd, ev);
         if (!box || box.width <= 0) {
             return null;
         }
@@ -48,7 +48,7 @@
         return t;
     }
 
-    function publish(t) {
+    function publishPlayheadTime(t) {
         window._rotationClickT = t;
         if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
             window.dash_clientside.set_props('rotation-click-t', {data: t});
@@ -59,37 +59,37 @@
         }
     }
 
-    var down = null;
+    var pointerStart = null;
 
-    function eventInsidePlot(ev, gd) {
+    function isEventInsidePlot(ev, gd) {
         var rect = gd.getBoundingClientRect();
         return ev.clientX >= rect.left && ev.clientX <= rect.right
             && ev.clientY >= rect.top && ev.clientY <= rect.bottom;
     }
 
-    function onDown(ev) {
+    function handlePlayheadPointerDown(ev) {
         if (ev.button != null && ev.button !== 0) {
             return;
         }
-        var gd = plotNode();
-        if (!gd || !eventInsidePlot(ev, gd)) {
-            down = null;
+        var gd = findRotationPlotNode();
+        if (!gd || !isEventInsidePlot(ev, gd)) {
+            pointerStart = null;
             return;
         }
-        down = {x: ev.clientX, y: ev.clientY};
+        pointerStart = {x: ev.clientX, y: ev.clientY};
     }
 
-    function onUp(ev) {
-        if (!down) {
+    function handlePlayheadPointerUp(ev) {
+        if (!pointerStart) {
             return;
         }
-        var gd = plotNode();
-        var moved = Math.hypot(ev.clientX - down.x, ev.clientY - down.y);
-        down = null;
+        var gd = findRotationPlotNode();
+        var moved = Math.hypot(ev.clientX - pointerStart.x, ev.clientY - pointerStart.y);
+        pointerStart = null;
         if (!gd || moved > 8) {
             return;
         }
-        var t = eventToTime(gd, ev);
+        var t = mapEventToPlayheadTime(gd, ev);
         window._rotationClickDebug = {
             t: t,
             px: ev.clientX,
@@ -99,36 +99,21 @@
         if (t == null) {
             return;
         }
-        publish(t);
+        publishPlayheadTime(t);
     }
 
-    function bind() {
+    function bindRotationPlayhead() {
         if (window._rotationPlayheadDocBound) {
             return;
         }
         window._rotationPlayheadDocBound = true;
-        document.addEventListener('pointerdown', onDown, true);
-        document.addEventListener('pointerup', onUp, true);
-        document.addEventListener('mousedown', onDown, true);
-        document.addEventListener('mouseup', onUp, true);
-    }
-
-    function scan() {
-        bind();
+        document.addEventListener('pointerdown', handlePlayheadPointerDown, true);
+        document.addEventListener('pointerup', handlePlayheadPointerUp, true);
     }
 
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', scan);
+        document.addEventListener('DOMContentLoaded', bindRotationPlayhead);
     } else {
-        scan();
-    }
-    document.addEventListener('plotly_afterplot', scan, true);
-    var obs = new MutationObserver(scan);
-    if (document.body) {
-        obs.observe(document.body, {childList: true, subtree: true});
-    } else {
-        document.addEventListener('DOMContentLoaded', function () {
-            obs.observe(document.body, {childList: true, subtree: true});
-        });
+        bindRotationPlayhead();
     }
 })();

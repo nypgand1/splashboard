@@ -172,13 +172,13 @@ def test_home_team_filter_sits_by_season_and_results_label(page, e2e_server):
     assert team_box['x'] + team_box['width'] <= type_box['x'] + 1
     widths = page.evaluate(
         '''() => {
-            const wrap = document.querySelector('#home-team-wrap .home-team-sizer');
-            const probes = [...wrap.querySelectorAll('.home-team-sizer-probe')];
+            const wrap = document.querySelector('#home-team-wrap .select-sizer');
+            const probes = [...wrap.querySelectorAll('.select-sizer-probe')];
             const longest = probes.reduce((best, probe) => (
                 probe.getBoundingClientRect().width > best.getBoundingClientRect().width
                     ? probe : best
             ));
-            const select = wrap.querySelector('.home-team-sizer-control');
+            const select = wrap.querySelector('.select-sizer-control');
             return {
                 probe: longest.getBoundingClientRect().width,
                 select: select.getBoundingClientRect().width,
@@ -323,6 +323,16 @@ def test_home_viewports(page, e2e_server):
     _wait(page, '#home-last-update')
     box = page.locator('.home-schedule-list').bounding_box()
     assert box and box['width'] > 200
+    _wait(page, '#home-season')
+    phone_select = page.locator('#home-season').evaluate(
+        'el => parseFloat(getComputedStyle(el).fontSize)'
+    )
+    phone_probe = page.locator('#home-team-wrap .select-sizer-probe').first.evaluate(
+        'el => parseFloat(getComputedStyle(el).fontSize)'
+    )
+    assert phone_select == 16
+    assert phone_probe == 16
+    assert page.locator('.app-navbar-credit').inner_text() == 'Designed by Wei-Hao Lin'
     overflow = page.evaluate(
         'document.documentElement.scrollWidth > document.documentElement.clientWidth + 4'
     )
@@ -336,6 +346,11 @@ def test_home_viewports(page, e2e_server):
     _wait(page, '#home-last-update')
     assert page.locator('.game-info-banner').count() == 0
     assert page.locator('#home-show').count() == 1
+    _wait(page, '#home-season')
+    desktop_select = page.locator('#home-season').evaluate(
+        'el => parseFloat(getComputedStyle(el).fontSize)'
+    )
+    assert desktop_select == 12
 
 
 def _nav_box(page):

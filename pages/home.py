@@ -70,6 +70,7 @@ from ui_kit import (
     matchup_line,
     matchup_score_parts,
     meta_cluster,
+    sized_select,
     status_badge,
     to_jsonable as _jsonable,
 )
@@ -91,8 +92,6 @@ SHOW_OPTIONS = [
 ]
 TEAM_ALL = 'all'
 TEAM_ALL_LABEL = 'All Teams'
-TEAM_INPUT_PAD = 12
-TEAM_CHEVRON = 28
 HOME_LAST_UPDATE_PENDING = 'Last Update: —'
 _TAIPEI = datetime.timezone(datetime.timedelta(hours=8))
 
@@ -892,36 +891,7 @@ def _season_select_data(league):
 
 def _team_select(options, value):
     labels = [item['label'] for item in options] or [TEAM_ALL_LABEL]
-    probes = [
-        html.Span(
-            label,
-            className='home-team-sizer-probe',
-            **{'aria-hidden': 'true'},
-        )
-        for label in labels
-    ]
-    control = dmc.Select(
-        id='home-team',
-        data=options,
-        value=value,
-        allowDeselect=False,
-        clearable=False,
-        searchable=False,
-        size='xs',
-        radius='md',
-        comboboxProps={'withinPortal': True},
-        rightSectionWidth=TEAM_CHEVRON,
-        className='home-team-sizer-control',
-        styles={
-            'wrapper': {'width': '100%'},
-            'input': {
-                'width': '100%',
-                'paddingInlineStart': f'{TEAM_INPUT_PAD}px',
-                'paddingInlineEnd': f'{TEAM_INPUT_PAD + TEAM_CHEVRON}px',
-            },
-        },
-    )
-    return html.Div(probes + [control], className='home-team-sizer')
+    return sized_select('home-team', None, labels, options, value)
 
 
 def render_home_page(

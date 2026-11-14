@@ -1,98 +1,44 @@
+// Report workspace & GridStack layout engine: localStorage persistence & v3->v4 migration,
+// GridStack init/hydration/hug/compact/overflow, Note rich-text editor, page lifecycle, and toolbar listeners.
 (function () {
-    if (window.splashboardReport) {
+    var R = window.splashboardReport = window.splashboardReport || {};
+    if (R._canvasBooted) {
         return;
     }
+    R._canvasBooted = true;
+    var state = R._state = R._state || {
+        pairLayoutLock: false,
+        pdfMeasurer: null,
+        pdfHeaderPxCache: {},
+        pdfFontOk: false,
+        reportFontBinary: null
+    };
 
     var IMAGE_MAX_BYTES = 1000000;
-    var CSV_MAX_BYTES = 65536;
-    var CSV_MAX_COLUMNS = 24;
-    var CSV_MAX_BODY_ROWS = 40;
-    var CSV_TITLE_FALLBACK = 'Imported table';
-    var CSV_OFFENSE_TITLE = 'Offense | Play-type Stats';
-    var CSV_DEFENSE_TITLE = 'Defense | Play-type Stats';
-    var CSV_ERR_EMPTY = 'This CSV is empty.';
-    var CSV_ERR_UTF8 = 'This CSV is not UTF-8.';
-    var CSV_ERR_HEADER = 'This CSV needs a header row.';
-    var CSV_ERR_READ = 'This CSV could not be read.';
-    var CSV_ERR_BYTES = 'This CSV is larger than 64KB.';
-    var CSV_ERR_COLUMNS = 'This CSV has more than 24 columns.';
-    var CSV_ERR_ROWS = 'This CSV has more than 40 rows.';
-    var CSV_PPP_NUMBER = /^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/;
     var GRID_COLUMNS = 12;
     var LAYOUT_VERSION = 4;
     var DESKTOP_MIN_PX = 1280;
-    var ROTATION_EMPTY = 'No rotation chart for this game.';
-    var ROTATION_ERROR = 'Could not load rotation.';
-    var SHOT_CHART_EMPTY = 'No shot chart for this game.';
-    var SHOT_CHART_ERROR = 'Could not load shot chart.';
-    var SHOT_COURT_NATIVE_W = 380.05;
-    var SHOT_COURT_ASPECT = 400.51 / SHOT_COURT_NATIVE_W;
-    var SHOT_COURT_SCALE = 0.75;
-    var SHOT_NAME_BLOCK_PX = 20;
-    var ROTATION_FONT_SCALE = 0.75;
-    var ROTATION_STATIC_CONFIG = {
-        staticPlot: true,
-        displayModeBar: false,
-        responsive: false,
-        scrollZoom: false,
-        doubleClick: false
-    };
-    var A4_WIDTH_MM = 210;
-    var A4_HEIGHT_MM = 297;
     var GRIDSTACK_CSS = '/assets/gridstack.min.css';
     var GRIDSTACK_JS = '/assets/gridstack-all.js';
     var JSPDF_JS = '/assets/jspdf.umd.min.js';
-    var REPORT_FONT_NAME = 'NotoSansTC';
-    var REPORT_FONT_URL = '/assets/NotoSansTC-Regular.ttf';
-
-    function reportFontUrl() {
-        var node = document.getElementById('report-font-url');
-        var url = node && (node.textContent || '').trim();
-        return url || REPORT_FONT_URL;
-    }
-
-    // Missing from NotoSansTC Regular. Screen fallback is zero-width or narrower than U+0020.
-    // jsPDF otherwise measures each one as .notdef (1em) and then drops the glyph.
-    // U+0020, U+00A0, U+2002, U+2003, and U+3000 stay.
-    // cmap format 4 includes U+FF01, U+FF08, U+FF09, U+FF0C, U+FF1A, U+FF1B, U+FF1F.
-    var REPORT_INVISIBLE_CHARS = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u2004-\u200A\u202F\u205F]/g;
-    var TABLE_TITLES = {
-        score_group: 'Score',
-        t_adv_df: 'Pace & Four Factors',
-        adv_df: 'Advanced Stats',
-        t_df: 'Team Stats',
-        k_df: 'Key Stats',
-        p_df_away: 'Away Player Stats',
-        p_df_home: 'Home Player Stats',
-        lineup_away: 'Away Lineup Stats',
-        lineup_home: 'Home Lineup Stats'
-    };
-    var LOWER_BETTER = { Foul: 1, PF: 1, TO: 1, TOV: 1, 'TO%': 1 };
-    var COL_GROUPS = [
-        { name: '2PT', keys: ['2M', '2A', '2FG%'], subs: ['M', 'A', '%'] },
-        { name: '3PT', keys: ['3M', '3A', '3FG%'], subs: ['M', 'A', '%'] },
-        { name: 'FT', keys: ['FTM', 'FTA', 'FT%'], subs: ['M', 'A', '%'] },
-        { name: 'REB', keys: ['OR', 'DR', 'REB'], subs: ['O', 'D', 'T'] },
-        { name: 'Points in the Paint', keys: ['PIPM', 'PIPA', 'PIP'], subs: ['M', 'A', 'PT'] },
-        { name: 'Second Chance Points', keys: ['SCP2M', 'SCP2A', 'SCP3M', 'SCP3A', 'SCP'], subs: ['2M', '2A', '3M', '3A', 'PT'] },
-        { name: 'Fast Break Points', keys: ['FBP2M', 'FBP2A', 'FBP3M', 'FBP3A', 'FBP'], subs: ['2M', '2A', '3M', '3A', 'PT'] },
-        { name: 'Points off Turnovers', keys: ['POT2M', 'POT2A', 'POT3M', 'POT3A', 'POT'], subs: ['2M', '2A', '3M', '3A', 'PT'] }
-    ];
-    var FF_KEYS = ['eFG%', 'TO%', 'ORB%', 'FT-R'];
-    var KEY_STATS = ['PIP', 'SCP', 'FBP', 'POT'];
-    var libsPromise = null;
-    var hydrateLocks = {};
     var ALLOWED_IMAGE_MIMES = {
         'image/jpeg': true,
         'image/png': true,
         'image/webp': true
     };
+    var libsPromise = null;
+    var hydrateLocks = {};
     var currentPageIndex = 0;
     var spyObserver = null;
     var spyObservedCount = -1;
     var spyRatios = {};
     var hydrating = false;
     var lastStickyKey = '';
+    var activeNoteEl = null;
+    var tableResizeLock = false;
+    var imageSnapLock = false;
+    var dialogResolve = null;
+    var csvImportMode = 'plain';
 
     function gameId() {
         var el = document.getElementById('report-game-id') || document.getElementById('game_id');
@@ -159,8 +105,8 @@
                     block.src = img ? img.getAttribute('src') : (prev.src || '');
                 }
                 if (block.type === 'csv_table') {
-                    var csv = readCsvStore(item) || {};
-                    block.title = csv.title || prev.title || CSV_TITLE_FALLBACK;
+                    var csv = (R.readCsvStore && R.readCsvStore(item)) || {};
+                    block.title = csv.title || prev.title || R.CSV_TITLE_FALLBACK;
                     block.coloring = (csv.coloring || prev.coloring) === 'ppp' ? 'ppp' : 'plain';
                     block.columns = csv.columns || prev.columns || [];
                     block.rows = csv.rows || prev.rows || [];
@@ -272,1383 +218,6 @@
         return libsPromise;
     }
 
-    function parseSplit(payload) {
-        if (!payload) {
-            return null;
-        }
-        var obj = payload;
-        if (typeof payload === 'string') {
-            try {
-                obj = JSON.parse(payload);
-            } catch (err) {
-                return null;
-            }
-        }
-        if (!obj || !obj.columns || !obj.data) {
-            return null;
-        }
-        var columns = [];
-        var indexes = [];
-        obj.columns.forEach(function (col, i) {
-            if (String(col).charAt(0) === '_') {
-                return;
-            }
-            columns.push(col);
-            indexes.push(i);
-        });
-        var rows = obj.data.map(function (row) {
-            var rec = {};
-            columns.forEach(function (col, i) {
-                rec[col] = row[indexes[i]];
-            });
-            return rec;
-        });
-        return { columns: columns, rows: rows };
-    }
-
-    function rotationFigure() {
-        var el = document.getElementById('report-rotation-figure');
-        if (!el || !el.textContent) {
-            return { _ui: 'empty' };
-        }
-        try {
-            return JSON.parse(el.textContent);
-        } catch (err) {
-            return { _ui: 'error' };
-        }
-    }
-
-    function rotationNativeHeightPx() {
-        var fig = rotationFigure();
-        if (!fig || fig._ui === 'empty' || fig._ui === 'error' || !fig.layout) {
-            return 120;
-        }
-        return Math.max(120, Number(fig.layout.height) || 520);
-    }
-
-    function paintRotation(host) {
-        if (!host) {
-            return Promise.resolve();
-        }
-        host.textContent = '';
-        var fig = rotationFigure();
-        if (fig && fig._ui === 'error') {
-            host.className += ' report-rotation-empty';
-            host.textContent = ROTATION_ERROR;
-            return Promise.resolve();
-        }
-        if (!fig || fig._ui === 'empty' || !fig.data) {
-            host.className += ' report-rotation-empty';
-            host.textContent = ROTATION_EMPTY;
-            return Promise.resolve();
-        }
-        if (!window.Plotly || typeof window.Plotly.react !== 'function') {
-            host.className += ' report-rotation-empty';
-            host.textContent = ROTATION_ERROR;
-            return Promise.resolve();
-        }
-        var gd = document.createElement('div');
-        gd.className = 'report-rotation-plot';
-        var hostW = Math.max(200, host.clientWidth || (host.parentElement && host.parentElement.clientWidth) || 640);
-        var innerW = Math.round(hostW / ROTATION_FONT_SCALE);
-        var innerH = rotationNativeHeightPx();
-        var frame = document.createElement('div');
-        frame.className = 'report-rotation-scale';
-        frame.style.width = hostW + 'px';
-        frame.style.height = Math.round(innerH * ROTATION_FONT_SCALE) + 'px';
-        gd.style.width = innerW + 'px';
-        gd.style.height = innerH + 'px';
-        gd.style.transform = 'scale(' + ROTATION_FONT_SCALE + ')';
-        gd.style.transformOrigin = 'top left';
-        frame.appendChild(gd);
-        host.appendChild(frame);
-        var layout = Object.assign({}, fig.layout || {}, {
-            width: innerW,
-            height: innerH,
-            autosize: false,
-            dragmode: false
-        });
-        return window.Plotly.react(gd, fig.data, layout, ROTATION_STATIC_CONFIG).catch(function (err) {
-            console.warn('Report rotation plot failed', err);
-            host.textContent = ROTATION_ERROR;
-            host.className += ' report-rotation-empty';
-        });
-    }
-
-    function blockLocksSize(type) {
-        return type === 'rotation' || type === 'shot_chart';
-    }
-
-    function locksResize(type) {
-        return blockLocksSize(type) || isReportTable(type);
-    }
-
-    function isReportTable(type) {
-        return type === 'builtin_table' || type === 'csv_table';
-    }
-
-    function shotChartPayload() {
-        var el = document.getElementById('report-shot-chart');
-        if (!el || !el.textContent) {
-            return { _ui: 'empty' };
-        }
-        try {
-            return JSON.parse(el.textContent);
-        } catch (err) {
-            return { _ui: 'error' };
-        }
-    }
-
-    function shotChartEstimatePx(grid) {
-        var fig = shotChartPayload();
-        if (!fig || fig._ui === 'empty' || fig._ui === 'error' || !fig.away_src) {
-            return 36;
-        }
-        var courtW = SHOT_COURT_NATIVE_W * SHOT_COURT_SCALE;
-        return Math.round(courtW * SHOT_COURT_ASPECT + SHOT_NAME_BLOCK_PX);
-    }
-
-    function whenImageReady(img) {
-        return new Promise(function (resolve) {
-            if (img.complete && img.naturalWidth) {
-                resolve();
-                return;
-            }
-            img.addEventListener('load', function () { resolve(); }, { once: true });
-            img.addEventListener('error', function () { resolve(); }, { once: true });
-        });
-    }
-
-    function paintShotChart(host) {
-        if (!host) {
-            return Promise.resolve();
-        }
-        host.textContent = '';
-        host.className = 'report-shot-chart-host';
-        var fig = shotChartPayload();
-        if (!fig || fig._ui === 'empty') {
-            host.className += ' report-shot-chart-empty';
-            host.textContent = SHOT_CHART_EMPTY;
-            return Promise.resolve();
-        }
-        if (fig._ui === 'error' || !fig.away_src || !fig.home_src) {
-            host.className += ' report-shot-chart-empty';
-            host.textContent = SHOT_CHART_ERROR;
-            return Promise.resolve();
-        }
-        var row = document.createElement('div');
-        row.className = 'report-shot-chart-row';
-        [
-            { name: fig.away_name || 'Away', src: fig.away_src },
-            { name: fig.home_name || 'Home', src: fig.home_src }
-        ].forEach(function (side) {
-            var team = document.createElement('div');
-            team.className = 'report-shot-chart-team';
-            var name = document.createElement('div');
-            name.className = 'report-shot-chart-name';
-            name.textContent = side.name;
-            var img = document.createElement('img');
-            img.className = 'report-shot-chart-court';
-            img.alt = side.name + ' shot chart';
-            img.src = side.src;
-            team.appendChild(name);
-            team.appendChild(img);
-            row.appendChild(team);
-        });
-        host.appendChild(row);
-        return Promise.all(Array.prototype.map.call(row.querySelectorAll('img'), whenImageReady));
-    }
-
-    function paintShotChartBlocks(paper) {
-        var hosts = (paper || document).querySelectorAll('.report-shot-chart-host');
-        var chain = Promise.resolve();
-        Array.prototype.forEach.call(hosts, function (host) {
-            chain = chain.then(function () {
-                return paintShotChart(host);
-            });
-        });
-        return chain;
-    }
-
-    function paintRotationBlocks(paper) {
-        var hosts = (paper || document).querySelectorAll('.report-rotation-host');
-        var chain = Promise.resolve();
-        Array.prototype.forEach.call(hosts, function (host) {
-            chain = chain.then(function () {
-                return paintRotation(host);
-            });
-        });
-        return chain;
-    }
-
-    function tablePayload() {
-        var el = document.getElementById('report-table-data');
-        if (!el || !el.textContent) {
-            return {};
-        }
-        try {
-            return JSON.parse(el.textContent) || {};
-        } catch (err) {
-            return {};
-        }
-    }
-
-    function numVal(v) {
-        if (v === null || v === undefined || v === '') {
-            return null;
-        }
-        var n = parseFloat(String(v).replace('%', ''));
-        return isNaN(n) ? null : n;
-    }
-
-    function isBlankZero(col, val) {
-        if (col === '+/-') {
-            return false;
-        }
-        if (typeof val === 'string' && (val.indexOf('%') !== -1 || val.charAt(0) === '.')) {
-            return false;
-        }
-        if (val === 0 || val === '0' || val === '0.0') {
-            return true;
-        }
-        return false;
-    }
-
-    function formatCell(col, val) {
-        if (val === null || val === undefined || val === '') {
-            return '';
-        }
-        if (col === 'S' && String(val).trim()) {
-            return '○';
-        }
-        if (isBlankZero(col, val)) {
-            return '';
-        }
-        return String(val);
-    }
-
-    function plusMinusStyle(val) {
-        var n = numVal(val);
-        if (n === null) {
-            return { color: '#1e293b', fontWeight: '400' };
-        }
-        if (n > 0) {
-            return { color: '#0077b6', fontWeight: '700' };
-        }
-        if (n < 0) {
-            return { color: '#e63946', fontWeight: '700' };
-        }
-        return { color: '#64748b', fontWeight: '400' };
-    }
-
-    function winningIndexes(values, lower) {
-        var present = [];
-        values.forEach(function (value, index) {
-            if (value === null || value === undefined || isNaN(value)) {
-                return;
-            }
-            present.push({ index: index, value: value });
-        });
-        if (present.length < 2) {
-            return [];
-        }
-        var first = present[0].value;
-        var same = present.every(function (item) { return item.value === first; });
-        if (same) {
-            return [];
-        }
-        var best = first;
-        present.forEach(function (item) {
-            if (lower ? item.value < best : item.value > best) {
-                best = item.value;
-            }
-        });
-        var found = [];
-        present.forEach(function (item) {
-            if (item.value === best) {
-                found.push(item.index);
-            }
-        });
-        return found;
-    }
-
-    function winnerIndex(rows, columns, tableKey) {
-        if (!rows || !rows.length) {
-            return {};
-        }
-        if (tableKey !== 't_df' && tableKey !== 't_adv_df' && tableKey !== 'adv_df' && tableKey !== 'k_df' && tableKey !== 'score_group') {
-            return {};
-        }
-        var map = {};
-        columns.forEach(function (col) {
-            if (col === 'Team' || col === 'Min' || col === '3P-R' || col === '3Pr') {
-                return;
-            }
-            var values = rows.map(function (row) {
-                return numVal(formatCell(col, row[col]));
-            });
-            var indexes = winningIndexes(values, !!LOWER_BETTER[col]);
-            if (!indexes.length) {
-                return;
-            }
-            map[col] = {};
-            indexes.forEach(function (index) {
-                map[col][index] = true;
-            });
-        });
-        return map;
-    }
-
-    function headerLabel(col) {
-        if (col === 'AST') {
-            return 'AS';
-        }
-        if (col === 'PTS') {
-            return 'PT';
-        }
-        return col;
-    }
-
-    function isLineupTable(tableKey) {
-        return tableKey === 'lineup_home' || tableKey === 'lineup_away';
-    }
-
-    function skipFourFactorsGroup(tableKey) {
-        return tableKey === 'p_df_home' || tableKey === 'p_df_away'
-            || tableKey === 'lineup_home' || tableKey === 'lineup_away';
-    }
-
-    function groupedHeader(columns, tableKey) {
-        var used = {};
-        var top = [];
-        var sub = [];
-        var hasGroup = COL_GROUPS.some(function (g) {
-            return g.keys.some(function (k) { return columns.indexOf(k) !== -1; });
-        });
-        var ff = skipFourFactorsGroup(tableKey)
-            ? []
-            : FF_KEYS.filter(function (k) { return columns.indexOf(k) !== -1; });
-        if (!hasGroup && !ff.length) {
-            return null;
-        }
-        columns.forEach(function (col) {
-            if (used[col]) {
-                return;
-            }
-            if (isLineupTable(tableKey) && KEY_STATS.indexOf(col) !== -1 && !used.__key) {
-                var presentKeys = KEY_STATS.filter(function (k) { return columns.indexOf(k) !== -1; });
-                presentKeys.forEach(function (k) { used[k] = 1; });
-                used.__key = 1;
-                top.push({ text: 'Key Stats', span: presentKeys.length, group: true, cols: presentKeys });
-                presentKeys.forEach(function (k) { sub.push({ label: k, col: k }); });
-                return;
-            }
-            var group = COL_GROUPS.filter(function (g) { return g.keys.indexOf(col) !== -1; })[0];
-            if (group) {
-                var present = group.keys.filter(function (k) { return columns.indexOf(k) !== -1; });
-                present.forEach(function (k) { used[k] = 1; });
-                top.push({ text: group.name, span: present.length, group: true, cols: present });
-                present.forEach(function (k) {
-                    sub.push({ label: group.subs[group.keys.indexOf(k)] || k, col: k });
-                });
-                return;
-            }
-            if (ff.indexOf(col) !== -1 && !used['__ff']) {
-                used['__ff'] = 1;
-                ff.forEach(function (k) { used[k] = 1; });
-                top.push({ text: 'FOUR FACTORS', span: ff.length, group: true, cols: ff.slice() });
-                ff.forEach(function (k) { sub.push({ label: k, col: k }); });
-                return;
-            }
-            if (used[col]) {
-                return;
-            }
-            used[col] = 1;
-            top.push({ text: headerLabel(col), span: 1, rowSpan: 2, col: col, cols: [col] });
-        });
-        top.forEach(function (cell, index) {
-            var atRim = index + 1 >= top.length;
-            if (atRim) {
-                if (!cell.group) {
-                    return;
-                }
-            } else {
-                var next = top[index + 1];
-                if (!cell.group && !next.group) {
-                    return;
-                }
-            }
-            cell.edge = true;
-            var cols = cell.cols || [];
-            var last = cols[cols.length - 1];
-            if (!last) {
-                return;
-            }
-            sub.forEach(function (item) {
-                if (item.col === last) {
-                    item.edge = true;
-                }
-            });
-        });
-        return { top: top, sub: sub };
-    }
-
-    var PAIR_WIDTHS = [
-        ['p_df_home', 'p_df_away'],
-        ['lineup_home', 'lineup_away']
-    ];
-    var pairWidthJobs = {};
-    var pairWidthTries = {};
-    var pairLayoutLock = false;
-    var pairMeasureCanvas;
-
-    function pairForKey(tableKey) {
-        for (var i = 0; i < PAIR_WIDTHS.length; i++) {
-            if (PAIR_WIDTHS[i][0] === tableKey || PAIR_WIDTHS[i][1] === tableKey) {
-                return PAIR_WIDTHS[i];
-            }
-        }
-        return null;
-    }
-
-    function isNameCol(col) {
-        return col === 'Player' || col === 'Lineup' || col === 'Lineups';
-    }
-
-    function readLeafCols(table) {
-        try {
-            var cols = JSON.parse(table.getAttribute('data-cols') || '[]');
-            return Array.isArray(cols) ? cols : [];
-        } catch (err) {
-            return [];
-        }
-    }
-
-    function pairTextWidth(el) {
-        var cs = window.getComputedStyle(el);
-        if (!pairMeasureCanvas) {
-            pairMeasureCanvas = document.createElement('canvas');
-        }
-        var ctx = pairMeasureCanvas.getContext('2d');
-        var fontStyle = cs.fontStyle && cs.fontStyle !== 'normal' ? cs.fontStyle + ' ' : '';
-        ctx.font = fontStyle + (cs.fontWeight || '400') + ' ' + (cs.fontSize || '9px') + ' ' + (cs.fontFamily || 'sans-serif');
-        var pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
-        var left = parseFloat(cs.borderLeftWidth) || 0;
-        var right = parseFloat(cs.borderRightWidth) || 0;
-        // Collapsed borders are shared. Count the wider edge once.
-        var border = Math.max(left, right);
-        return Math.ceil(ctx.measureText(el.textContent || '').width + pad + border);
-    }
-
-    var pdfMeasurer = null;
-    var pdfHeaderPxCache = {};
-    var pdfHeaderArm = false;
-
-    function paperPxScale() {
-        var paper = document.querySelector('#report-papers .report-paper');
-        var rect = paper ? paper.getBoundingClientRect() : null;
-        if (!rect || rect.width < 1) {
-            return {
-                x: A4_WIDTH_MM / (210 / 25.4 * 96),
-                y: A4_HEIGHT_MM / (297 / 25.4 * 96)
-            };
-        }
-        return paperScale(rect);
-    }
-
-    function pdfMeasurerDoc() {
-        if (pdfMeasurer) {
-            return pdfMeasurer;
-        }
-        if (!window.jspdf || !window.jspdf.jsPDF || !reportFontBinary) {
-            return null;
-        }
-        var pdf = new window.jspdf.jsPDF({
-            orientation: 'portrait',
-            unit: 'mm',
-            format: 'a4'
-        });
-        registerReportFont(pdf);
-        if (!pdfFontOk) {
-            return null;
-        }
-        pdfMeasurer = pdf;
-        return pdf;
-    }
-
-    function armPdfHeaderMeasure() {
-        if (pdfHeaderArm || pdfMeasurer) {
-            return;
-        }
-        pdfHeaderArm = true;
-        ensureReportLibs().then(function () {
-            return loadReportFont();
-        }).then(function () {
-            pdfHeaderArm = false;
-            pdfMeasurer = null;
-            pdfHeaderPxCache = {};
-            PAIR_WIDTHS.forEach(syncPairColumnWidths);
-        }).catch(function () {
-            pdfHeaderArm = false;
-        });
-    }
-
-    function pdfHeaderFloorPx(text, fontPx, bold) {
-        var pdf = pdfMeasurerDoc();
-        if (!pdf || !text) {
-            return 0;
-        }
-        var scale = paperPxScale();
-        var pt = pxToPt(fontPx, scale);
-        var key = text + '|' + pt + '|' + (bold ? 'b' : '') + '|' + scale.x.toFixed(4);
-        if (pdfHeaderPxCache[key]) {
-            return pdfHeaderPxCache[key];
-        }
-        pdf.setFontSize(pt);
-        try {
-            pdf.setFont(pdfFontOk ? REPORT_FONT_NAME : 'helvetica', 'normal');
-        } catch (err) {
-            pdf.setFont('helvetica', 'normal');
-        }
-        var textMm = pdf.getTextWidth(text);
-        var boxMm = textMm + (bold ? PDF_FAKE_BOLD_MM : 0) + 0.8;
-        var px = scale.x ? Math.ceil(boxMm / scale.x) : 0;
-        pdfHeaderPxCache[key] = px;
-        return px;
-    }
-
-    function measureLeafFloors(table) {
-        var floors = {};
-        var nodes = table.querySelectorAll('th[data-col], td[data-col]');
-        for (var i = 0; i < nodes.length; i++) {
-            var el = nodes[i];
-            if (el.colSpan > 1) {
-                continue;
-            }
-            var col = el.getAttribute('data-col');
-            var width = pairTextWidth(el);
-            if (el.tagName === 'TH' && !isNameCol(col)) {
-                var headerStyle = window.getComputedStyle(el);
-                var pdfFloor = pdfHeaderFloorPx(
-                    (el.textContent || '').trim(),
-                    parseFloat(headerStyle.fontSize) || 9,
-                    fontWeightNum(headerStyle) >= 600
-                );
-                if (!pdfFloor) {
-                    armPdfHeaderMeasure();
-                }
-                if (pdfFloor > width) {
-                    width = pdfFloor;
-                }
-            }
-            var lineupBody = (col === 'Lineup' || col === 'Lineups') && el.tagName !== 'TH';
-            if (lineupBody) {
-                if (width > (floors._nameNeed || 0)) {
-                    floors._nameNeed = width;
-                }
-                continue;
-            }
-            if (floors[col] == null || width > floors[col]) {
-                floors[col] = width;
-            }
-            if (isNameCol(col) && width > (floors._nameNeed || 0)) {
-                floors._nameNeed = width;
-            }
-        }
-        return floors;
-    }
-
-    function applyPairColGroup(table, cols, widths, hostW) {
-        var sum = 0;
-        cols.forEach(function (col) {
-            sum += widths[col] || 0;
-        });
-        var nextWidth = sum > hostW + 1 ? sum + 'px' : '100%';
-        var cg = table.querySelector('colgroup');
-        if (!cg) {
-            cg = document.createElement('colgroup');
-            table.insertBefore(cg, table.firstChild);
-        }
-        var same = table.style.tableLayout === 'fixed'
-            && table.style.width === nextWidth
-            && cg.children.length === cols.length;
-        if (same) {
-            for (var i = 0; i < cols.length; i++) {
-                if (cg.children[i].style.width !== (widths[cols[i]] || 0) + 'px') {
-                    same = false;
-                    break;
-                }
-            }
-        }
-        if (same) {
-            return false;
-        }
-        while (cg.firstChild) {
-            cg.removeChild(cg.firstChild);
-        }
-        cols.forEach(function (col) {
-            var c = document.createElement('col');
-            c.style.width = (widths[col] || 0) + 'px';
-            cg.appendChild(c);
-        });
-        table.style.tableLayout = 'fixed';
-        table.style.width = nextWidth;
-        table.setAttribute('data-host-w', String(hostW));
-        return true;
-    }
-
-    function syncPairColumnWidths(pair) {
-        if (pairLayoutLock || !pair) {
-            return false;
-        }
-        var entries = [];
-        var pending = false;
-        pair.forEach(function (key) {
-            document.querySelectorAll('.report-table-host[data-table-host="' + key + '"]').forEach(function (host) {
-                var table = host.querySelector('.report-js-table');
-                if (!table || !table.getAttribute('data-cols')) {
-                    return;
-                }
-                var cols = readLeafCols(table);
-                if (!cols.length) {
-                    return;
-                }
-                if (host.clientWidth < 1) {
-                    pending = true;
-                    return;
-                }
-                entries.push({ host: host, table: table, cols: cols });
-            });
-        });
-        if (!entries.length) {
-            return pending;
-        }
-        pairLayoutLock = true;
-        try {
-            var stat = {};
-            entries.forEach(function (entry) {
-                var floors = measureLeafFloors(entry.table);
-                entry.floors = floors;
-                entry.cols.forEach(function (col) {
-                    if (isNameCol(col)) {
-                        return;
-                    }
-                    var floor = floors[col] || 0;
-                    if (!stat[col] || floor > stat[col]) {
-                        stat[col] = floor;
-                    }
-                });
-            });
-            var statCols = [];
-            var seenStat = {};
-            entries.forEach(function (entry) {
-                entry.cols.forEach(function (col) {
-                    if (isNameCol(col) || seenStat[col]) {
-                        return;
-                    }
-                    seenStat[col] = 1;
-                    statCols.push(col);
-                });
-            });
-            entries.forEach(function (entry) {
-                var nameCol = null;
-                var statSum = 0;
-                entry.cols.forEach(function (col) {
-                    if (isNameCol(col)) {
-                        if (!nameCol) {
-                            nameCol = col;
-                        }
-                        return;
-                    }
-                    statSum += stat[col] || 0;
-                });
-                var headerFloor = nameCol ? (entry.floors[nameCol] || 0) : 0;
-                var nameNeed = entry.floors._nameNeed || 0;
-                if (nameNeed < headerFloor) {
-                    nameNeed = headerFloor;
-                }
-                entry.hostW = Math.floor(entry.host.clientWidth);
-                entry.nameCol = nameCol;
-                entry.nameNeed = nameNeed;
-                entry.statSum = statSum;
-                var spare = entry.hostW - statSum - nameNeed;
-                entry.spare = spare > 0 ? spare : 0;
-            });
-            var sharedSpare = entries.length ? entries[0].spare : 0;
-            entries.forEach(function (entry) {
-                if (entry.spare < sharedSpare) {
-                    sharedSpare = entry.spare;
-                }
-            });
-            var extraEach = statCols.length ? Math.floor(sharedSpare / statCols.length) : 0;
-            var leftoverPx = statCols.length ? sharedSpare - extraEach * statCols.length : 0;
-            var bonus = {};
-            statCols.forEach(function (col, index) {
-                bonus[col] = extraEach + (index < leftoverPx ? 1 : 0);
-            });
-            var changed = false;
-            entries.forEach(function (entry) {
-                var widths = {};
-                var grown = 0;
-                entry.cols.forEach(function (col) {
-                    if (isNameCol(col)) {
-                        return;
-                    }
-                    widths[col] = (stat[col] || 0) + (bonus[col] || 0);
-                    grown += widths[col];
-                });
-                var nameW = entry.hostW - grown;
-                var headerFloor = entry.nameCol ? (entry.floors[entry.nameCol] || 0) : 0;
-                if (nameW < headerFloor) {
-                    nameW = headerFloor;
-                }
-                if (entry.nameCol) {
-                    widths[entry.nameCol] = nameW;
-                }
-                entry.cols.forEach(function (col) {
-                    if (isNameCol(col) && col !== entry.nameCol) {
-                        widths[col] = entry.floors[col] || 0;
-                    }
-                });
-                if (applyPairColGroup(entry.table, entry.cols, widths, entry.hostW)) {
-                    changed = true;
-                }
-            });
-            if (changed) {
-                var grids = [];
-                entries.forEach(function (entry) {
-                    var gridEl = entry.table.closest('.report-grid');
-                    var grid = gridEl && gridEl.gridstack;
-                    if (grid && grids.indexOf(grid) === -1) {
-                        grids.push(grid);
-                    }
-                });
-                grids.forEach(function (grid) {
-                    fitTableBlocksOnGrid(grid);
-                });
-            }
-        } finally {
-            pairLayoutLock = false;
-        }
-        if (!pending) {
-            document.querySelectorAll('.grid-stack-item[data-resize-commit="1"]').forEach(function (item) {
-                if (pair.indexOf(item.getAttribute('data-table-key')) === -1) {
-                    return;
-                }
-                var gridEl = item.closest('.report-grid');
-                var grid = gridEl && gridEl.gridstack;
-                commitTableResize(grid, item);
-            });
-        }
-        return pending;
-    }
-
-    function schedulePairWidths(tableKey) {
-        var pair = pairForKey(tableKey);
-        if (!pair || pairWidthJobs[pair[0]]) {
-            return;
-        }
-        pairWidthJobs[pair[0]] = 1;
-        window.requestAnimationFrame(function () {
-            window.requestAnimationFrame(function () {
-                pairWidthJobs[pair[0]] = 0;
-                var pending = syncPairColumnWidths(pair);
-                var tries = pairWidthTries[pair[0]] || 0;
-                if (pending && tries < 8) {
-                    pairWidthTries[pair[0]] = tries + 1;
-                    window.setTimeout(function () {
-                        schedulePairWidths(tableKey);
-                    }, 50);
-                } else if (!pending) {
-                    pairWidthTries[pair[0]] = 0;
-                }
-            });
-        });
-    }
-
-    function pairWidthsStale() {
-        var stale = false;
-        PAIR_WIDTHS.forEach(function (pair) {
-            pair.forEach(function (key) {
-                document.querySelectorAll('.report-table-host[data-table-host="' + key + '"]').forEach(function (host) {
-                    var table = host.querySelector('.report-js-table');
-                    if (!table || host.clientWidth < 1) {
-                        return;
-                    }
-                    if (!table.querySelector('colgroup')) {
-                        stale = true;
-                        return;
-                    }
-                    var prev = parseFloat(table.getAttribute('data-host-w') || '0');
-                    if (Math.abs(prev - Math.floor(host.clientWidth)) > 1) {
-                        stale = true;
-                    }
-                });
-            });
-        });
-        return stale;
-    }
-
-    function refreshPairWidthsIfStale() {
-        if (!pairWidthsStale()) {
-            return;
-        }
-        PAIR_WIDTHS.forEach(syncPairColumnWidths);
-    }
-
-    function csvBlockTitle(filename, coloring) {
-        var name = String(filename || '').replace(/\\/g, '/').split('/').pop();
-        var lower = name.toLowerCase();
-        if (coloring === 'ppp') {
-            if (lower.slice(-8) === '_off.csv') {
-                return CSV_OFFENSE_TITLE;
-            }
-            if (lower.slice(-8) === '_def.csv') {
-                return CSV_DEFENSE_TITLE;
-            }
-        }
-        if (/\.csv$/i.test(name)) {
-            name = name.slice(0, -4);
-        }
-        if (!String(name || '').trim()) {
-            return CSV_TITLE_FALLBACK;
-        }
-        return name;
-    }
-
-    function pppCellStyle(text) {
-        var token = String(text == null ? '' : text).trim();
-        if (!CSV_PPP_NUMBER.test(token)) {
-            return null;
-        }
-        var negative = token.charAt(0) === '-';
-        var body = token.charAt(0) === '+' || negative ? token.slice(1) : token;
-        var parts = body.split('.');
-        var whole = parts[0] || '0';
-        var frac = parts[1] || '';
-        var scale = frac.length;
-        var magnitude = parseInt(whole + frac, 10);
-        if (negative) {
-            magnitude = -magnitude;
-        }
-        var unit = Math.pow(10, scale);
-        if (magnitude >= unit) {
-            return { color: '#0077b6', fontWeight: '700' };
-        }
-        if (magnitude * 10 < 8 * unit) {
-            return { color: '#e63946', fontWeight: '700' };
-        }
-        return null;
-    }
-
-    function parseCsvRecords(text) {
-        var rows = [];
-        var row = [];
-        var field = '';
-        var i = 0;
-        var inQuotes = false;
-        var afterQuote = false;
-        var fieldStarted = false;
-        function pushField() {
-            row.push(field);
-            field = '';
-            afterQuote = false;
-            fieldStarted = false;
-        }
-        function pushRow() {
-            pushField();
-            rows.push(row);
-            row = [];
-        }
-        while (i < text.length) {
-            var c = text.charAt(i);
-            if (inQuotes) {
-                if (c === '"') {
-                    if (text.charAt(i + 1) === '"') {
-                        field += '"';
-                        i += 2;
-                        continue;
-                    }
-                    inQuotes = false;
-                    afterQuote = true;
-                    i += 1;
-                    continue;
-                }
-                field += c;
-                i += 1;
-                continue;
-            }
-            if (c === '"') {
-                if (fieldStarted) {
-                    throw new Error(CSV_ERR_READ);
-                }
-                inQuotes = true;
-                fieldStarted = true;
-                i += 1;
-                continue;
-            }
-            if (c === ',') {
-                if (afterQuote || !afterQuote) {
-                    pushField();
-                    i += 1;
-                    continue;
-                }
-            }
-            if (c === '\n' || c === '\r') {
-                pushRow();
-                i += 1;
-                if (c === '\r' && text.charAt(i) === '\n') {
-                    i += 1;
-                }
-                continue;
-            }
-            if (afterQuote) {
-                throw new Error(CSV_ERR_READ);
-            }
-            field += c;
-            fieldStarted = true;
-            i += 1;
-        }
-        if (inQuotes) {
-            throw new Error(CSV_ERR_READ);
-        }
-        if (fieldStarted || afterQuote || field.length || row.length) {
-            pushRow();
-        }
-        return rows;
-    }
-
-    function parseCsvTable(text) {
-        var source = String(text == null ? '' : text);
-        if (source.charCodeAt(0) === 0xFEFF) {
-            source = source.slice(1);
-        }
-        if (!source.trim()) {
-            throw new Error(CSV_ERR_EMPTY);
-        }
-        var records = parseCsvRecords(source);
-        if (!records.length) {
-            throw new Error(CSV_ERR_EMPTY);
-        }
-        var columns = records[0].map(function (cell) {
-            return cell == null ? '' : String(cell);
-        });
-        var headerText = columns.some(function (cell) {
-            return String(cell).trim();
-        });
-        if (!headerText) {
-            throw new Error(CSV_ERR_HEADER);
-        }
-        if (columns.length > CSV_MAX_COLUMNS) {
-            throw new Error(CSV_ERR_COLUMNS);
-        }
-        var body = records.slice(1);
-        if (body.length > CSV_MAX_BODY_ROWS) {
-            throw new Error(CSV_ERR_ROWS);
-        }
-        var width = columns.length;
-        var rows = body.map(function (record) {
-            var cells = record.map(function (cell) {
-                return cell == null ? '' : String(cell);
-            });
-            if (cells.length < width) {
-                while (cells.length < width) {
-                    cells.push('');
-                }
-            } else if (cells.length > width) {
-                cells = cells.slice(0, width);
-            }
-            return cells;
-        });
-        return { columns: columns, rows: rows };
-    }
-
-    function readCsvStore(node) {
-        var store = node && node.querySelector('script.report-csv-store');
-        if (!store || !store.textContent) {
-            return null;
-        }
-        try {
-            return JSON.parse(store.textContent);
-        } catch (err) {
-            return null;
-        }
-    }
-
-    function writeCsvStore(node, block) {
-        var store = node.querySelector('script.report-csv-store');
-        if (!store) {
-            store = document.createElement('script');
-            store.type = 'application/json';
-            store.className = 'report-csv-store no-print';
-            node.appendChild(store);
-        }
-        store.textContent = JSON.stringify({
-            title: block.title || CSV_TITLE_FALLBACK,
-            coloring: block.coloring === 'ppp' ? 'ppp' : 'plain',
-            columns: block.columns || [],
-            rows: block.rows || []
-        });
-    }
-
-    function isCsvLabelHeader(text) {
-        var token = String(text == null ? '' : text).trim().toLowerCase();
-        return token === 'play type' || token === 'play-type';
-    }
-
-    function csvDefaultW(coloring) {
-        return coloring === 'ppp' ? 6 : 12;
-    }
-
-    function csvHostWidth(item) {
-        var host = item && item.querySelector('.report-table-host');
-        var width = host ? host.clientWidth : 0;
-        if (width < 1 && item) {
-            width = item.clientWidth || 0;
-        }
-        return Math.floor(width);
-    }
-
-    function readCsvFloors(table) {
-        try {
-            var parsed = JSON.parse(table.getAttribute('data-csv-floors') || '[]');
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (err) {
-            return [];
-        }
-    }
-
-    function measureCsvFloors(table) {
-        var heads = table.querySelectorAll('thead th');
-        var rows = table.querySelectorAll('tbody tr');
-        var floors = [];
-        for (var i = 0; i < heads.length; i++) {
-            var label = heads[i].getAttribute('data-csv-label') === '1';
-            var max = pairTextWidth(heads[i]);
-            if (!label) {
-                for (var r = 0; r < rows.length; r++) {
-                    var cell = rows[r].children[i];
-                    if (!cell) {
-                        continue;
-                    }
-                    var width = pairTextWidth(cell);
-                    if (width > max) {
-                        max = width;
-                    }
-                }
-            }
-            floors.push(Math.max(1, max));
-        }
-        table.setAttribute('data-csv-floors', JSON.stringify(floors));
-        return floors;
-    }
-
-    function applyCsvColGroup(table, widths, hostW) {
-        var keys = [];
-        var map = {};
-        widths.forEach(function (width, index) {
-            var key = String(index);
-            keys.push(key);
-            map[key] = width;
-        });
-        applyPairColGroup(table, keys, map, hostW);
-    }
-
-    function applyCsvColumns(item, remeasure) {
-        var table = item && item.querySelector('.report-js-table[data-csv-coloring]');
-        if (!table) {
-            return;
-        }
-        var hostW = csvHostWidth(item);
-        if (hostW < 1) {
-            return;
-        }
-        var heads = table.querySelectorAll('thead th');
-        var count = heads.length;
-        if (!count) {
-            return;
-        }
-        if (remeasure || !readCsvFloors(table).length) {
-            measureCsvFloors(table);
-        }
-        var floors = readCsvFloors(table);
-        if (floors.length !== count) {
-            floors = [];
-            for (var i = 0; i < count; i++) {
-                floors.push(1);
-            }
-        }
-        var labels = [];
-        for (var c = 0; c < count; c++) {
-            if (heads[c].getAttribute('data-csv-label') === '1') {
-                labels.push(c);
-            }
-        }
-        var widths = [];
-        if (!labels.length) {
-            var each = Math.floor(hostW / count);
-            var extra = hostW - each * count;
-            for (var n = 0; n < count; n++) {
-                widths.push(Math.max(1, each + (n < extra ? 1 : 0)));
-            }
-            applyCsvColGroup(table, widths, hostW);
-            return;
-        }
-        var statSum = 0;
-        var labelSum = 0;
-        for (var k = 0; k < count; k++) {
-            if (labels.indexOf(k) === -1) {
-                statSum += floors[k];
-            } else {
-                labelSum += floors[k];
-            }
-        }
-        if (statSum + labelSum > hostW + 1) {
-            for (var a = 0; a < count; a++) {
-                widths.push(floors[a]);
-            }
-        } else {
-            var leftover = hostW - statSum - labelSum;
-            var share = Math.floor(leftover / labels.length);
-            var rem = leftover - share * labels.length;
-            var seen = 0;
-            for (var b = 0; b < count; b++) {
-                if (labels.indexOf(b) === -1) {
-                    widths.push(floors[b]);
-                } else {
-                    widths.push(floors[b] + share + (seen < rem ? 1 : 0));
-                    seen += 1;
-                }
-            }
-        }
-        applyCsvColGroup(table, widths, hostW);
-    }
-
-    function paintCsvTable(host, block) {
-        if (!host) {
-            return;
-        }
-        host.innerHTML = '';
-        var columns = block.columns || [];
-        var rows = block.rows || [];
-        if (!columns.length) {
-            host.textContent = '—';
-            host.className = 'report-table-host';
-            return;
-        }
-        var coloring = block.coloring === 'ppp';
-        var pppIndex = {};
-        if (coloring) {
-            columns.forEach(function (col, index) {
-                if (String(col == null ? '' : col).trim() === 'PPP') {
-                    pppIndex[index] = 1;
-                }
-            });
-        }
-        var table = document.createElement('table');
-        table.className = 'text-nowrap report-js-table';
-        table.setAttribute('data-csv-coloring', coloring ? 'ppp' : 'plain');
-        var thead = document.createElement('thead');
-        var headRow = document.createElement('tr');
-        var labeling = coloring;
-        columns.forEach(function (col) {
-            var th = document.createElement('th');
-            th.textContent = col == null ? '' : String(col);
-            if (labeling && isCsvLabelHeader(col)) {
-                th.setAttribute('data-csv-label', '1');
-            }
-            headRow.appendChild(th);
-        });
-        thead.appendChild(headRow);
-        table.appendChild(thead);
-        var tbody = document.createElement('tbody');
-        rows.forEach(function (record) {
-            var tr = document.createElement('tr');
-            columns.forEach(function (_col, index) {
-                var td = document.createElement('td');
-                var text = record && record[index] != null ? String(record[index]) : '';
-                td.textContent = text;
-                if (labeling && isCsvLabelHeader(columns[index])) {
-                    td.className = 'report-lineup-name';
-                    td.style.fontWeight = '700';
-                }
-                if (pppIndex[index]) {
-                    var tone = pppCellStyle(text);
-                    if (tone) {
-                        td.style.color = tone.color;
-                        td.style.fontWeight = tone.fontWeight;
-                    }
-                }
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        host.appendChild(table);
-        host.className = 'report-table-host';
-    }
-
-    function paintTable(host, tableKey, item) {
-        if (!host) {
-            return;
-        }
-        var parsed = parseSplit(tablePayload()[tableKey]);
-        host.innerHTML = '';
-        if (!parsed || !parsed.rows.length) {
-            host.textContent = '—';
-            host.className = 'report-table-host';
-            return;
-        }
-        var columns = parsed.columns;
-        var rows = parsed.rows;
-        var winners = winnerIndex(rows, columns, tableKey);
-        var grouped = groupedHeader(columns, tableKey);
-        var edgeCols = {};
-        if (grouped) {
-            grouped.top.forEach(function (cell) {
-                if (!cell.edge) {
-                    return;
-                }
-                var cols = cell.cols || [];
-                var last = cols[cols.length - 1];
-                if (last) {
-                    edgeCols[last] = true;
-                }
-            });
-        }
-        var table = document.createElement('table');
-        table.className = isLineupTable(tableKey)
-            ? 'text-nowrap report-js-table report-lineup-table'
-            : 'text-nowrap report-js-table';
-        var thead = document.createElement('thead');
-        if (grouped) {
-            var tr1 = document.createElement('tr');
-            grouped.top.forEach(function (cell) {
-                var th = document.createElement('th');
-                th.textContent = cell.text;
-                if (cell.span > 1) {
-                    th.colSpan = cell.span;
-                }
-                if (cell.rowSpan) {
-                    th.rowSpan = cell.rowSpan;
-                }
-                if (cell.col) {
-                    th.setAttribute('data-col', cell.col);
-                }
-                tr1.appendChild(th);
-            });
-            thead.appendChild(tr1);
-            if (grouped.sub.length) {
-                var tr2 = document.createElement('tr');
-                grouped.sub.forEach(function (item) {
-                    var th = document.createElement('th');
-                    th.textContent = item.label;
-                    if (item.col) {
-                        th.setAttribute('data-col', item.col);
-                    }
-                    tr2.appendChild(th);
-                });
-                thead.appendChild(tr2);
-            }
-        } else {
-            var tr = document.createElement('tr');
-            columns.forEach(function (col) {
-                var th = document.createElement('th');
-                th.textContent = headerLabel(col);
-                th.setAttribute('data-col', col);
-                tr.appendChild(th);
-            });
-            thead.appendChild(tr);
-        }
-        table.appendChild(thead);
-        var tbody = document.createElement('tbody');
-        rows.forEach(function (row, rIdx) {
-            var tr = document.createElement('tr');
-            var dnp = String(row.Min || '') === 'DNP';
-            columns.forEach(function (col, cIdx) {
-                if (dnp && cIdx > columns.indexOf('Min') && columns.indexOf('Min') !== -1) {
-                    return;
-                }
-                var td = document.createElement('td');
-                var text = formatCell(col, row[col]);
-                td.textContent = text;
-                if (col === 'Player' || col === 'Lineup' || col === 'Lineups') {
-                    td.style.fontWeight = '700';
-                }
-                if (col === 'Lineup' || col === 'Lineups') {
-                    td.className = 'report-lineup-name';
-                }
-                if (col === '+/-') {
-                    var st = plusMinusStyle(row[col]);
-                    td.style.color = st.color;
-                    td.style.fontWeight = st.fontWeight;
-                }
-                if (winners[col] && winners[col][rIdx]) {
-                    td.style.color = '#0077b6';
-                    td.style.fontWeight = '700';
-                }
-                if (edgeCols[col]) {
-                    td.classList.add('braves-group-end');
-                }
-                if (cIdx === 0 && (col === 'Team' || tableKey === 't_df' || tableKey === 't_adv_df' || tableKey === 'adv_df' || tableKey === 'k_df' || tableKey === 'score_group') && rows.length === 2) {
-                    td.style.borderLeft = '3.5px solid ' + teamStripeColor(row, rIdx);
-                }
-                if (dnp && col === 'Min') {
-                    td.colSpan = Math.max(1, columns.length - cIdx);
-                    td.style.fontWeight = '700';
-                    td.style.color = '#94a3b8';
-                } else {
-                    td.setAttribute('data-col', col);
-                }
-                tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        table.setAttribute('data-cols', JSON.stringify(columns));
-        host.appendChild(table);
-        host.className = 'report-table-host';
-        if (pairForKey(tableKey)) {
-            schedulePairWidths(tableKey);
-        }
-    }
-
-    function tableHeading(tableKey) {
-        var match = (tablePayload().match) || {};
-        var name = '';
-        var kind = '';
-        var side = '';
-        if (tableKey === 'p_df_home' || tableKey === 'lineup_home') {
-            name = match.home_team || 'Home';
-            kind = tableKey === 'p_df_home' ? 'Player Stats' : 'Lineup Stats';
-            side = 'home';
-        } else if (tableKey === 'p_df_away' || tableKey === 'lineup_away') {
-            name = match.away_team || 'Away';
-            kind = tableKey === 'p_df_away' ? 'Player Stats' : 'Lineup Stats';
-            side = 'away';
-        } else {
-            return TABLE_TITLES[tableKey] || '';
-        }
-        return { name: name, kind: kind, side: side };
-    }
-
-    function fillBlockTitle(titleEl, tableKey) {
-        if (!titleEl) {
-            return;
-        }
-        titleEl.textContent = '';
-        var heading = tableHeading(tableKey);
-        if (typeof heading === 'string') {
-            titleEl.textContent = heading;
-            return;
-        }
-        var dot = document.createElement('span');
-        dot.className = 'report-block-title-dot';
-        dot.style.backgroundColor = heading.side === 'home' ? '#00b4d8' : '#94a3b8';
-        titleEl.appendChild(dot);
-        titleEl.appendChild(document.createTextNode(heading.name + ' | ' + heading.kind));
-    }
-
     function parseLayoutJson(id) {
         var el = document.getElementById(id);
         if (!el || !el.textContent) {
@@ -1741,21 +310,6 @@
         }
     }
 
-    function toggleTableMenu() {
-        var picker = document.querySelector('.report-table-picker');
-        if (!picker) {
-            return;
-        }
-        var open = !picker.classList.contains('is-open');
-        picker.classList.toggle('is-open', open);
-        var btn = document.getElementById('report-add-table');
-        if (btn) {
-            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-        }
-    }
-
-    var activeNoteEl = null;
-
     function showNoteToolbar(show) {
         var tb = document.getElementById('report-note-toolbar');
         if (tb) {
@@ -1769,8 +323,7 @@
         var btn = document.querySelector('[data-rte-toggle-menu="' + mode + '"]');
         if (!menu) return;
         var shouldOpen = (open !== undefined) ? open : menu.hasAttribute('hidden');
-        
-        // Close other color menus first
+
         ['color', 'highlight'].forEach(function (m) {
             if (m !== mode) {
                 var otherMenu = document.getElementById('report-rte-' + m + '-menu');
@@ -1838,6 +391,17 @@
         persistLocal(readLayoutFromDom());
     }
 
+    function notePaperMaxH(note) {
+        var item = note.closest('.grid-stack-item');
+        var gridEl = note.closest('.report-grid');
+        var grid = gridEl && gridEl.gridstack;
+        if (!item || !grid) {
+            return 1;
+        }
+        var node = item.gridstackNode || {};
+        return Math.max(1, paperMaxRows(grid) - (node.y || 0));
+    }
+
     function resizeNote(note) {
         var item = note.closest('.grid-stack-item');
         var gridEl = note.closest('.report-grid');
@@ -1858,7 +422,7 @@
 
         var cell = cellPx(grid);
         var needed = Math.max(1, Math.ceil((contentHeight + 12) / cell));
-        var maxH = Math.max(1, paperMaxRows(grid) - (node.y || 0));
+        var maxH = notePaperMaxH(note);
         if (needed > maxH) {
             return false;
         }
@@ -1879,36 +443,6 @@
         }
         markPaperOverflow();
         return true;
-    }
-
-    function notePaperMaxH(note) {
-        var item = note.closest('.grid-stack-item');
-        var gridEl = note.closest('.report-grid');
-        var grid = gridEl && gridEl.gridstack;
-        if (!item || !grid) {
-            return 1;
-        }
-        var node = item.gridstackNode || {};
-        return Math.max(1, paperMaxRows(grid) - (node.y || 0));
-    }
-
-    function stripReportInvisibleChars(text) {
-        return String(text || '').replace(REPORT_INVISIBLE_CHARS, '');
-    }
-
-    function stripReportInvisibleIn(root) {
-        if (!root || typeof document.createTreeWalker !== 'function') {
-            return;
-        }
-        var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-        var node = walker.nextNode();
-        while (node) {
-            var cleaned = stripReportInvisibleChars(node.nodeValue);
-            if (cleaned !== node.nodeValue) {
-                node.nodeValue = cleaned;
-            }
-            node = walker.nextNode();
-        }
     }
 
     function bindTextBlocks(root) {
@@ -1939,9 +473,8 @@
                         return;
                     }
                     if (item && grid) {
-                        var node = item.gridstackNode || {};
                         var needed = parseInt(item.getAttribute('data-min-h') || '1', 10);
-                        var maxH = Math.max(1, paperMaxRows(grid) - (node.y || 0));
+                        var maxH = notePaperMaxH(note);
                         if (needed >= maxH) {
                             event.preventDefault();
                             return;
@@ -1965,7 +498,9 @@
 
             note.addEventListener('paste', function () {
                 requestAnimationFrame(function () {
-                    stripReportInvisibleIn(note);
+                    if (R.stripReportInvisibleIn) {
+                        R.stripReportInvisibleIn(note);
+                    }
                     resizeNote(note);
                 });
             });
@@ -2009,7 +544,7 @@
                     title.blur();
                 } else if (event.key === 'Escape') {
                     event.preventDefault();
-                    title.textContent = title.dataset.prevTitle || CSV_TITLE_FALLBACK;
+                    title.textContent = title.dataset.prevTitle || R.CSV_TITLE_FALLBACK;
                     title.blur();
                 }
             });
@@ -2027,29 +562,18 @@
             title.addEventListener('blur', function () {
                 var next = (title.textContent || '').replace(/[\r\n]+/g, ' ').trim();
                 if (!next) {
-                    next = (title.dataset.prevTitle || '').trim() || CSV_TITLE_FALLBACK;
+                    next = (title.dataset.prevTitle || '').trim() || R.CSV_TITLE_FALLBACK;
                 }
                 title.textContent = next;
                 var item = title.closest('.grid-stack-item');
-                if (item) {
-                    var stored = readCsvStore(item) || {};
+                if (item && R.readCsvStore && R.writeCsvStore) {
+                    var stored = R.readCsvStore(item) || {};
                     stored.title = next;
-                    writeCsvStore(item, stored);
+                    R.writeCsvStore(item, stored);
                 }
                 persistLocal(readLayoutFromDom());
             });
         });
-    }
-
-    function makePageDeleteButton(index) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'report-page-delete no-print';
-        btn.setAttribute('data-delete-page', String(index));
-        btn.setAttribute('aria-label', 'Delete page');
-        btn.title = 'Delete page';
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>';
-        return btn;
     }
 
     function initScrollSpy() {
@@ -2131,7 +655,7 @@
             });
             grid.on('resizestart', function (event, itemEl) {
                 var item = itemEl && itemEl.getAttribute ? itemEl : null;
-                if (!item || !isReportTable(item.getAttribute('data-block-type'))) {
+                if (!item || !R.isReportTable(item.getAttribute('data-block-type'))) {
                     return;
                 }
                 var node = item.gridstackNode || {};
@@ -2148,7 +672,7 @@
                 if (!item || item.getAttribute('data-block-type') !== 'csv_table') {
                     return;
                 }
-                applyCsvColumns(item, false);
+                R.applyCsvColumns(item, false);
             });
             grid.on('resizestop', function (event, itemEl) {
                 if (tableResizeLock) {
@@ -2159,13 +683,13 @@
                 if (item && item.getAttribute('data-block-type') === 'image' && gs) {
                     snapImageAspect(gs, item);
                 }
-                if (item && pairForKey(item.getAttribute('data-table-key'))) {
+                if (item && R.pairForKey(item.getAttribute('data-table-key'))) {
                     item.setAttribute('data-resize-commit', '1');
-                    schedulePairWidths(item.getAttribute('data-table-key'));
+                    R.schedulePairWidths(item.getAttribute('data-table-key'));
                     clampItemToPaper(grid, item);
                     return;
                 }
-                if (item && isReportTable(item.getAttribute('data-block-type'))) {
+                if (item && R.isReportTable(item.getAttribute('data-block-type'))) {
                     commitTableResize(grid, item);
                     return;
                 }
@@ -2202,78 +726,78 @@
             }
             hydrating = true;
             try {
-            var layout = parseLayoutJson('report-layout-json') || { pages: [] };
-            var page = layoutPageForPaper(layout, paper);
-            if (!(page.blocks || []).length) {
-                var idx = Array.prototype.indexOf.call(
-                    document.querySelectorAll('#report-papers .report-paper'),
-                    paper
-                );
-                var fallback = (layout.pages && layout.pages[idx])
-                    || layoutPageForPaper(parseLayoutJson('report-default-layout-json') || { pages: [] }, paper);
-                if (fallback && (fallback.blocks || []).length) {
-                    page = fallback;
-                }
-            }
-            var grid = initOneGrid(paper);
-            var gridEl = paper.querySelector('.report-grid');
-            if (grid) {
-                grid.removeAll();
-            }
-            (page.blocks || []).forEach(function (block) {
-                var node = widgetFromBlock(block);
-                if (!node) {
-                    return;
-                }
-                if (grid) {
-                    var widgetOpts = {
-                        id: block.id,
-                        x: block.x || 0,
-                        y: block.y || 0,
-                        w: block.w || 6,
-                        h: block.h || 3
-                    };
-                    if (locksResize(block.type)) {
-                        widgetOpts.noResize = true;
+                var layout = parseLayoutJson('report-layout-json') || { pages: [] };
+                var page = layoutPageForPaper(layout, paper);
+                if (!(page.blocks || []).length) {
+                    var idx = Array.prototype.indexOf.call(
+                        document.querySelectorAll('#report-papers .report-paper'),
+                        paper
+                    );
+                    var fallback = (layout.pages && layout.pages[idx])
+                        || layoutPageForPaper(parseLayoutJson('report-default-layout-json') || { pages: [] }, paper);
+                    if (fallback && (fallback.blocks || []).length) {
+                        page = fallback;
                     }
-                    grid.addWidget(node, widgetOpts);
-                } else if (gridEl) {
-                    gridEl.appendChild(node);
                 }
-            });
-            paper.setAttribute('data-hydrated', '1');
-            bindTextBlocks(paper);
-            bindCsvTitles(paper);
-            return paintRotationBlocks(paper).then(function () {
-                return paintShotChartBlocks(paper);
-            }).then(function () {
-                var originY = snapshotNodeYs(grid);
-                if (grid && grid.el) {
-                    grid.el._splashboardOriginY = originY;
-                }
-                fitAllTableBlocks();
-                fitAllRotationBlocks();
-                fitAllShotChartBlocks();
+                var grid = initOneGrid(paper);
+                var gridEl = paper.querySelector('.report-grid');
                 if (grid) {
-                    resolveOverlaps(grid, originY);
+                    grid.removeAll();
                 }
-                if (opts.compact && grid) {
-                    compactGrid(grid);
-                    syncPageOneSideNote(grid);
-                }
-            }).then(function () {
-                hydrating = false;
-                window.setTimeout(function () {
-                    clampGridToPaper(grid);
+                (page.blocks || []).forEach(function (block) {
+                    var node = widgetFromBlock(block);
+                    if (!node) {
+                        return;
+                    }
+                    if (grid) {
+                        var widgetOpts = {
+                            id: block.id,
+                            x: block.x || 0,
+                            y: block.y || 0,
+                            w: block.w || 6,
+                            h: block.h || 3
+                        };
+                        if (R.locksResize(block.type)) {
+                            widgetOpts.noResize = true;
+                        }
+                        grid.addWidget(node, widgetOpts);
+                    } else if (gridEl) {
+                        gridEl.appendChild(node);
+                    }
+                });
+                paper.setAttribute('data-hydrated', '1');
+                bindTextBlocks(paper);
+                bindCsvTitles(paper);
+                return R.paintRotationBlocks(paper).then(function () {
+                    return R.paintShotChartBlocks(paper);
+                }).then(function () {
+                    var originY = snapshotNodeYs(grid);
                     if (grid && grid.el) {
-                        resolveOverlaps(grid, grid.el._splashboardOriginY || {});
+                        grid.el._splashboardOriginY = originY;
                     }
-                    markPaperOverflow();
-                    syncPageListSticky();
-                }, 300);
-            }, function () {
-                hydrating = false;
-            });
+                    fitAllTableBlocks();
+                    fitAllRotationBlocks();
+                    fitAllShotChartBlocks();
+                    if (grid) {
+                        resolveOverlaps(grid, originY);
+                    }
+                    if (opts.compact && grid) {
+                        compactGrid(grid);
+                        syncPageOneSideNote(grid);
+                    }
+                }).then(function () {
+                    hydrating = false;
+                    window.setTimeout(function () {
+                        clampGridToPaper(grid);
+                        if (grid && grid.el) {
+                            resolveOverlaps(grid, grid.el._splashboardOriginY || {});
+                        }
+                        markPaperOverflow();
+                        syncPageListSticky();
+                    }, 300);
+                }, function () {
+                    hydrating = false;
+                });
             } catch (err) {
                 hydrating = false;
                 throw err;
@@ -2304,29 +828,8 @@
         hydratePage(index);
     }
 
-    function teamStripeColor(row, rIdx) {
-        var match = tablePayload().match || {};
-        var away = match.away_team || '';
-        var home = match.home_team || '';
-        var name = row && row.Team != null ? String(row.Team) : '';
-        if (away && home && away !== home) {
-            if (name === home) {
-                return '#0077b6';
-            }
-            if (name === away) {
-                return '#94a3b8';
-            }
-        }
-        return rIdx === 0 ? '#0077b6' : '#94a3b8';
-    }
-
-    var STACK_PAIRS = [
-        ['p_df_home', 'p_df_away'],
-        ['lineup_home', 'lineup_away']
-    ];
-
     function swapPairYs(blocks) {
-        STACK_PAIRS.forEach(function (pair) {
+        (R.STACK_PAIRS || []).forEach(function (pair) {
             var homes = blocks.filter(function (block) {
                 return block && block.table_key === pair[0];
             });
@@ -2377,7 +880,7 @@
         applyReportTabViewport();
         if (workspace.dataset.booted === '1') {
             restoreVisiblePage();
-            refreshPairWidthsIfStale();
+            R.refreshPairWidthsIfStale();
             return;
         }
         workspace.dataset.booted = '1';
@@ -2411,7 +914,7 @@
         node.setAttribute('data-gs-id', block.id);
         node.setAttribute('gs-id', block.id);
         node.setAttribute('data-block-type', block.type || '');
-        if (locksResize(block.type)) {
+        if (R.locksResize(block.type)) {
             node.setAttribute('gs-no-resize', 'true');
         }
         node.setAttribute('data-table-key', block.table_key || '');
@@ -2449,9 +952,9 @@
                 title.setAttribute('contenteditable', 'true');
                 title.setAttribute('spellcheck', 'false');
                 title.setAttribute('aria-label', 'Table title');
-                title.textContent = block.title || CSV_TITLE_FALLBACK;
+                title.textContent = block.title || R.CSV_TITLE_FALLBACK;
             } else {
-                fillBlockTitle(title, block.table_key);
+                R.fillBlockTitle(title, block.table_key);
             }
             row.appendChild(handle);
             row.appendChild(title);
@@ -2482,25 +985,25 @@
                 body.className += ' report-image-placeholder';
             }
         } else if (isRotation) {
-            var host = document.createElement('div');
-            host.className = 'report-rotation-host';
-            body.appendChild(host);
+            var rotHost = document.createElement('div');
+            rotHost.className = 'report-rotation-host';
+            body.appendChild(rotHost);
         } else if (isShotChart) {
             var shotHost = document.createElement('div');
             shotHost.className = 'report-shot-chart-host';
             body.appendChild(shotHost);
         } else if (isBuiltin) {
-            var host = document.createElement('div');
-            host.className = 'report-table-host';
-            host.setAttribute('data-table-host', block.table_key || '');
-            body.appendChild(host);
-            paintTable(host, block.table_key, node);
+            var tblHost = document.createElement('div');
+            tblHost.className = 'report-table-host';
+            tblHost.setAttribute('data-table-host', block.table_key || '');
+            body.appendChild(tblHost);
+            R.paintTable(tblHost, block.table_key, node);
         } else if (isCsv) {
             var csvHost = document.createElement('div');
             csvHost.className = 'report-table-host';
             body.appendChild(csvHost);
-            paintCsvTable(csvHost, block);
-            writeCsvStore(node, block);
+            R.paintCsvTable(csvHost, block);
+            R.writeCsvStore(node, block);
         }
         card.appendChild(body);
         node.appendChild(card);
@@ -2616,7 +1119,7 @@
                 maxW: GRID_COLUMNS - x,
                 maxH: h
             };
-            if (isReportTable(blockType)) {
+            if (R.isReportTable(blockType)) {
                 oversizedBox.noResize = true;
             }
             grid.update(item, oversizedBox);
@@ -2636,7 +1139,7 @@
             maxW: GRID_COLUMNS - x,
             maxH: maxRows - y
         };
-        if (isReportTable(blockType)) {
+        if (R.isReportTable(blockType)) {
             fittedBox.noResize = true;
         }
         grid.update(item, fittedBox);
@@ -2647,7 +1150,7 @@
             return;
         }
         grid.el.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            if (isReportTable(item.getAttribute('data-block-type')) && item.gridstackNode) {
+            if (R.isReportTable(item.getAttribute('data-block-type')) && item.gridstackNode) {
                 item.setAttribute('data-min-h', String(item.gridstackNode.h || 1));
             }
             clampItemToPaper(grid, item);
@@ -2716,12 +1219,12 @@
     function measureBlockH(block, grid, node) {
         var fallback = block.h || 3;
         if (grid && block.type === 'rotation') {
-            return Math.max(1, Math.ceil((rotationNativeHeightPx() * ROTATION_FONT_SCALE + 8) / cellPx(grid)));
+            return Math.max(1, Math.ceil((R.rotationNativeHeightPx() * R.ROTATION_FONT_SCALE + 8) / cellPx(grid)));
         }
         if (grid && block.type === 'shot_chart') {
-            return Math.max(1, Math.ceil((shotChartEstimatePx(grid) + 8) / cellPx(grid)));
+            return Math.max(1, Math.ceil((R.shotChartEstimatePx(grid) + 8) / cellPx(grid)));
         }
-        if (!grid || !isReportTable(block.type)) {
+        if (!grid || !R.isReportTable(block.type)) {
             return fallback;
         }
         var host = grid.el;
@@ -2735,7 +1238,7 @@
         node.style.width = Math.max(1, Math.round(cellW * blockW)) + 'px';
         host.appendChild(node);
         if (block.type === 'csv_table') {
-            applyCsvColumns(node, true);
+            R.applyCsvColumns(node, true);
         }
         var h = tableHugH({ opts: grid.opts, getCellHeight: grid.getCellHeight }, node);
         host.removeChild(node);
@@ -2795,19 +1298,19 @@
         if (!grid || !grid.el) {
             return;
         }
-        if (!pairLayoutLock) {
+        if (!state.pairLayoutLock) {
             var seenPairs = {};
             grid.el.querySelectorAll('.report-table-host[data-table-host]').forEach(function (host) {
-                var pair = pairForKey(host.getAttribute('data-table-host'));
+                var pair = R.pairForKey(host.getAttribute('data-table-host'));
                 if (!pair || seenPairs[pair[0]]) {
                     return;
                 }
                 seenPairs[pair[0]] = 1;
-                syncPairColumnWidths(pair);
+                R.syncPairColumnWidths(pair);
             });
         }
         grid.el.querySelectorAll('.grid-stack-item[data-block-type="csv_table"]').forEach(function (item) {
-            applyCsvColumns(item, true);
+            R.applyCsvColumns(item, true);
         });
         var updates = [];
         var grew = false;
@@ -2833,10 +1336,8 @@
         }
     }
 
-    var tableResizeLock = false;
-
     function commitTableResize(grid, item) {
-        if (tableResizeLock || !grid || !item || !isReportTable(item.getAttribute('data-block-type'))) {
+        if (tableResizeLock || !grid || !item || !R.isReportTable(item.getAttribute('data-block-type'))) {
             return;
         }
         tableResizeLock = true;
@@ -2848,7 +1349,7 @@
             item.removeAttribute('data-resize-commit');
             item.removeAttribute('data-resize-start-h');
             if (item.getAttribute('data-block-type') === 'csv_table') {
-                applyCsvColumns(item, true);
+                R.applyCsvColumns(item, true);
             }
             var origin = snapshotNodeYs(grid);
             var h = tableHugH(grid, item);
@@ -2884,7 +1385,7 @@
             var frame = item.querySelector('.report-rotation-scale');
             var plotH = frame
                 ? frame.offsetHeight
-                : Math.round(rotationNativeHeightPx() * ROTATION_FONT_SCALE);
+                : Math.round(R.rotationNativeHeightPx() * R.ROTATION_FONT_SCALE);
             var h = Math.max(1, Math.ceil((plotH + 8) / cell));
             if (h !== currentH) {
                 updates.push({ item: item, h: h });
@@ -2913,7 +1414,7 @@
             var node = item.gridstackNode || {};
             var currentH = node.h || parseInt(item.getAttribute('gs-h') || item.getAttribute('data-h') || '3', 10);
             var host = item.querySelector('.report-shot-chart-host');
-            var contentH = host && host.offsetHeight ? host.offsetHeight : shotChartEstimatePx(grid);
+            var contentH = host && host.offsetHeight ? host.offsetHeight : R.shotChartEstimatePx(grid);
             var h = Math.max(1, Math.ceil((contentH + tableBodyPadY(item) + gridContentInsetY(grid)) / cell));
             item.setAttribute('data-min-h', String(h));
             item.setAttribute('data-min-w', String(node.w || GRID_COLUMNS));
@@ -3068,93 +1569,10 @@
         noteItem.setAttribute('data-h', String(targetH));
     }
 
-    function compactAllGrids() {
-        document.querySelectorAll('#report-papers .report-grid').forEach(function (el) {
-            if (el.gridstack) {
-                compactGrid(el.gridstack);
-            }
-        });
-    }
-
     function columnPx(grid) {
         var el = grid && grid.el;
         var width = el ? el.clientWidth : 0;
         return (width || 1) / GRID_COLUMNS;
-    }
-
-    function measureTableMaxContentWidth(item) {
-        var table = item.querySelector('.report-js-table');
-        if (!table) {
-            return 0;
-        }
-        var clone = table.cloneNode(true);
-        var cg = clone.querySelector('colgroup');
-        if (cg) {
-            cg.remove();
-        }
-        clone.style.cssText = 'position:absolute;left:-10000px;top:0;width:auto;max-width:none;table-layout:auto;visibility:hidden;';
-        document.body.appendChild(clone);
-        var width = clone.scrollWidth || clone.offsetWidth || 0;
-        document.body.removeChild(clone);
-        return width;
-    }
-
-    function contentFloor(grid, item) {
-        var type = item.getAttribute('data-block-type');
-        var cell = cellPx(grid);
-        var col = columnPx(grid);
-        var minH = 1;
-        var minW = 1;
-        if (isReportTable(type)) {
-            minH = tableHugH(grid, item);
-            var nodeX = (item.gridstackNode && item.gridstackNode.x) || 0;
-            minW = Math.max(1, Math.min(
-                GRID_COLUMNS - nodeX,
-                GRID_COLUMNS,
-                Math.ceil(measureTableMaxContentWidth(item) / Math.max(col, 1))
-            ));
-        } else if (type === 'text') {
-            minH = Math.max(1, Math.ceil((measureContentPx(item) + 12) / cell));
-            minW = 1;
-        } else if (type === 'image') {
-            minH = 1;
-            minW = 1;
-        } else if (type === 'rotation') {
-            minH = Math.max(1, Math.ceil((rotationNativeHeightPx() * ROTATION_FONT_SCALE + 8) / cell));
-            minW = GRID_COLUMNS;
-        } else if (type === 'shot_chart') {
-            minH = Math.max(1, Math.ceil((shotChartEstimatePx(grid) + 8) / cell));
-            minW = GRID_COLUMNS;
-        }
-        return { minW: minW, minH: minH };
-    }
-
-    function applyContentFloors(grid) {
-        if (!grid || !grid.el) {
-            return;
-        }
-        grid.el.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            var node = item.gridstackNode || {};
-            var type = item.getAttribute('data-block-type');
-            var minH = node.h || 1;
-            var minW = node.w || 1;
-            if (type === 'text') {
-                minH = Math.max(1, minH);
-                minW = 1;
-            } else if (type === 'image') {
-                minH = 1;
-                minW = 1;
-            } else if (isReportTable(type)) {
-                minH = Math.max(1, node.h || 1);
-                minW = Math.max(1, node.w || 1);
-            } else if (type === 'rotation' || type === 'shot_chart') {
-                minH = Math.max(1, node.h || 1);
-                minW = Math.max(1, node.w || GRID_COLUMNS);
-                grid.update(item, { minW: minW, minH: minH, noResize: true });
-                return;
-            }
-            grid.update(item, { minW: minW, minH: minH });
-        });
     }
 
     function paperHasOverflow(paper) {
@@ -3216,16 +1634,6 @@
         list.style.top = (8 + offset) + 'px';
     }
 
-    function bindPageListSticky() {
-        var toolbar = document.getElementById('report-toolbar');
-        var workspace = document.getElementById('report-workspace');
-        if (!toolbar || !workspace) {
-            return;
-        }
-        workspace.dataset.stickyBound = '1';
-        syncPageListSticky();
-    }
-
     function imageAspect(item) {
         var raw = parseFloat(item.getAttribute('data-aspect') || '');
         if (raw && isFinite(raw) && raw > 0) {
@@ -3237,8 +1645,6 @@
         }
         return 1;
     }
-
-    var imageSnapLock = false;
 
     function snapImageAspect(grid, item) {
         if (!grid || !item || imageSnapLock) {
@@ -3298,1216 +1704,6 @@
             };
             img.src = src;
         });
-    }
-
-    var reportFontBinary = null;
-    var reportFontLoading = null;
-
-    function arrayBufferToBase64(buffer) {
-        var binary = '';
-        var bytes = new Uint8Array(buffer);
-        var len = bytes.byteLength;
-        for (var i = 0; i < len; i += 0x8000) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 0x8000, len)));
-        }
-        return window.btoa(binary);
-    }
-
-    function loadReportFont() {
-        if (reportFontBinary) {
-            return Promise.resolve(reportFontBinary);
-        }
-        if (reportFontLoading) {
-            return reportFontLoading;
-        }
-        reportFontLoading = fetch(reportFontUrl()).then(function (res) {
-            if (!res.ok) {
-                throw new Error('font ' + res.status);
-            }
-            return res.arrayBuffer();
-        }).then(function (buf) {
-            reportFontBinary = arrayBufferToBase64(buf);
-            return reportFontBinary;
-        }).catch(function (err) {
-            reportFontLoading = null;
-            throw err;
-        });
-        return reportFontLoading;
-    }
-
-    var pdfFontOk = false;
-
-    function registerReportFont(pdf) {
-        pdfFontOk = false;
-        if (!reportFontBinary) {
-            pdf.setFont('helvetica', 'normal');
-            return;
-        }
-        pdf.addFileToVFS('NotoSansTC-Regular.ttf', reportFontBinary);
-        pdf.addFont('NotoSansTC-Regular.ttf', REPORT_FONT_NAME, 'normal');
-        try {
-            pdf.setFont(REPORT_FONT_NAME, 'normal');
-            pdfFontOk = pdf.getTextWidth('Score') > 0;
-        } catch (err) {
-            pdfFontOk = false;
-        }
-        if (!pdfFontOk) {
-            pdf.setFont('helvetica', 'normal');
-        }
-    }
-
-    function parseRgb(color) {
-        if (!color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)') {
-            return null;
-        }
-        var s = String(color).trim();
-        if (s.indexOf('#') === 0) {
-            var hex = s.slice(1);
-            if (hex.length === 3) {
-                hex = hex.split('').map(function (c) { return c + c; }).join('');
-            }
-            if (hex.length === 6) {
-                return [
-                    parseInt(hex.slice(0, 2), 16),
-                    parseInt(hex.slice(2, 4), 16),
-                    parseInt(hex.slice(4, 6), 16)
-                ];
-            }
-        }
-        var m = s.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-        if (!m) {
-            return null;
-        }
-        return [Number(m[1]), Number(m[2]), Number(m[3])];
-    }
-
-    function paperScale(paperRect) {
-        return {
-            x: paperRect.width ? (A4_WIDTH_MM / paperRect.width) : 1,
-            y: paperRect.height ? (A4_HEIGHT_MM / paperRect.height) : 1
-        };
-    }
-
-    function paperOffsheet(box) {
-        return box.y >= A4_HEIGHT_MM || box.x >= A4_WIDTH_MM || box.w <= 0 || box.h <= 0;
-    }
-
-    function clipBoxIsUsable(clip) {
-        return !!(clip && clip.w >= 1 && clip.h >= 1);
-    }
-
-    function boxOutsideClip(box, clip) {
-        if (!box || !clipBoxIsUsable(clip)) {
-            return false;
-        }
-        var eps = 0.2;
-        return box.x >= clip.x + clip.w - eps
-            || box.y >= clip.y + clip.h - eps
-            || box.x + box.w <= clip.x + eps
-            || box.y + box.h <= clip.y + eps;
-    }
-
-    function scaleXY(scale) {
-        if (scale && typeof scale === 'object') {
-            return { x: scale.x || 1, y: scale.y || 1 };
-        }
-        var n = Number(scale) || 1;
-        return { x: n, y: n };
-    }
-
-    function boxMm(paperRect, el, scale) {
-        var s = scaleXY(scale);
-        var r = el.getBoundingClientRect();
-        return {
-            x: (r.left - paperRect.left) * s.x,
-            y: (r.top - paperRect.top) * s.y,
-            w: r.width * s.x,
-            h: r.height * s.y
-        };
-    }
-
-    function pxToPt(px, scale) {
-        var s = scaleXY(scale);
-        return Math.max(5, px * ((s.x + s.y) / 2) * 72 / 25.4);
-    }
-
-    function fontWeightNum(style) {
-        if (!style || style.fontWeight == null) {
-            return 400;
-        }
-        var w = style.fontWeight;
-        if (w === 'bold' || w === 'bolder') {
-            return 700;
-        }
-        if (w === 'normal' || w === 'lighter') {
-            return 400;
-        }
-        var n = parseInt(w, 10);
-        return isNaN(n) ? 400 : n;
-    }
-
-    var PDF_FAKE_BOLD_MM = 0.15;
-
-    function fitText(pdf, text, maxW) {
-        if (!text) {
-            return '';
-        }
-        if (pdf.getTextWidth(text) <= maxW) {
-            return text;
-        }
-        var s = text;
-        while (s.length && pdf.getTextWidth(s + '…') > maxW) {
-            s = s.slice(0, -1);
-        }
-        return s ? s + '…' : '';
-    }
-
-    function isMostlyWhite(rgb) {
-        return rgb && rgb[0] >= 248 && rgb[1] >= 248 && rgb[2] >= 248;
-    }
-
-    function drawPdfText(pdf, text, x, y, opts) {
-        var options = opts || {};
-        var bold = !!options.bold;
-        var pdfOpts = {};
-        Object.keys(options).forEach(function (key) {
-            if (key !== 'bold') {
-                pdfOpts[key] = options[key];
-            }
-        });
-        try {
-            pdf.setFont(pdfFontOk ? REPORT_FONT_NAME : 'helvetica', 'normal');
-        } catch (err) {
-            pdf.setFont('helvetica', 'normal');
-        }
-        function paint(dx) {
-            try {
-                pdf.text(text, x + dx, y, pdfOpts);
-            } catch (err) {
-                pdf.setFont('helvetica', 'normal');
-                pdf.text(text, x + dx, y, pdfOpts);
-            }
-        }
-        paint(0);
-        if (bold) {
-            paint(PDF_FAKE_BOLD_MM);
-        }
-    }
-
-    function drawHeader(pdf, paper, paperRect, scale) {
-        var title = paper.querySelector('.report-header-title');
-        var meta = paper.querySelector('.report-header-meta');
-        var credit = paper.querySelector('.report-header-credit');
-        [title, meta].forEach(function (el) {
-            if (!el) {
-                return;
-            }
-            var text = (el.textContent || '').trim();
-            if (!text) {
-                return;
-            }
-            var style = window.getComputedStyle(el);
-            var box = boxMm(paperRect, el, scale);
-            var color = parseRgb(style.color) || [15, 23, 42];
-            pdf.setTextColor(color[0], color[1], color[2]);
-            pdf.setFontSize(pxToPt(parseFloat(style.fontSize) || 13, scale));
-            drawPdfText(pdf, text, box.x + box.w / 2, box.y + box.h / 2, {
-                baseline: 'middle',
-                align: 'center',
-                bold: fontWeightNum(style) >= 600
-            });
-        });
-        if (credit) {
-            var creditText = (credit.textContent || '').trim();
-            if (creditText) {
-                var creditStyle = window.getComputedStyle(credit);
-                var creditBox = boxMm(paperRect, credit, scale);
-                var creditColor = parseRgb(creditStyle.color) || [148, 163, 184];
-                pdf.setTextColor(creditColor[0], creditColor[1], creditColor[2]);
-                pdf.setFontSize(pxToPt(parseFloat(creditStyle.fontSize) || 8, scale));
-                drawPdfText(pdf, creditText, creditBox.x + creditBox.w, creditBox.y + creditBox.h / 2, {
-                    baseline: 'middle',
-                    align: 'right',
-                    bold: false
-                });
-            }
-        }
-    }
-
-    function drawFilledCircle(pdf, box, rgb) {
-        if (!box || !rgb) {
-            return;
-        }
-        var radius = Math.min(box.w, box.h) / 2;
-        if (!(radius > 0) || !isFinite(box.x) || !isFinite(box.y) || !isFinite(radius)) {
-            return;
-        }
-        pdf.setFillColor(rgb[0], rgb[1], rgb[2]);
-        pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'F');
-    }
-
-    function drawStarterCircle(pdf, box, rgb) {
-        var radius = Math.min(box.w, box.h) * 0.22;
-        radius = Math.max(0.35, Math.min(radius, 1.1));
-        pdf.setDrawColor(rgb[0], rgb[1], rgb[2]);
-        pdf.setLineWidth(0.28);
-        pdf.circle(box.x + box.w / 2, box.y + box.h / 2, radius, 'S');
-    }
-
-    function isStarterMark(text) {
-        return text === '\u25CB' || text === '○';
-    }
-
-    function drawTitleDot(pdf, dot, paperRect, scale) {
-        var box = boxMm(paperRect, dot, scale);
-        if (paperOffsheet(box)) {
-            return;
-        }
-        var style = window.getComputedStyle(dot);
-        var fill = parseRgb(style.backgroundColor) || [0, 180, 216];
-        drawFilledCircle(pdf, box, fill);
-    }
-
-    function drawTableCell(pdf, cell, paperRect, scale, clip) {
-        var box = boxMm(paperRect, cell, scale);
-        if (paperOffsheet(box) || boxOutsideClip(box, clip)) {
-            return;
-        }
-        var style = window.getComputedStyle(cell);
-        var fill = parseRgb(style.backgroundColor);
-        if (fill && !isMostlyWhite(fill)) {
-            pdf.setFillColor(fill[0], fill[1], fill[2]);
-            pdf.rect(box.x, box.y, box.w, box.h, 'F');
-        }
-        var border = parseRgb(style.borderTopColor) || [222, 226, 230];
-        pdf.setDrawColor(border[0], border[1], border[2]);
-        pdf.setLineWidth(0.12);
-        pdf.rect(box.x, box.y, box.w, box.h, 'S');
-        if (cell.classList && cell.classList.contains('braves-group-end')) {
-            pdf.setDrawColor(203, 213, 225);
-            pdf.line(box.x + box.w, box.y, box.x + box.w, box.y + box.h);
-        }
-        var text = (cell.innerText || '').replace(/\s+/g, ' ').trim();
-        if (!text) {
-            return;
-        }
-        var color = parseRgb(style.color) || [15, 23, 42];
-        if (isStarterMark(text)) {
-            drawStarterCircle(pdf, box, color);
-            return;
-        }
-        pdf.setTextColor(color[0], color[1], color[2]);
-        pdf.setFontSize(pxToPt(parseFloat(style.fontSize) || 9, scale));
-        var pad = 0.4;
-        var maxW = Math.max(0.4, box.w - pad * 2);
-        var align = style.textAlign;
-        var x = box.x + pad;
-        var pdfAlign = 'left';
-        if (align === 'center') {
-            x = box.x + box.w / 2;
-            pdfAlign = 'center';
-        } else if (align === 'right' || align === 'end') {
-            x = box.x + box.w - pad;
-            pdfAlign = 'right';
-        }
-        var bold = fontWeightNum(style) >= 600;
-        if (cell.classList && cell.classList.contains('report-lineup-name')) {
-            var lines = lineupNameLines(pdf, text, maxW);
-            if (!lines.length) {
-                return;
-            }
-            var lineH = box.h / lines.length;
-            lines.forEach(function (line, index) {
-                drawPdfText(pdf, line, x, box.y + lineH * (index + 0.5), {
-                    baseline: 'middle',
-                    align: pdfAlign,
-                    bold: bold
-                });
-            });
-            return;
-        }
-        var fitted = fitText(pdf, text, maxW);
-        if (!fitted) {
-            return;
-        }
-        drawPdfText(pdf, fitted, x, box.y + box.h / 2, {
-            baseline: 'middle',
-            align: pdfAlign,
-            bold: bold
-        });
-    }
-
-    function lineupNameLines(pdf, text, maxW) {
-        if (!text) {
-            return [];
-        }
-        if (pdf.getTextWidth(text) <= maxW) {
-            return [text];
-        }
-        var lines = [];
-        var current = '';
-        text.split('-').forEach(function (chunk, index) {
-            var piece = index === 0 ? chunk : '-' + chunk;
-            var trial = current + piece;
-            if (current && pdf.getTextWidth(trial) > maxW) {
-                lines.push(current);
-                current = chunk;
-            } else {
-                current = trial;
-            }
-        });
-        if (current) {
-            lines.push(current);
-        }
-        var fitted = [];
-        lines.forEach(function (line) {
-            if (pdf.getTextWidth(line) <= maxW) {
-                fitted.push(line);
-                return;
-            }
-            var part = '';
-            for (var i = 0; i < line.length; i++) {
-                var next = part + line.charAt(i);
-                if (part && pdf.getTextWidth(next) > maxW) {
-                    fitted.push(part);
-                    part = line.charAt(i);
-                } else {
-                    part = next;
-                }
-            }
-            if (part) {
-                fitted.push(part);
-            }
-        });
-        return fitted;
-    }
-
-    function toRoman(num) {
-        var romans = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'];
-        return (num >= 1 && num <= 10) ? romans[num - 1] : String(num);
-    }
-
-    function toAlpha(num) {
-        var alpha = 'abcdefghijklmnopqrstuvwxyz';
-        return (num >= 1 && num <= 26) ? alpha[num - 1] : String(num);
-    }
-
-    function drawNote(pdf, note, paperRect, scale) {
-        var box = boxMm(paperRect, note, scale);
-        var baseStyle = window.getComputedStyle(note);
-        var baseFontPx = parseFloat(baseStyle.fontSize) || 13;
-        var baseLinePx = parseFloat(baseStyle.lineHeight);
-        if (!baseLinePx || isNaN(baseLinePx)) {
-            baseLinePx = baseFontPx * 1.45;
-        }
-        var sy = scaleXY(scale).y;
-        var lineH = baseLinePx * sy;
-        var ptSize = pxToPt(baseFontPx, scale);
-        var maxY = Math.min(A4_HEIGHT_MM, box.y + box.h);
-        var cursorY = box.y;
-
-        function collectLines() {
-            var lines = [];
-            var defaultColor = parseRgb(baseStyle.color) || [15, 23, 42];
-
-            function extractSpans(rootEl, baseInherited) {
-                var spans = [];
-                function traverse(node, currentStyle) {
-                    if (node.nodeType === 3) {
-                        var text = stripReportInvisibleChars(node.textContent || '');
-                        if (!text) return;
-                        pdf.setFontSize(ptSize);
-                        var words = text.split(/( +|\n)/);
-                        words.forEach(function (w) {
-                            if (!w) return;
-                            spans.push({
-                                text: w,
-                                color: currentStyle.color,
-                                bgColor: currentStyle.bgColor,
-                                bold: currentStyle.bold,
-                                italic: currentStyle.italic,
-                                underline: currentStyle.underline,
-                                strikethrough: currentStyle.strikethrough,
-                                width: (w === '\n') ? 0 : pdf.getTextWidth(w)
-                            });
-                        });
-                        return;
-                    }
-                    if (node.nodeType === 1) {
-                        var tag = node.tagName.toLowerCase();
-                        if (tag === 'br') {
-                            spans.push({ text: '\n', width: 0 });
-                            return;
-                        }
-                        var sColor = currentStyle.color;
-                        var sBg = currentStyle.bgColor;
-                        var sBold = currentStyle.bold || tag === 'b' || tag === 'strong';
-                        var sItalic = currentStyle.italic || tag === 'i' || tag === 'em';
-                        var sUnderline = currentStyle.underline || tag === 'u';
-                        var sStrike = currentStyle.strikethrough || tag === 's' || tag === 'strike';
-
-                        var nodeColor = null;
-                        if (tag === 'font' && node.getAttribute('color')) {
-                            nodeColor = parseRgb(node.getAttribute('color'));
-                        } else if (node.style && node.style.color) {
-                            nodeColor = parseRgb(node.style.color);
-                        } else if (node.getAttribute && node.getAttribute('color')) {
-                            nodeColor = parseRgb(node.getAttribute('color'));
-                        }
-                        if (nodeColor) {
-                            sColor = nodeColor;
-                        }
-
-                        var nodeBg = null;
-                        if (node.style && node.style.backgroundColor) {
-                            nodeBg = parseRgb(node.style.backgroundColor);
-                        } else if (node.getAttribute && node.getAttribute('data-highlight')) {
-                            nodeBg = parseRgb(node.getAttribute('data-highlight'));
-                        }
-                        if (nodeBg) {
-                            sBg = nodeBg;
-                        }
-
-                        if (node.style && node.style.textDecoration && node.style.textDecoration.indexOf('underline') !== -1) sUnderline = true;
-                        if (node.style && node.style.textDecoration && node.style.textDecoration.indexOf('line-through') !== -1) sStrike = true;
-
-                        var nextStyle = {
-                            color: sColor,
-                            bgColor: sBg,
-                            bold: sBold,
-                            italic: sItalic,
-                            underline: sUnderline,
-                            strikethrough: sStrike
-                        };
-
-                        Array.from(node.childNodes).forEach(function (child) {
-                            traverse(child, nextStyle);
-                        });
-                    }
-                }
-                traverse(rootEl, baseInherited);
-                return spans;
-            }
-
-            function wrapSpansToLines(spans, indentLevel, listType, listIndex) {
-                var maxW = Math.max(10, box.w - indentLevel * 5.0);
-                var curLine = [];
-                var curWidth = 0;
-                var isFirst = true;
-
-                spans.forEach(function (span) {
-                    if (span.text === '\n') {
-                        if (curLine.length > 0) {
-                            lines.push({
-                                spans: curLine,
-                                indentLevel: indentLevel,
-                                listType: isFirst ? listType : null,
-                                listIndex: isFirst ? listIndex : null
-                            });
-                            curLine = [];
-                            curWidth = 0;
-                            isFirst = false;
-                        }
-                        return;
-                    }
-                    if (curWidth + span.width > maxW && curLine.length > 0 && span.text.trim()) {
-                        lines.push({
-                            spans: curLine,
-                            indentLevel: indentLevel,
-                            listType: isFirst ? listType : null,
-                            listIndex: isFirst ? listIndex : null
-                        });
-                        curLine = [];
-                        curWidth = 0;
-                        isFirst = false;
-                    }
-                    curLine.push(span);
-                    curWidth += span.width;
-                });
-
-                if (curLine.length > 0) {
-                    lines.push({
-                        spans: curLine,
-                        indentLevel: indentLevel,
-                        listType: isFirst ? listType : null,
-                        listIndex: isFirst ? listIndex : null
-                    });
-                }
-            }
-
-            function getListIndent(el) {
-                var level = 0;
-                var p = el.parentElement;
-                while (p && p !== note) {
-                    var pt = p.tagName ? p.tagName.toLowerCase() : '';
-                    if (pt === 'ul' || pt === 'ol' || pt === 'blockquote') {
-                        level++;
-                    }
-                    p = p.parentElement;
-                }
-                return Math.max(1, level);
-            }
-
-            function getListIndex(liEl) {
-                var idx = 1;
-                var prev = liEl.previousElementSibling;
-                while (prev) {
-                    if (prev.tagName && prev.tagName.toLowerCase() === 'li') idx++;
-                    prev = prev.previousElementSibling;
-                }
-                return idx;
-            }
-
-            // Check if note has block children or is raw inline text
-            var directBlocks = Array.from(note.children);
-            var isComplex = directBlocks.some(function (c) {
-                var t = c.tagName ? c.tagName.toLowerCase() : '';
-                return t === 'p' || t === 'div' || t === 'ul' || t === 'ol' || t === 'blockquote';
-            });
-
-            var initStyle = {
-                color: defaultColor,
-                bgColor: null,
-                bold: false,
-                italic: false,
-                underline: false,
-                strikethrough: false
-            };
-
-            if (!isComplex) {
-                var allSpans = extractSpans(note, initStyle);
-                wrapSpansToLines(allSpans, 0, null, null);
-            } else {
-                function processBlockNode(node) {
-                    if (node.nodeType === 3) {
-                        var text = (node.textContent || '').trim();
-                        if (text) {
-                            var rawSpans = extractSpans(node, initStyle);
-                            wrapSpansToLines(rawSpans, 0, null, null);
-                        }
-                        return;
-                    }
-                    if (node.nodeType !== 1) return;
-                    var tag = node.tagName.toLowerCase();
-                    if (tag === 'li') {
-                        var parentTag = node.parentElement ? node.parentElement.tagName.toLowerCase() : 'ul';
-                        var isUl = (parentTag === 'ul');
-                        var level = getListIndent(node);
-                        var idx = isUl ? null : getListIndex(node);
-                        
-                        // Extract spans of only direct text and non-list inline children
-                        var liSpans = [];
-                        Array.from(node.childNodes).forEach(function (child) {
-                            var childTag = (child.nodeType === 1) ? child.tagName.toLowerCase() : '';
-                            if (childTag !== 'ul' && childTag !== 'ol' && childTag !== 'blockquote') {
-                                extractSpans(child, initStyle).forEach(function (sp) {
-                                    liSpans.push(sp);
-                                });
-                            }
-                        });
-                        wrapSpansToLines(liSpans, level, isUl ? 'ul' : 'ol', idx);
-                        
-                        // Process nested lists inside this li
-                        Array.from(node.childNodes).forEach(function (child) {
-                            var childTag = (child.nodeType === 1) ? child.tagName.toLowerCase() : '';
-                            if (childTag === 'ul' || childTag === 'ol' || childTag === 'blockquote') {
-                                processBlockNode(child);
-                            }
-                        });
-                    } else if (tag === 'p' || tag === 'div') {
-                        var pSpans = [];
-                        Array.from(node.childNodes).forEach(function (child) {
-                            var childTag = (child.nodeType === 1) ? child.tagName.toLowerCase() : '';
-                            if (childTag !== 'ul' && childTag !== 'ol' && childTag !== 'blockquote' && childTag !== 'p' && childTag !== 'div') {
-                                extractSpans(child, initStyle).forEach(function (sp) {
-                                    pSpans.push(sp);
-                                });
-                            }
-                        });
-                        var hasVisibleText = pSpans.some(function (sp) {
-                            return sp.text && sp.text.trim().length > 0;
-                        });
-                        if (hasVisibleText) {
-                            wrapSpansToLines(pSpans, 0, null, null);
-                        } else {
-                            // Blank line for empty paragraph (<p></p>, <p><br></p>, <p>&nbsp;</p>)
-                            lines.push({
-                                spans: [{ text: ' ', width: 0, color: defaultColor }],
-                                indentLevel: 0,
-                                listType: null,
-                                listIndex: null
-                            });
-                        }
-                        Array.from(node.childNodes).forEach(function (child) {
-                            var childTag = (child.nodeType === 1) ? child.tagName.toLowerCase() : '';
-                            if (childTag === 'ul' || childTag === 'ol' || childTag === 'blockquote' || childTag === 'p' || childTag === 'div') {
-                                processBlockNode(child);
-                            }
-                        });
-                    } else if (tag === 'br') {
-                        lines.push({
-                            spans: [{ text: ' ', width: 0, color: defaultColor }],
-                            indentLevel: 0,
-                            listType: null,
-                            listIndex: null
-                        });
-                    } else if (tag === 'ul' || tag === 'ol' || tag === 'blockquote') {
-                        Array.from(node.children).forEach(function (child) {
-                            processBlockNode(child);
-                        });
-                    } else {
-                        var genericSpans = extractSpans(node, initStyle);
-                        wrapSpansToLines(genericSpans, 0, null, null);
-                    }
-                }
-
-                Array.from(note.childNodes).forEach(function (child) {
-                    processBlockNode(child);
-                });
-            }
-
-            return lines;
-        }
-
-        var allLines = collectLines();
-
-        allLines.forEach(function (lineInfo) {
-            if (cursorY >= maxY) {
-                return;
-            }
-            var indentX = box.x + (lineInfo.indentLevel || 0) * 5.0;
-            var startX = indentX;
-
-            // Draw bullet marker or ordered list number
-            if (lineInfo.listType) {
-                var level = lineInfo.indentLevel || 1;
-                pdf.setFontSize(ptSize);
-                pdf.setTextColor(15, 23, 42);
-                if (lineInfo.listType === 'ul') {
-                    if (level === 1) {
-                        // Level 1: solid disc
-                        pdf.setFillColor(15, 23, 42);
-                        pdf.circle(startX - 2.5, cursorY + lineH * 0.45, 0.6, 'F');
-                    } else if (level === 2) {
-                        // Level 2: circle (hollow)
-                        pdf.setDrawColor(15, 23, 42);
-                        pdf.setLineWidth(0.15);
-                        pdf.circle(startX - 2.5, cursorY + lineH * 0.45, 0.6, 'S');
-                    } else {
-                        // Level 3+: square
-                        pdf.setFillColor(15, 23, 42);
-                        pdf.rect(startX - 3.1, cursorY + lineH * 0.45 - 0.5, 1.0, 1.0, 'F');
-                    }
-                } else if (lineInfo.listType === 'ol') {
-                    var numStr = '';
-                    if (level === 1) {
-                        numStr = String(lineInfo.listIndex || 1) + '.';
-                    } else if (level === 2) {
-                        numStr = toAlpha(lineInfo.listIndex || 1) + '.';
-                    } else {
-                        numStr = toRoman(lineInfo.listIndex || 1) + '.';
-                    }
-                    drawPdfText(pdf, numStr, startX - pdf.getTextWidth(numStr) - 1.2, cursorY, { baseline: 'top' });
-                }
-            }
-
-            var spanX = startX;
-            lineInfo.spans.forEach(function (span) {
-                if (!span.text) return;
-                var sWidth = span.width || pdf.getTextWidth(span.text);
-
-                // Draw highlight background rect
-                if (span.bgColor) {
-                    pdf.setFillColor(span.bgColor[0], span.bgColor[1], span.bgColor[2]);
-                    pdf.rect(spanX, cursorY, sWidth, lineH * 0.95, 'F');
-                }
-
-                // Text styling
-                pdf.setTextColor(span.color[0], span.color[1], span.color[2]);
-                pdf.setFontSize(ptSize);
-                drawPdfText(pdf, span.text, spanX, cursorY, {
-                    baseline: 'top',
-                    bold: !!span.bold
-                });
-
-                // Underline
-                if (span.underline) {
-                    pdf.setDrawColor(span.color[0], span.color[1], span.color[2]);
-                    pdf.setLineWidth(0.2);
-                    pdf.line(spanX, cursorY + lineH * 0.82, spanX + sWidth, cursorY + lineH * 0.82);
-                }
-
-                // Strikethrough
-                if (span.strikethrough) {
-                    pdf.setDrawColor(span.color[0], span.color[1], span.color[2]);
-                    pdf.setLineWidth(0.2);
-                    pdf.line(spanX, cursorY + lineH * 0.45, spanX + sWidth, cursorY + lineH * 0.45);
-                }
-
-                spanX += sWidth;
-            });
-
-            cursorY += lineH;
-        });
-    }
-
-    function drawImageBlock(pdf, img, paperRect, scale) {
-        if (!img || !img.src) {
-            return;
-        }
-        var box = boxMm(paperRect, img, scale);
-        if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
-            return;
-        }
-        var dataUrl = img.src;
-        try {
-            if (dataUrl.indexOf('image/png') === -1) {
-                var canvas = document.createElement('canvas');
-                canvas.width = img.naturalWidth || Math.max(1, img.width);
-                canvas.height = img.naturalHeight || Math.max(1, img.height);
-                canvas.getContext('2d').drawImage(img, 0, 0);
-                dataUrl = canvas.toDataURL('image/png');
-            }
-            pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
-        } catch (err) {
-            console.warn('PDF image skipped', err);
-        }
-    }
-
-    function drawPaper(pdf, paper) {
-        var paperRect = paper.getBoundingClientRect();
-        if (!paperRect.width) {
-            return Promise.resolve();
-        }
-        var scale = paperScale(paperRect);
-        pdf.setFillColor(255, 255, 255);
-        pdf.rect(0, 0, A4_WIDTH_MM, A4_HEIGHT_MM, 'F');
-        try {
-        drawHeader(pdf, paper, paperRect, scale);
-        paper.querySelectorAll('.grid-stack-item').forEach(function (item) {
-            if (item.classList.contains('grid-stack-placeholder')) {
-                return;
-            }
-            try {
-            var title = item.querySelector('.report-block-title');
-            if (title) {
-                var titleText = (title.textContent || '').trim();
-                var titleRow = item.querySelector('.report-block-title-row');
-                var tBox = boxMm(paperRect, titleRow || title, scale);
-                var tStyle = window.getComputedStyle(title);
-                var tColor = parseRgb(tStyle.color) || [15, 23, 42];
-                var padL = 0;
-                if (titleRow) {
-                    padL = parseFloat(window.getComputedStyle(titleRow).paddingLeft) || 0;
-                }
-                var textX = tBox.x + padL * scaleXY(scale).x;
-                var dot = title.querySelector('.report-block-title-dot');
-                if (dot) {
-                    var dBox = boxMm(paperRect, dot, scale);
-                    var shifted = {
-                        x: textX,
-                        y: tBox.y + Math.max(0, (tBox.h - dBox.h) / 2),
-                        w: dBox.w,
-                        h: dBox.h
-                    };
-                    drawFilledCircle(pdf, shifted, parseRgb(window.getComputedStyle(dot).backgroundColor) || [0, 119, 182]);
-                    textX = shifted.x + shifted.w + 1.2;
-                }
-                if (titleText) {
-                    pdf.setTextColor(tColor[0], tColor[1], tColor[2]);
-                    pdf.setFontSize(pxToPt(parseFloat(tStyle.fontSize) || 12, scale));
-                    drawPdfText(pdf, titleText, textX, tBox.y + tBox.h / 2, {
-                        baseline: 'middle',
-                        bold: fontWeightNum(tStyle) >= 600
-                    });
-                }
-            }
-            var clip = boxMm(paperRect, item, scale);
-            var tableEl = item.querySelector('.report-js-table');
-            if (tableEl && clipBoxIsUsable(clip)) {
-                var tableBox = boxMm(paperRect, tableEl, scale);
-                var top = Math.min(clip.y, tableBox.y);
-                var bottom = Math.max(clip.y + clip.h, tableBox.y + tableBox.h);
-                clip = {
-                    x: clip.x,
-                    y: top,
-                    w: clip.w,
-                    h: bottom - top
-                };
-            }
-            if (!clipBoxIsUsable(clip)) {
-                clip = null;
-            }
-            item.querySelectorAll('th, td').forEach(function (cell) {
-                drawTableCell(pdf, cell, paperRect, scale, clip);
-            });
-            var note = item.querySelector('[data-text-block]');
-            if (note) {
-                drawNote(pdf, note, paperRect, scale);
-            }
-            var img = item.querySelector('img.report-image-block');
-            if (img) {
-                drawImageBlock(pdf, img, paperRect, scale);
-            }
-            var shotEmpty = item.querySelector('.report-shot-chart-empty');
-            if (shotEmpty) {
-                var shotText = (shotEmpty.textContent || '').trim();
-                var shotBox = boxMm(paperRect, shotEmpty, scale);
-                var shotStyle = window.getComputedStyle(shotEmpty);
-                var shotColor = parseRgb(shotStyle.color) || [100, 116, 139];
-                if (shotText && shotBox.h > 0) {
-                    pdf.setTextColor(shotColor[0], shotColor[1], shotColor[2]);
-                    pdf.setFontSize(pxToPt(parseFloat(shotStyle.fontSize) || 12, scale));
-                    drawPdfText(pdf, shotText, shotBox.x + 1, shotBox.y + shotBox.h / 2, {
-                        baseline: 'middle'
-                    });
-                }
-            }
-            } catch (itemErr) {
-                console.warn('PDF item skipped', itemErr);
-            }
-        });
-        var rotationChain = Promise.resolve();
-        paper.querySelectorAll('.grid-stack-item[data-block-type="rotation"] .report-rotation-plot').forEach(function (gd) {
-            rotationChain = rotationChain.then(function () {
-                return drawRotationPlot(pdf, gd, paperRect, scale);
-            });
-        });
-        paper.querySelectorAll('.grid-stack-item[data-block-type="shot_chart"] .report-shot-chart-host').forEach(function (host) {
-            if (host.classList.contains('report-shot-chart-empty')) {
-                return;
-            }
-            rotationChain = rotationChain.then(function () {
-                return drawShotChartImage(pdf, host, paperRect, scale);
-            });
-        });
-        return rotationChain;
-        } catch (err) {
-            console.warn('PDF paper skipped', err);
-            return Promise.resolve();
-        }
-    }
-
-    function drawRotationPlot(pdf, gd, paperRect, scale) {
-        if (!gd || !window.Plotly || typeof window.Plotly.toImage !== 'function') {
-            return Promise.resolve();
-        }
-        var frame = gd.closest('.report-rotation-scale') || gd;
-        var box = boxMm(paperRect, frame, scale);
-        if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
-            return Promise.resolve();
-        }
-        var toImage = window.Plotly.toImage(gd, {
-            format: 'png',
-            scale: 2
-        });
-        var timed = new Promise(function (resolve) {
-            window.setTimeout(function () {
-                resolve(null);
-            }, 8000);
-        });
-        return Promise.race([toImage, timed]).then(function (dataUrl) {
-            if (dataUrl) {
-                pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
-            }
-        }).catch(function (err) {
-            console.warn('PDF rotation skipped', err);
-        });
-    }
-
-    function loadCanvasFont() {
-        if (!window.FontFace || !document.fonts) {
-            return Promise.resolve();
-        }
-        if (document.fonts.check('12px "Noto Sans TC"')) {
-            return document.fonts.ready;
-        }
-        return fetch(reportFontUrl()).then(function (res) {
-            if (!res.ok) {
-                throw new Error('font ' + res.status);
-            }
-            return res.arrayBuffer();
-        }).then(function (buf) {
-            var face = new FontFace('Noto Sans TC', buf);
-            return face.load().then(function (loaded) {
-                document.fonts.add(loaded);
-            });
-        }).catch(function () {
-            return null;
-        });
-    }
-
-    function rasterShotChart(host) {
-        var width = Math.max(1, Math.round(host.clientWidth || host.getBoundingClientRect().width));
-        var height = Math.max(1, Math.round(host.clientHeight || host.getBoundingClientRect().height));
-        var canvas = document.createElement('canvas');
-        var pixel = 2;
-        canvas.width = width * pixel;
-        canvas.height = height * pixel;
-        var ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.setTransform(pixel, 0, 0, pixel, 0, 0);
-        var hostRect = host.getBoundingClientRect();
-        Array.prototype.forEach.call(host.querySelectorAll('.report-shot-chart-name'), function (name) {
-            var rect = name.getBoundingClientRect();
-            var style = window.getComputedStyle(name);
-            var size = parseFloat(style.fontSize) || 12;
-            ctx.fillStyle = style.color || '#0f172a';
-            ctx.font = '700 ' + size + 'px "Noto Sans TC", sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(
-                (name.textContent || '').trim(),
-                (rect.left - hostRect.left) + rect.width / 2,
-                (rect.top - hostRect.top) + rect.height / 2,
-                Math.max(1, rect.width - 4)
-            );
-        });
-        var imgs = host.querySelectorAll('img.report-shot-chart-court');
-        return new Promise(function (resolve) {
-            var pending = imgs.length;
-            function finish() {
-                try {
-                    resolve(canvas.toDataURL('image/png'));
-                } catch (err) {
-                    console.warn('shot chart image skipped', err);
-                    resolve(null);
-                }
-            }
-            if (!pending) {
-                finish();
-                return;
-            }
-            Array.prototype.forEach.call(imgs, function (img) {
-                var draw = function () {
-                    var rect = img.getBoundingClientRect();
-                    try {
-                        ctx.drawImage(
-                            img,
-                            rect.left - hostRect.left,
-                            rect.top - hostRect.top,
-                            rect.width,
-                            rect.height
-                        );
-                    } catch (err) {
-                        console.warn('shot chart image skipped', err);
-                    }
-                    pending -= 1;
-                    if (pending === 0) {
-                        finish();
-                    }
-                };
-                if (img.complete) {
-                    if (img.naturalWidth) {
-                        draw();
-                    } else {
-                        pending -= 1;
-                        if (pending === 0) {
-                            finish();
-                        }
-                    }
-                } else {
-                    img.addEventListener('load', draw, { once: true });
-                    img.addEventListener('error', function () {
-                        pending -= 1;
-                        if (pending === 0) {
-                            finish();
-                        }
-                    }, { once: true });
-                }
-            });
-        });
-    }
-
-    function drawShotChartImage(pdf, host, paperRect, scale) {
-        if (!host) {
-            return Promise.resolve();
-        }
-        var box = boxMm(paperRect, host, scale);
-        if (box.w <= 0 || box.h <= 0 || box.y >= A4_HEIGHT_MM) {
-            return Promise.resolve();
-        }
-        var timed = new Promise(function (resolve) {
-            window.setTimeout(function () {
-                resolve(null);
-            }, 8000);
-        });
-        var raster = loadCanvasFont().then(function () {
-            return rasterShotChart(host);
-        });
-        return Promise.race([raster, timed]).then(function (dataUrl) {
-            if (dataUrl) {
-                pdf.addImage(dataUrl, 'PNG', box.x, box.y, box.w, Math.min(box.h, A4_HEIGHT_MM - box.y));
-            }
-        }).catch(function (err) {
-            console.warn('shot chart image skipped', err);
-        });
-    }
-
-    function setPdfBusy(busy) {
-        var btn = document.getElementById('btn-export-pdf');
-        if (!btn) {
-            return;
-        }
-        btn.disabled = !!busy;
-        if (busy) {
-            btn.setAttribute('aria-busy', 'true');
-        } else {
-            btn.removeAttribute('aria-busy');
-        }
-    }
-
-    function waitPdfFrame() {
-        return new Promise(function (resolve) {
-            var done = false;
-            function finish() {
-                if (done) {
-                    return;
-                }
-                done = true;
-                resolve();
-            }
-            window.requestAnimationFrame(function () {
-                window.requestAnimationFrame(finish);
-            });
-            window.setTimeout(finish, 120);
-        });
-    }
-
-    function capturePdfScroll() {
-        var workspace = document.getElementById('report-workspace');
-        var papersEl = document.querySelector('.report-papers');
-        var main = document.querySelector('.report-main');
-        return {
-            x: window.scrollX,
-            y: window.scrollY,
-            workspace: workspace ? workspace.scrollTop : 0,
-            papers: papersEl ? papersEl.scrollTop : 0,
-            main: main ? main.scrollTop : 0
-        };
-    }
-
-    function restorePdfScroll(saved) {
-        if (!saved) {
-            return;
-        }
-        window.scrollTo(saved.x, saved.y);
-        var workspace = document.getElementById('report-workspace');
-        var papersEl = document.querySelector('.report-papers');
-        var main = document.querySelector('.report-main');
-        if (workspace) {
-            workspace.scrollTop = saved.workspace;
-        }
-        if (papersEl) {
-            papersEl.scrollTop = saved.papers;
-        }
-        if (main) {
-            main.scrollTop = saved.main;
-        }
-    }
-
-    function revealPaperForPdf(paper) {
-        if (!paper) {
-            return Promise.resolve();
-        }
-        paper.scrollIntoView({ block: 'start', inline: 'nearest' });
-        void paper.offsetHeight;
-        return waitPdfFrame();
-    }
-
-    function refitPaperForPdf(paper) {
-        var gridEl = paper && paper.querySelector('.report-grid');
-        var grid = gridEl && gridEl.gridstack;
-        if (grid) {
-            var originY = snapshotNodeYs(grid);
-            if (grid.el) {
-                grid.el._splashboardOriginY = originY;
-            }
-            fitTableBlocksOnGrid(grid);
-            fitRotationBlocksOnGrid(grid);
-            fitShotChartBlocksOnGrid(grid);
-            resolveOverlaps(grid, originY);
-        }
-        if (paper) {
-            void paper.offsetHeight;
-        }
-        return new Promise(function (resolve) {
-            window.setTimeout(function () {
-                waitPdfFrame().then(resolve);
-            }, 50);
-        });
-    }
-
-    function exportPapersToPdf() {
-        var btn = document.getElementById('btn-export-pdf');
-        if (btn && btn.getAttribute('aria-busy') === 'true') {
-            return Promise.resolve();
-        }
-        var papers = document.querySelectorAll('#report-papers .report-paper');
-        if (!papers.length) {
-            window.print();
-            return Promise.resolve();
-        }
-        if (window.splashboardTableStick) {
-            window.splashboardTableStick.pause();
-        }
-        var savedScroll = capturePdfScroll();
-        setPdfBusy(true);
-        return ensureReportLibs().then(function () {
-            if (!window.jspdf || !window.jspdf.jsPDF) {
-                throw new Error('jspdf missing');
-            }
-            return loadReportFont();
-        }).then(function () {
-            var JsPDF = window.jspdf.jsPDF;
-            var pdf = new JsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-            registerReportFont(pdf);
-            pdfMeasurer = pdf;
-            pdfHeaderPxCache = {};
-            PAIR_WIDTHS.forEach(syncPairColumnWidths);
-            var chain = Promise.resolve();
-            Array.prototype.forEach.call(papers, function (paper, index) {
-                chain = chain.then(function () {
-                    return Promise.resolve(hydratePage(index)).then(function () {
-                        return revealPaperForPdf(paper);
-                    }).then(function () {
-                        return refitPaperForPdf(paper);
-                    }).then(function () {
-                        if (index > 0) {
-                            pdf.addPage('a4', 'portrait');
-                        }
-                        return drawPaper(pdf, paper);
-                    }).catch(function (err) {
-                        console.warn('PDF page failed', err);
-                    });
-                });
-            });
-            return chain.then(function () {
-                var nameEl = document.getElementById('report-pdf-filename');
-                var filename = (nameEl && (nameEl.textContent || '').trim()) || 'splashboard-report.pdf';
-                pdf.save(filename);
-            });
-        }).catch(function (err) {
-            console.warn('PDF export failed, using print()', err && (err.message || String(err)));
-            window.print();
-        }).then(function () {
-            restorePdfScroll(savedScroll);
-            setPdfBusy(false);
-            if (window.splashboardTableStick) {
-                window.splashboardTableStick.resume();
-            }
-        });
-    }
-
-    var dialogResolve = null;
-
-    function setPageIds(ids) {
-        if (window.dash_clientside && typeof window.dash_clientside.set_props === 'function') {
-            window.dash_clientside.set_props('report-page-ids', { data: ids });
-            return true;
-        }
-        return false;
     }
 
     function dispatchPageCmd(cmd) {
@@ -4728,12 +1924,12 @@
             return Promise.resolve();
         }
         if (block.type === 'rotation') {
-            return paintRotation(node.querySelector('.report-rotation-host')).then(function () {
+            return R.paintRotation(node.querySelector('.report-rotation-host')).then(function () {
                 fitAllRotationBlocks();
             });
         }
         if (block.type === 'shot_chart') {
-            return paintShotChart(node.querySelector('.report-shot-chart-host')).then(function () {
+            return R.paintShotChart(node.querySelector('.report-shot-chart-host')).then(function () {
                 fitAllShotChartBlocks();
             });
         }
@@ -4769,20 +1965,20 @@
                             y: slot.y,
                             w: w,
                             h: h,
-                            minW: blockLocksSize(block.type) ? w : 1,
+                            minW: R.blockLocksSize(block.type) ? w : 1,
                             minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
                         };
-                        if (locksResize(block.type)) {
+                        if (R.locksResize(block.type)) {
                             newOpts.noResize = true;
                         }
                         grid.addWidget(node, newOpts);
                         bindTextBlocks(node);
                         bindCsvTitles(node);
                         node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-                        node.setAttribute('data-min-w', blockLocksSize(block.type) ? String(w) : '1');
+                        node.setAttribute('data-min-w', R.blockLocksSize(block.type) ? String(w) : '1');
                         var afterNew = paintPlacedBlock(node, block);
                         return afterNew.then(function () {
-                            if (isReportTable(block.type)) {
+                            if (R.isReportTable(block.type)) {
                                 node.setAttribute('data-resize-start-h', String((node.gridstackNode && node.gridstackNode.h) || h));
                                 commitTableResize(grid, node);
                             } else {
@@ -4803,20 +1999,20 @@
                 y: slot.y,
                 w: w,
                 h: h,
-                minW: blockLocksSize(block.type) ? w : 1,
+                minW: R.blockLocksSize(block.type) ? w : 1,
                 minH: block.type === 'image' ? 1 : (block.type === 'text' ? 1 : h)
             };
-            if (locksResize(block.type)) {
+            if (R.locksResize(block.type)) {
                 placeOpts.noResize = true;
             }
             grid.addWidget(node, placeOpts);
             bindTextBlocks(node);
             bindCsvTitles(node);
             node.setAttribute('data-min-h', String(block.type === 'text' || block.type === 'image' ? 1 : h));
-            node.setAttribute('data-min-w', blockLocksSize(block.type) ? String(w) : '1');
+            node.setAttribute('data-min-w', R.blockLocksSize(block.type) ? String(w) : '1');
             var afterPlace = paintPlacedBlock(node, block);
             afterPlace.then(function () {
-                if (isReportTable(block.type)) {
+                if (R.isReportTable(block.type)) {
                     node.setAttribute('data-resize-start-h', String((node.gridstackNode && node.gridstackNode.h) || h));
                     commitTableResize(grid, node);
                 } else {
@@ -4828,14 +2024,14 @@
         });
     }
 
-    window.splashboardReport = {
-        skipFourFactorsGroup: skipFourFactorsGroup,
-        groupedHeader: groupedHeader,
-        winningIndexes: winningIndexes,
-        winnerIndex: winnerIndex,
-        paperScale: paperScale,
-        boxOutsideClip: boxOutsideClip,
-        clipBoxIsUsable: clipBoxIsUsable,
+    Object.assign(R, {
+        ensureReportLibs: ensureReportLibs,
+        hydratePage: hydratePage,
+        fitTableBlocksOnGrid: fitTableBlocksOnGrid,
+        fitRotationBlocksOnGrid: fitRotationBlocksOnGrid,
+        fitShotChartBlocksOnGrid: fitShotChartBlocksOnGrid,
+        commitTableResize: commitTableResize,
+        snapshotNodeYs: snapshotNodeYs,
         resolveOverlaps: resolveOverlaps,
         loadStored: loadStored,
         readLayoutFromDom: readLayoutFromDom,
@@ -4911,11 +2107,6 @@
             });
             return readLayoutFromDom();
         },
-        parseCsvTable: parseCsvTable,
-        pppCellStyle: pppCellStyle,
-        csvBlockTitle: csvBlockTitle,
-        isCsvLabelHeader: isCsvLabelHeader,
-        csvDefaultW: csvDefaultW,
         addTable: function (tableKey) {
             if (!tableKey) {
                 return readLayoutFromDom();
@@ -4936,11 +2127,11 @@
             addWidgetToActive({
                 id: block.id || uniqueId('csv'),
                 type: 'csv_table',
-                title: block.title || CSV_TITLE_FALLBACK,
+                title: block.title || R.CSV_TITLE_FALLBACK,
                 coloring: block.coloring === 'ppp' ? 'ppp' : 'plain',
                 columns: block.columns,
                 rows: block.rows || [],
-                w: block.w || csvDefaultW(block.coloring),
+                w: block.w || R.csvDefaultW(block.coloring),
                 h: block.h || 4
             });
             return readLayoutFromDom();
@@ -5064,15 +2255,9 @@
             persistLocal(readLayoutFromDom());
             return readLayoutFromDom();
         },
-        ensurePdfFont: function () {
-            return loadReportFont();
-        },
-        exportPdf: function () {
-            return exportPapersToPdf();
-        },
         markOverflow: markPaperOverflow,
         syncSticky: syncPageListSticky
-    };
+    });
 
     function validateImageFile(file) {
         if (!file || !ALLOWED_IMAGE_MIMES[file.type]) {
@@ -5083,8 +2268,6 @@
         }
         return true;
     }
-
-    var csvImportMode = 'plain';
 
     function ensureCsvInput() {
         var input = document.getElementById('report-csv-upload');
@@ -5104,38 +2287,38 @@
 
     function importCsvFile(file, coloring) {
         if (!file) {
-            askAlert(CSV_ERR_EMPTY);
+            askAlert(R.CSV_ERR_EMPTY);
             return;
         }
         if (!file.size) {
-            askAlert(CSV_ERR_EMPTY);
+            askAlert(R.CSV_ERR_EMPTY);
             return;
         }
-        if (file.size > CSV_MAX_BYTES) {
-            askAlert(CSV_ERR_BYTES);
+        if (file.size > R.CSV_MAX_BYTES) {
+            askAlert(R.CSV_ERR_BYTES);
             return;
         }
         var reader = new FileReader();
         reader.onerror = function () {
-            askAlert(CSV_ERR_READ);
+            askAlert(R.CSV_ERR_READ);
         };
         reader.onload = function () {
             var text;
             try {
                 text = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(reader.result));
             } catch (err) {
-                askAlert(CSV_ERR_UTF8);
+                askAlert(R.CSV_ERR_UTF8);
                 return;
             }
             var parsed;
             try {
-                parsed = parseCsvTable(text);
+                parsed = R.parseCsvTable(text);
             } catch (err) {
-                askAlert(err && err.message ? err.message : CSV_ERR_READ);
+                askAlert(err && err.message ? err.message : R.CSV_ERR_READ);
                 return;
             }
             window.splashboardReport.addCsvTable({
-                title: csvBlockTitle(file.name, coloring),
+                title: R.csvBlockTitle(file.name, coloring),
                 coloring: coloring,
                 columns: parsed.columns,
                 rows: parsed.rows
@@ -5263,11 +2446,11 @@
                     'This export will crop content that sits outside A4.',
                     'Export'
                 ).then(function (ok) {
-                    if (ok) {
+                    if (ok && window.splashboardReport.exportPdf) {
                         window.splashboardReport.exportPdf();
                     }
                 });
-            } else {
+            } else if (window.splashboardReport.exportPdf) {
                 window.splashboardReport.exportPdf();
             }
             return;
@@ -5275,10 +2458,10 @@
         var pageBtn = event.target.closest('.report-page-btn[data-page-index]');
         if (pageBtn) {
             var index = parseInt(pageBtn.getAttribute('data-page-index'), 10);
-            var papers = document.querySelectorAll('#report-papers .report-paper');
-            if (papers[index]) {
+            var paperList = document.querySelectorAll('#report-papers .report-paper');
+            if (paperList[index]) {
                 setCurrentPage(index);
-                papers[index].scrollIntoView({ behavior: 'smooth', block: 'start' });
+                paperList[index].scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
             return;
         }
@@ -5367,11 +2550,15 @@
     }
     window.addEventListener('resize', function () {
         applyReportTabViewport();
-        refreshPairWidthsIfStale();
+        if (R.refreshPairWidthsIfStale) {
+            R.refreshPairWidthsIfStale();
+        }
     });
     if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(function () {
-            PAIR_WIDTHS.forEach(syncPairColumnWidths);
+            if (R.PAIR_WIDTHS && R.syncPairColumnWidths) {
+                R.PAIR_WIDTHS.forEach(R.syncPairColumnWidths);
+            }
         });
     }
     applyReportTabViewport();
@@ -5383,7 +2570,9 @@
         }
         if (workspace.dataset.booted === '1') {
             restoreVisiblePage();
-            refreshPairWidthsIfStale();
+            if (R.refreshPairWidthsIfStale) {
+                R.refreshPairWidthsIfStale();
+            }
             return;
         }
         bootReport();

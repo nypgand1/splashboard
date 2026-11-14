@@ -74,7 +74,7 @@ ROTATION_ERROR = 'Could not load rotation.'
 SHOT_CHART_DEFAULT_H = 10
 SHOT_CHART_EMPTY = 'No shot chart for this game.'
 SHOT_CHART_ERROR = 'Could not load shot chart.'
-HEADER_CREDIT = 'Design by Wei-Hao Lin'
+HEADER_CREDIT = 'Designed by Wei-Hao Lin'
 
 
 def layout_storage_key(game_id):
@@ -117,6 +117,7 @@ def pdf_export_spec():
         'filename': 'match_date_yyyymmdd',
         'filename_fallback': PDF_FILENAME_FALLBACK,
         'engine': 'jspdf_dom',
+        'compress': True,
         'text': 'selectable',
         'visual': 'approximate',
         'font': 'Noto Sans TC',

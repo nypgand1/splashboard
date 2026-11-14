@@ -343,6 +343,7 @@ def layout():
                     'opponent': OPPONENT_ALL,
                     'stadium': STADIUM_ALL,
                     'site': SITE_ALL,
+                    'period': 'all',
                 },
             ),
             dmc.Tabs(
@@ -572,10 +573,7 @@ clientside_callback(
         ) {
             return [skip, skip, skip, skip, skip];
         }
-        var cards = skip;
-        if (current.team && current.team !== 'all' && (team === 'all' || team == null)) {
-            cards = __LOADING_BODY__;
-        }
+        var cards = __LOADING_BODY__;
         var chart = __CHART_LOADING__;
         var shot = skip;
         var lineup = skip;
@@ -615,6 +613,28 @@ clientside_callback(
 
 clientside_callback(
     """
+    function(period, painted) {
+        var current = painted || {};
+        var next = period == null || period === '' ? 'all' : period;
+        var prev = current.period == null || current.period === '' ? null : current.period;
+        if (prev == null && next == 'all') {
+            return window.dash_clientside.no_update;
+        }
+        if (prev != null && next == prev) {
+            return window.dash_clientside.no_update;
+        }
+        return __LOADING_BODY__;
+    }
+    """.replace('__LOADING_BODY__', _LOADING_BODY),
+    Output('ts-body', 'children', allow_duplicate=True),
+    Input('ts-period', 'value'),
+    State('ts-slice', 'data'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
     function() {
         var api = window.dash_clientside && window.dash_clientside.filter_pack;
         if (api && api.sync) {
@@ -635,37 +655,10 @@ clientside_callback(
 clientside_callback(
     """
     function(teamOptions, opponentLabels, stadiumOptions) {
-        function fill(id, options, fallback) {
-            var host = document.getElementById(id);
-            if (!host) {
-                return;
-            }
-            var labels = [];
-            (options || []).forEach(function (item) {
-                if (item && item.label) {
-                    labels.push(String(item.label));
-                } else if (typeof item === 'string' && item) {
-                    labels.push(item);
-                }
-            });
-            if (!labels.length) {
-                labels.push(fallback);
-            }
-            while (host.firstChild) {
-                host.removeChild(host.firstChild);
-            }
-            labels.forEach(function (label) {
-                var span = document.createElement('span');
-                span.className = 'home-team-sizer-probe';
-                span.setAttribute('aria-hidden', 'true');
-                span.textContent = label;
-                host.appendChild(span);
-            });
-        }
-        fill('ts-team-probes', teamOptions, 'All Teams');
-        fill('ts-opponent-probes', opponentLabels, 'vs All Teams');
-        fill('ts-stadium-probes', stadiumOptions, 'All Stadiums');
         var api = window.dash_clientside && window.dash_clientside.filter_pack;
+        if (api && api.fillProbes) {
+            api.fillProbes(teamOptions, opponentLabels, stadiumOptions);
+        }
         if (api && api.sync) {
             api.sync();
             window.setTimeout(api.sync, 0);
@@ -881,6 +874,7 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
             'opponent': selected_opponent,
             'stadium': selected_stadium,
             'site': selected_site,
+            'period': selected_period,
         },
         chips,
         period_out,

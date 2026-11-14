@@ -187,12 +187,12 @@ def filter_pack(pack_id, clusters):
     return dmc.Box(nodes, id=pack_id, className='filter-pack')
 
 
-def sized_select(select_id, probe_id, label, data, value, probe_class='ts-sizer-probes'):
+def sized_select(select_id, probe_id, label, data, value, probe_class='select-sizer-probes'):
     probe_spans = (
         [
             html.Span(
                 item,
-                className='home-team-sizer-probe',
+                className='select-sizer-probe',
                 **{'aria-hidden': 'true'},
             )
             for item in label
@@ -200,7 +200,7 @@ def sized_select(select_id, probe_id, label, data, value, probe_class='ts-sizer-
         if isinstance(label, (list, tuple))
         else html.Span(
             label,
-            className='home-team-sizer-probe',
+            className='select-sizer-probe',
             **{'aria-hidden': 'true'},
         )
     )
@@ -211,7 +211,7 @@ def sized_select(select_id, probe_id, label, data, value, probe_class='ts-sizer-
         probe_props['className'] = probe_class
     return html.Div(
         [
-            html.Div(**probe_props) if probe_id is not None else html.Div(probe_spans),
+            html.Div(**probe_props),
             dmc.Select(
                 id=select_id,
                 data=data,
@@ -223,7 +223,7 @@ def sized_select(select_id, probe_id, label, data, value, probe_class='ts-sizer-
                 radius='md',
                 comboboxProps={'withinPortal': True},
                 rightSectionWidth=28,
-                className='home-team-sizer-control',
+                className='select-sizer-control',
                 styles={
                     'wrapper': {'width': '100%'},
                     'input': {
@@ -234,7 +234,7 @@ def sized_select(select_id, probe_id, label, data, value, probe_class='ts-sizer-
                 },
             ),
         ],
-        className='home-team-sizer',
+        className='select-sizer',
     )
 
 

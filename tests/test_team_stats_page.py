@@ -64,7 +64,7 @@ class TeamStatsChromeTests(unittest.TestCase):
     def test_chart_skeleton_is_written_on_intent_and_slice_changes(self):
         text = Path('pages/team_stats.py').read_text(encoding='utf-8')
         self.assertIn("Output('ts-rotation', 'children', allow_duplicate=True)", text)
-        self.assertIn("current.team !== 'all'", text)
+        self.assertIn('var cards = __LOADING_BODY__;', text)
         self.assertIn('loading_skeleton(\'chart\')', text)
         self.assertIn('sameLeague ? seasonValue : null', text)
         listed = _callbacks('ts-rotation.children')
@@ -94,7 +94,7 @@ class TeamStatsCallbackTests(unittest.TestCase):
         listed = _callbacks('ts-body.children')
         clientside = [item for item in listed if item.get('clientside_function')]
         server = [item for item in listed if not item.get('clientside_function')]
-        self.assertEqual(len(clientside), 2)
+        self.assertEqual(len(clientside), 3)
         self.assertEqual(len(server), 4)
         intent_body = next(
             item for item in clientside
@@ -110,6 +110,16 @@ class TeamStatsCallbackTests(unittest.TestCase):
         )
         self.assertIn(('ts-slice', 'data'), _pairs(slice_body['state']))
         self.assertTrue(slice_body['prevent_initial_call'])
+        period_body = next(
+            item for item in clientside
+            if _pairs(item['inputs']) == [('ts-period', 'value')]
+        )
+        self.assertEqual(_pairs(period_body['state']), [('ts-slice', 'data')])
+        self.assertTrue(period_body['prevent_initial_call'])
+        source = Path('pages/team_stats.py').read_text(encoding='utf-8')
+        self.assertIn('current.period', source)
+        store = next(node for node in _walk(team_stats_page.layout()) if getattr(node, 'id', None) == 'ts-slice')
+        self.assertEqual(store.data.get('period'), 'all')
 
         bridge = _callbacks('ts-intent.data')
         self.assertEqual(len(bridge), 1)

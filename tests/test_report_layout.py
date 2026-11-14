@@ -314,6 +314,7 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(spec['filename'], 'match_date_yyyymmdd')
         self.assertEqual(spec['filename_fallback'], 'splashboard-report.pdf')
         self.assertEqual(spec['engine'], 'jspdf_dom')
+        self.assertTrue(spec['compress'])
         self.assertEqual(spec['text'], 'selectable')
         self.assertEqual(spec['visual'], 'approximate')
         self.assertEqual(spec['font'], 'Noto Sans TC')
@@ -339,6 +340,23 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertEqual(spec['fallback'], 'print')
         self.assertEqual(spec['export_busy'], 'disable_button')
         self.assertNotEqual(spec['engine'], 'html2canvas')
+
+    def test_report_keeps_jersey_zero_and_flate_compresses_pdf(self):
+        import os
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets')
+        with open(os.path.join(assets_dir, 'report_blocks.js'), encoding='utf-8') as handle:
+            blocks_js = handle.read()
+        with open(os.path.join(assets_dir, 'report_pdf.js'), encoding='utf-8') as handle:
+            pdf_js = handle.read()
+        blank = blocks_js.split('function isBlankZero', 1)[1].split('function formatCell', 1)[0]
+        self.assertIn("col === '+/-' || col === '#'", blank)
+        self.assertIn("val === 0 || val === '0' || val === '0.0'", blank)
+        export_fn = pdf_js.split('function exportPapersToPdf', 1)[1].split('Object.assign(R, {', 1)[0]
+        self.assertIn('compress: true', export_fn)
+        self.assertNotIn("'FAST'", export_fn)
+        self.assertNotIn('"FAST"', export_fn)
+        measurer = blocks_js.split('function pdfMeasurerDoc', 1)[1].split('function armPdfHeaderMeasure', 1)[0]
+        self.assertNotIn('compress: true', measurer)
 
     def test_pdf_filename_uses_match_date(self):
         if report_layout is None:
@@ -368,7 +386,7 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         js_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
             'assets',
-            'report_canvas.js',
+            'report_blocks.js',
         )
         with open(js_path, 'r') as f:
             js = f.read()
@@ -388,8 +406,10 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
     def test_report_pair_tables_share_stat_widths(self):
         import os
         root = os.path.dirname(os.path.dirname(__file__))
-        with open(os.path.join(root, 'assets', 'report_canvas.js'), encoding='utf-8') as handle:
+        with open(os.path.join(root, 'assets', 'report_blocks.js'), encoding='utf-8') as handle:
             js = handle.read()
+        with open(os.path.join(root, 'assets', 'report_pdf.js'), encoding='utf-8') as handle:
+            pdf_js = handle.read()
         self.assertIn('function syncPairColumnWidths', js)
         self.assertIn("['p_df_home', 'p_df_away']", js)
         self.assertIn("['lineup_home', 'lineup_away']", js)
@@ -408,27 +428,25 @@ class ReadOnlyAndPdfContractTests(unittest.TestCase):
         self.assertIn('+ 0.8', header_floor)
         self.assertIn('pdf.getTextWidth(text)', header_floor)
         self.assertIn('function armPdfHeaderMeasure', js)
-        export_fn = js.split('function exportPapersToPdf', 1)[1].split('function validateImageFile', 1)[0]
-        self.assertIn('pdfMeasurer = pdf', export_fn)
-        self.assertIn('PAIR_WIDTHS.forEach(syncPairColumnWidths)', export_fn)
-        measure = js.split('function measureTableMaxContentWidth', 1)[1].split('function contentFloor', 1)[0]
+        export_fn = pdf_js.split('function exportPapersToPdf', 1)[1].split('Object.assign(R, {', 1)[0]
+        self.assertIn('state.pdfMeasurer = pdf', export_fn)
+        self.assertIn('R.PAIR_WIDTHS.forEach(R.syncPairColumnWidths)', export_fn)
+        measure = js.split('function measureTableMaxContentWidth', 1)[1].split('function csvBlockTitle', 1)[0]
         self.assertIn("querySelector('colgroup')", measure)
         self.assertIn('cg.remove()', measure)
         with open(os.path.join(root, 'assets', 'ag_grid_cells.js'), encoding='utf-8') as handle:
             cells = handle.read()
-        pad = cells.split('function _lineupPad', 1)[1].split('function _lineupLabel', 1)[0]
+        pad = cells.split('function readLineupCellPadding', 1)[1].split('function readLineupRowLabel', 1)[0]
         self.assertIn('borderLeftWidth', pad)
         self.assertIn('borderRightWidth', pad)
 
     def test_pdf_draw_uses_separate_scale_middle_baseline_and_fake_bold(self):
         import os
-        js_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            'assets',
-            'report_canvas.js',
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets')
+        js = '\n'.join(
+            open(os.path.join(assets_dir, name), encoding='utf-8').read()
+            for name in ('report_blocks.js', 'report_canvas.js', 'report_pdf.js')
         )
-        with open(js_path, 'r') as f:
-            js = f.read()
         self.assertIn('function paperScale', js)
         self.assertIn('A4_WIDTH_MM = 210', js)
         self.assertIn('A4_HEIGHT_MM = 297', js)
@@ -527,7 +545,7 @@ class ReportTableComponentTests(unittest.TestCase):
         meta_row = header.children[1].children
         meta = meta_row[1].children
         credit = meta_row[2].children
-        self.assertEqual(credit, 'Design by Wei-Hao Lin')
+        self.assertEqual(credit, 'Designed by Wei-Hao Lin')
         self.assertIn('Braves', title)
         self.assertIn('Lions', title)
         self.assertIn('88', title)
@@ -547,11 +565,11 @@ class ReportTableComponentTests(unittest.TestCase):
 
     def test_report_canvas_drops_lineup_slice_and_keeps_se_handle(self):
         import os
-        js_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), 'assets', 'report_canvas.js'
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets')
+        js = '\n'.join(
+            open(os.path.join(assets_dir, name), encoding='utf-8').read()
+            for name in ('report_blocks.js', 'report_canvas.js', 'report_pdf.js')
         )
-        with open(js_path, 'r', encoding='utf-8') as handle:
-            js = handle.read()
         self.assertNotIn('function maxLineupRows', js)
         self.assertNotIn('rows.slice(0, maxLineupRows', js)
         self.assertIn('snapImageAspect', js)
@@ -585,11 +603,10 @@ class ReportTableComponentTests(unittest.TestCase):
         estimate = js.split('function shotChartEstimatePx', 1)[1].split('function whenImageReady', 1)[0]
         self.assertIn('SHOT_COURT_SCALE', estimate)
         self.assertNotIn('(width - 24) / 2', estimate)
-        css_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css'
+        css = '\n'.join(
+            open(os.path.join(assets_dir, name), encoding='utf-8').read()
+            for name in ('report.css', 'tables.css')
         )
-        with open(css_path, 'r', encoding='utf-8') as handle:
-            css = handle.read()
         court_css = css.split('.report-shot-chart-host', 1)[1].split('.report-shot-chart-empty', 1)[0]
         self.assertIn('--shot-court-w: 285.0375px', court_css)
         self.assertIn('font-size: 12px', court_css)
@@ -634,7 +651,7 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn("text.replace(/[\\r\\n]+/g, ' ')", js)
         self.assertIn('insertParagraph', js)
         self.assertIn('blockLocksSize(block.type) ? w : 1', js)
-        csv_bind = js.split('function bindCsvTitles', 1)[1].split('function makePageDeleteButton', 1)[0]
+        csv_bind = js.split('function bindCsvTitles', 1)[1].split('function initScrollSpy', 1)[0]
         self.assertNotIn('showNoteToolbar', csv_bind)
         menu_css = css.split('.report-table-menu {', 1)[1].split('}', 1)[0]
         self.assertNotIn('min-width: 280px', menu_css)
@@ -680,11 +697,11 @@ class ReportTableComponentTests(unittest.TestCase):
     def test_note_pdf_and_paste_drop_invisible_chars(self):
         import os
         import re
-        js_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), 'assets', 'report_canvas.js'
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets')
+        js = '\n'.join(
+            open(os.path.join(assets_dir, name), encoding='utf-8').read()
+            for name in ('report_blocks.js', 'report_canvas.js', 'report_pdf.js')
         )
-        with open(js_path, 'r', encoding='utf-8') as handle:
-            js = handle.read()
         found = re.search(r'var REPORT_INVISIBLE_CHARS = (/.*?/g);', js)
         self.assertIsNotNone(found)
         body = found.group(1)[1:-2]
@@ -1103,7 +1120,7 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertNotIn('mantine_provider_scope', chrome)
         self.assertEqual(chrome['header_size'], 'compact')
         self.assertEqual(chrome['header_line_gap'], 'loose')
-        self.assertEqual(chrome['header_credit'], 'Design by Wei-Hao Lin')
+        self.assertEqual(chrome['header_credit'], 'Designed by Wei-Hao Lin')
         self.assertEqual(chrome['paper_padding_top'], '4mm')
         self.assertEqual(chrome['header_padding_bottom'], '2mm')
         self.assertEqual(chrome['header_credit_size'], '9px')
@@ -1403,7 +1420,7 @@ class NavbarDmcContractTests(unittest.TestCase):
         self.assertIn('app-section-team-stats', markup)
         self.assertIn('app-navbar-menu-button', markup)
         self.assertIn('Menu', markup)
-        self.assertIn('Design by Wei-Hao Lin', markup)
+        self.assertIn('Designed by Wei-Hao Lin', markup)
         self.assertIn('app-navbar-credit', markup)
         self.assertFalse(_credit_is_inside_anchor(nav))
         self.assertEqual([page['label'] for page in PAGE_LINKS], ['Schedule', 'Team Stats'])
@@ -1415,7 +1432,7 @@ def _credit_is_inside_anchor(node, inside_anchor=False):
     children = getattr(node, 'children', None)
     nodes = children if isinstance(children, (list, tuple)) else [children]
     for child in nodes:
-        if child == 'Design by Wei-Hao Lin' and here:
+        if child == 'Designed by Wei-Hao Lin' and here:
             return True
         if hasattr(child, 'children') and _credit_is_inside_anchor(child, here):
             return True
@@ -1438,9 +1455,11 @@ class TableDmcAndAgGridContractTests(unittest.TestCase):
 
     def test_game_page_uses_ag_grid_for_player_and_lineup(self):
         import os
-        game_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'game.py')
-        with open(game_path, 'r') as f:
-            code = f.read()
+        root = os.path.dirname(os.path.dirname(__file__))
+        code = '\n'.join(
+            open(os.path.join(root, *parts), 'r').read()
+            for parts in (('pages', 'game.py'), ('ui', 'game_tabs', 'box_score.py'))
+        )
         self.assertIn('dag.AgGrid', code)
         self.assertIn('domLayout', code)
 
@@ -1481,9 +1500,11 @@ class DbcEliminationContractTests(unittest.TestCase):
 class AlignmentAndRwdContractTests(unittest.TestCase):
     def test_css_defines_rwd_media_queries_and_alignment_rules(self):
         import os
-        css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css')
-        with open(css_path, 'r') as f:
-            css = f.read()
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets')
+        css = '\n'.join(
+            open(os.path.join(assets_dir, name), encoding='utf-8').read()
+            for name in ('app.css', 'tables.css', 'report.css')
+        )
         self.assertIn('@media (max-width: 768px)', css)
         self.assertIn('@media (max-width: 1024px) and (min-width: 769px)', css)
         self.assertIn('overflow-x: auto', css)
@@ -1533,10 +1554,10 @@ class AlignmentAndRwdContractTests(unittest.TestCase):
         bleed_block = css[bleed_at:css.find('}', bleed_at)]
         self.assertIn('margin-left: -18px', bleed_block)
         self.assertIn('margin-right: -18px', bleed_block)
-        stick_path = os.path.join(os.path.dirname(css_path), 'table_header_stick.js')
+        stick_path = os.path.join(assets_dir, 'table_header_stick.js')
         with open(stick_path, 'r') as handle:
             stick = handle.read()
-        refresh = stick.split('function refresh()', 1)[1].split('function schedule()', 1)[0]
+        refresh = stick.split('function refreshStickyHeaders()', 1)[1].split('function scheduleStickyHeaderRefresh()', 1)[0]
         self.assertIn("querySelectorAll('.braves-clean-table')", refresh)
         self.assertNotIn('report-js-table', refresh)
         self.assertIn("querySelectorAll('.braves-clean-ag-grid')", refresh)

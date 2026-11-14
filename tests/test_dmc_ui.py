@@ -1639,23 +1639,26 @@ class PageDeleteSvgTests(unittest.TestCase):
         js_path = os.path.join(REPO, 'assets', 'report_canvas.js')
         with open(js_path, 'r', encoding='utf-8') as handle:
             js = handle.read()
-        self.assertIn('<svg', js)
+        self.assertNotIn('makePageDeleteButton', js)
         self.assertNotIn('bi-x-lg', js)
         self.assertNotIn('LIVE 🔴', js)
         self.assertNotIn('ScheduleStatusBadge', js)
         self.assertNotIn('ScheduleScoreLink', js)
 
     def test_table_pan_is_bound_without_visible_scrollbar_contract(self):
-        js_path = os.path.join(REPO, 'assets', 'ag_grid_cells.js')
-        css_path = os.path.join(REPO, 'assets', 'report.css')
-        with open(js_path, 'r', encoding='utf-8') as handle:
+        pan_path = os.path.join(REPO, 'assets', 'table_scroll.js')
+        cells_path = os.path.join(REPO, 'assets', 'ag_grid_cells.js')
+        css_path = os.path.join(REPO, 'assets', 'tables.css')
+        with open(pan_path, 'r', encoding='utf-8') as handle:
+            pan_js = handle.read()
+        with open(cells_path, 'r', encoding='utf-8') as handle:
             js = handle.read()
         with open(css_path, 'r', encoding='utf-8') as handle:
             css = handle.read()
-        self.assertIn('bindTablePan', js)
-        self.assertIn('ag-center-cols-viewport', js)
-        self.assertIn('panMoved', js)
-        self.assertIn('is-scrollable', js)
+        self.assertIn('bindTablePan', pan_js)
+        self.assertIn('ag-center-cols-viewport', pan_js)
+        self.assertIn('panMoved', pan_js)
+        self.assertIn('is-scrollable', pan_js)
         self.assertIn('cursor: grab', css)
         self.assertIn('cursor: grabbing', css)
         self.assertIn('.is-scrollable', css)
@@ -1665,7 +1668,7 @@ class PageDeleteSvgTests(unittest.TestCase):
         self.assertIn('.braves-clean-table tbody td:first-child', css)
         self.assertNotIn('.braves-clean-table th:first-child,', css)
         self.assertNotIn('.braves-clean-table td:first-child', css)
-        fit = js.split('function _applyLineupWidth')[1].split('function splashboardFitLineupWidth')[0]
+        fit = js.split('function applyLineupColumnWidth')[1].split('function splashboardFitLineupWidth')[0]
         self.assertLess(fit.index('if (unchanged)'), fit.index('api.setColumnWidths(updates)'))
         self.assertLess(fit.index('api.setColumnWidths(updates)'), fit.index('api.resetRowHeights()'))
 

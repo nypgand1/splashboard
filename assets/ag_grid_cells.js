@@ -1,4 +1,4 @@
-// AG-Grid custom cell renderers for Dash AG-Grid
+// AG-Grid custom cell renderers, Lineup column width fitting, and sort column highlight
 var dagFuncs = window.dashAgGridFunctions = window.dashAgGridFunctions || {};
 
 window.__lineupShowOpp = false;
@@ -64,11 +64,11 @@ function splashboardLineupColumnWidth(clientWidth, statsSum, designedLineup, tex
 }
 window.splashboardLineupColumnWidth = splashboardLineupColumnWidth;
 
-var _lineupFitting = false;
-var _lineupWidthByApi = new WeakMap();
-var _lineupMeasureCanvas;
+var lineupFitting = false;
+var lineupWidthByApi = new WeakMap();
+var lineupMeasureCanvas;
 
-function _lineupApi(id) {
+function getLineupGridApi(id) {
     var el = document.getElementById(id);
     if (!el || !window.dash_ag_grid || !window.dash_ag_grid.getApi) {
         return null;
@@ -84,23 +84,23 @@ function _lineupApi(id) {
     }
 }
 
-function _lineupHostWidth(api) {
+function readLineupHostWidth(api) {
     var ids = ['lineup-grid-0', 'lineup-grid-1', 'matchup-grid', 'ts-lineup-grid', 'ts-matchup-grid'];
     for (var i = 0; i < ids.length; i++) {
-        if (_lineupApi(ids[i]) === api) {
+        if (getLineupGridApi(ids[i]) === api) {
             return document.getElementById(ids[i]).clientWidth;
         }
     }
     return 0;
 }
 
-function _lineupPeers(api) {
-    if (_lineupApi('matchup-grid') === api || _lineupApi('ts-matchup-grid') === api || _lineupApi('ts-lineup-grid') === api) {
+function collectLineupPeerApis(api) {
+    if (getLineupGridApi('matchup-grid') === api || getLineupGridApi('ts-matchup-grid') === api || getLineupGridApi('ts-lineup-grid') === api) {
         return [api];
     }
     var peers = [];
     ['lineup-grid-0', 'lineup-grid-1', 'ts-lineup-grid'].forEach(function (id) {
-        var peer = _lineupApi(id);
+        var peer = getLineupGridApi(id);
         if (peer) {
             peers.push(peer);
         }
@@ -116,7 +116,7 @@ function _lineupPeers(api) {
     return [api];
 }
 
-function _lineupFont() {
+function readLineupCellFont() {
     var cell = document.querySelector(
         '.braves-lineup-grid .ag-row:not(.lineup-opp-row) .ag-cell[col-id="Lineup"], .braves-lineup-grid .ag-row:not(.lineup-opp-row) .ag-cell[col-id="Lineups"]'
     );
@@ -127,7 +127,7 @@ function _lineupFont() {
     return (cs.fontWeight || '700') + ' ' + (cs.fontSize || '13px') + ' ' + (cs.fontFamily || 'sans-serif');
 }
 
-function _lineupPad() {
+function readLineupCellPadding() {
     var cell = document.querySelector(
         '.braves-lineup-grid .ag-cell[col-id="Lineup"], .braves-lineup-grid .ag-cell[col-id="Lineups"]'
     );
@@ -139,7 +139,7 @@ function _lineupPad() {
         + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0);
 }
 
-function _lineupLabel(data, matchup) {
+function readLineupRowLabel(data, matchup) {
     if (!data) {
         return '';
     }
@@ -149,20 +149,20 @@ function _lineupLabel(data, matchup) {
     return data.Lineup || data.Lineups || '';
 }
 
-function _lineupTextWidth(api) {
-    var matchup = _lineupApi('matchup-grid') === api || _lineupApi('ts-matchup-grid') === api;
-    var pad = _lineupPad();
+function measureLineupTextWidth(api) {
+    var matchup = getLineupGridApi('matchup-grid') === api || getLineupGridApi('ts-matchup-grid') === api;
+    var pad = readLineupCellPadding();
     var widest = 0;
     if (!api.forEachNode) {
         return 0;
     }
-    if (!_lineupMeasureCanvas) {
-        _lineupMeasureCanvas = document.createElement('canvas');
+    if (!lineupMeasureCanvas) {
+        lineupMeasureCanvas = document.createElement('canvas');
     }
-    var ctx = _lineupMeasureCanvas.getContext('2d');
-    ctx.font = _lineupFont();
+    var ctx = lineupMeasureCanvas.getContext('2d');
+    ctx.font = readLineupCellFont();
     api.forEachNode(function (node) {
-        var text = _lineupLabel(node && node.data, matchup);
+        var text = readLineupRowLabel(node && node.data, matchup);
         if (!text) {
             return;
         }
@@ -171,7 +171,7 @@ function _lineupTextWidth(api) {
     return widest;
 }
 
-function _applyLineupWidth(api, clientWidth, textWidth) {
+function applyLineupColumnWidth(api, clientWidth, textWidth) {
     if (!api.getColumns || !api.setColumnWidths) {
         return;
     }
@@ -218,35 +218,35 @@ function _applyLineupWidth(api, clientWidth, textWidth) {
 
 function splashboardFitLineupWidth(params) {
     var api = params && params.api;
-    if (_lineupFitting || !api || (api.isDestroyed && api.isDestroyed())) {
+    if (lineupFitting || !api || (api.isDestroyed && api.isDestroyed())) {
         return;
     }
     var width = params.clientWidth;
     if (!(width > 0)) {
-        width = _lineupHostWidth(api);
+        width = readLineupHostWidth(api);
     }
     if (!(width > 0)) {
         return;
     }
-    _lineupFitting = true;
+    lineupFitting = true;
     try {
-        _lineupWidthByApi.set(api, width);
-        var peers = _lineupPeers(api);
+        lineupWidthByApi.set(api, width);
+        var peers = collectLineupPeerApis(api);
         var textWidth = 0;
         peers.forEach(function (peer) {
-            textWidth = Math.max(textWidth, _lineupTextWidth(peer));
+            textWidth = Math.max(textWidth, measureLineupTextWidth(peer));
         });
         peers.forEach(function (peer) {
-            var peerWidth = peer === api ? width : _lineupWidthByApi.get(peer);
+            var peerWidth = peer === api ? width : lineupWidthByApi.get(peer);
             if (!(peerWidth > 0)) {
-                peerWidth = _lineupHostWidth(peer);
+                peerWidth = readLineupHostWidth(peer);
             }
             if (peerWidth > 0) {
-                _applyLineupWidth(peer, peerWidth, textWidth);
+                applyLineupColumnWidth(peer, peerWidth, textWidth);
             }
         });
     } finally {
-        _lineupFitting = false;
+        lineupFitting = false;
     }
 }
 window.splashboardFitLineupWidth = splashboardFitLineupWidth;
@@ -334,162 +334,3 @@ dagComponentFuncs.StarterCell = function (props) {
         }
     }, true);
 })();
-
-(function bindTablePan() {
-    var MOVE_PX = 4;
-
-    function scrollerFor(host) {
-        if (host.classList.contains('braves-table-scroll')) {
-            return host;
-        }
-        return host.querySelector('.ag-center-cols-viewport');
-    }
-
-    function updateScrollable(host, scroller) {
-        if (!host || !scroller) {
-            return;
-        }
-        var on = scroller.scrollWidth > scroller.clientWidth + 1;
-        host.classList.toggle('is-scrollable', on);
-        scroller.classList.toggle('is-scrollable', on);
-    }
-
-    function bindHost(host) {
-        if (!host || host.closest('.report-paper, .report-workspace')) {
-            return;
-        }
-        var scroller = scrollerFor(host);
-        if (!scroller) {
-            return;
-        }
-        if (host.dataset.tablePanBound === '1') {
-            updateScrollable(host, scroller);
-            return;
-        }
-        host.dataset.tablePanBound = '1';
-        var dragging = false;
-        var moved = false;
-        var startX = 0;
-        var startScroll = 0;
-        updateScrollable(host, scroller);
-
-        host.addEventListener('mousedown', function (event) {
-            if (event.button !== 0) {
-                return;
-            }
-            if (!host.classList.contains('is-scrollable')) {
-                return;
-            }
-            var sortHit = event.target.closest('.ts-sort-hit');
-            if (!sortHit && event.target.closest('.ag-header, .ag-header-cell-resize, button, input, textarea, [contenteditable="true"]')) {
-                return;
-            }
-            dragging = true;
-            moved = false;
-            startX = event.clientX;
-            startScroll = scroller.scrollLeft;
-            host.classList.add('is-dragging');
-            scroller.classList.add('is-dragging');
-            if (!sortHit) {
-                event.preventDefault();
-            }
-        });
-
-        window.addEventListener('mousemove', function (event) {
-            if (!dragging) {
-                return;
-            }
-            var dx = event.clientX - startX;
-            if (Math.abs(dx) >= MOVE_PX) {
-                moved = true;
-            }
-            scroller.scrollLeft = startScroll - dx;
-            if (moved) {
-                event.preventDefault();
-            }
-        });
-
-        window.addEventListener('mouseup', function () {
-            if (!dragging) {
-                return;
-            }
-            dragging = false;
-            host.classList.remove('is-dragging');
-            scroller.classList.remove('is-dragging');
-            if (moved) {
-                host.dataset.panMoved = '1';
-            }
-        });
-
-        host.addEventListener('click', function (event) {
-            if (host.dataset.panMoved === '1') {
-                event.preventDefault();
-                event.stopPropagation();
-                host.dataset.panMoved = '';
-            }
-        }, true);
-    }
-
-    function scan() {
-        document.querySelectorAll('.braves-table-scroll').forEach(bindHost);
-        document.querySelectorAll('.ag-theme-alpine.braves-clean-ag-grid').forEach(bindHost);
-    }
-
-    var observer = new MutationObserver(scan);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-    var resizeTimer = null;
-    window.addEventListener('resize', function () {
-        if (resizeTimer) {
-            clearTimeout(resizeTimer);
-        }
-        resizeTimer = setTimeout(scan, 200);
-    });
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', scan);
-    } else {
-        scan();
-    }
-})();
-
-(function keepBoxScoreScroll() {
-    window.__bsScrollSaved = window.__bsScrollSaved || {};
-    if (window.__bsScrollKeep === undefined) {
-        window.__bsScrollKeep = true;
-    }
-
-    function remember(el) {
-        if (!window.__bsScrollKeep || !el || !el.id || !el.classList) {
-            return;
-        }
-        if (!el.classList.contains('braves-table-scroll') || !el.closest('#pane-bs')) {
-            return;
-        }
-        window.__bsScrollSaved[el.id] = {left: el.scrollLeft, top: el.scrollTop};
-    }
-
-    document.addEventListener('scroll', function (event) {
-        remember(event.target);
-    }, true);
-
-    var observer = new MutationObserver(function () {
-        if (!window.__bsScrollKeep) {
-            window.__bsScrollSaved = {};
-            return;
-        }
-        Object.keys(window.__bsScrollSaved).forEach(function (id) {
-            var el = document.getElementById(id);
-            var pos = window.__bsScrollSaved[id];
-            if (!el || !pos) {
-                return;
-            }
-            if (el.scrollLeft !== pos.left) {
-                el.scrollLeft = pos.left;
-            }
-            if (el.scrollTop !== pos.top) {
-                el.scrollTop = pos.top;
-            }
-        });
-    });
-    observer.observe(document.documentElement, {childList: true, subtree: true});
-})();
-

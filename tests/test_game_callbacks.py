@@ -830,7 +830,7 @@ class TabsDmcContractTests(unittest.TestCase):
 
     def test_narrow_game_tabs_use_a_three_column_grid(self):
         import os
-        css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'report.css')
+        css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets', 'app.css')
         with open(css_path, 'r') as handle:
             css = handle.read()
         narrow = css.split('@media (max-width: 767px)', 1)[1].split('@media', 1)[0]
@@ -846,6 +846,9 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15)', phone)
         self.assertIn('margin: 0 !important', phone)
         self.assertNotIn('border-radius: 0', phone)
+        self.assertIn('.mantine-Select-input', phone)
+        self.assertIn('.select-sizer-probe', phone)
+        self.assertIn('font-size: max(1rem, 1em)', phone)
 
 
 def _shot_frame():
@@ -1000,9 +1003,11 @@ class ShotChartUiTests(unittest.TestCase):
 class GridDmcContractTests(unittest.TestCase):
     def test_game_page_uses_dmc_simple_grid_without_dbc_row_col(self):
         import os
-        page_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pages', 'game.py')
-        with open(page_path, 'r') as f:
-            code = f.read()
+        root = os.path.dirname(os.path.dirname(__file__))
+        code = '\n'.join(
+            open(os.path.join(root, *parts), 'r').read()
+            for parts in (('pages', 'game.py'), ('ui', 'game_tabs', 'box_score.py'))
+        )
         self.assertIn('dmc.SimpleGrid', code)
         self.assertIn('"lg": 3', code)
         self.assertIn('"lg": 2', code)
