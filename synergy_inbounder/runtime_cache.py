@@ -483,3 +483,5 @@ def clear_runtime_caches():
     clear_live_clocks()
     from synergy_inbounder.publisher import reset as reset_publisher
     reset_publisher()
+    from synergy_inbounder.player_minutes_log import reset_player_minutes_log
+    reset_player_minutes_log()

@@ -43,6 +43,14 @@ Official live routes are marked **2 requests per minute** per route. PLG and EAS
 
 Home calls `summary/live` only for `IN_PROGRESS` fixtures visible under the league, Show, and Game Type on screen, earliest `startTimeLocal` first. It reads `status.periodId` and `clock.main`. It ignores `clock.running`. It does not call `acquire()`. When the local window is full, the rest of that list is not sent. The game banner does not call this route. It uses the play-by-play already loaded for that game.
 
+## Player minutes log
+
+`Parser.parse_game_bundle` writes `synergy.live.minutes` at INFO. The prefix is `player-minutes`. The box score display is unchanged. A live bundle is logged. An official bundle for that same organization and fixture is logged only after this process has already logged a live bundle for it. Other official games stay quiet. A repeat snapshot with the same gap counts and the same gap rows writes nothing.
+
+`missing` counts totals rows whose `statistics` object has no `minutes` key, or whose value is null or a blank string. `missing_with_counts` also requires a non-zero counting stat. A row line records `starter`, `participated`, `minutes`, `present` (`missing`, `null`, or `blank`), and `points`. `period=all` is the totals row. A period row uses its `periodId`. When a totals row has no `minutes` key, one `keys=` line lists the sorted statistics names for that route, once. A later duration for a logged gap writes `filled`. A failed player-totals payload writes `failed=1` and no row lines.
+
+The official follow-up lives in this process only. A restart or a Fly sleep before the official refetch drops it. Grep `player-minutes` in that process's stdout.
+
 ## Response envelope
 
 - Success: JSON has `data`.
