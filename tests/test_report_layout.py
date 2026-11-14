@@ -545,7 +545,7 @@ class ReportTableComponentTests(unittest.TestCase):
         meta_row = header.children[1].children
         meta = meta_row[1].children
         credit = meta_row[2].children
-        self.assertEqual(credit, 'Design by Wei-Hao Lin')
+        self.assertEqual(credit, 'Designed by Wei-Hao Lin')
         self.assertIn('Braves', title)
         self.assertIn('Lions', title)
         self.assertIn('88', title)
@@ -1120,7 +1120,7 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertNotIn('mantine_provider_scope', chrome)
         self.assertEqual(chrome['header_size'], 'compact')
         self.assertEqual(chrome['header_line_gap'], 'loose')
-        self.assertEqual(chrome['header_credit'], 'Design by Wei-Hao Lin')
+        self.assertEqual(chrome['header_credit'], 'Designed by Wei-Hao Lin')
         self.assertEqual(chrome['paper_padding_top'], '4mm')
         self.assertEqual(chrome['header_padding_bottom'], '2mm')
         self.assertEqual(chrome['header_credit_size'], '9px')
@@ -1420,7 +1420,7 @@ class NavbarDmcContractTests(unittest.TestCase):
         self.assertIn('app-section-team-stats', markup)
         self.assertIn('app-navbar-menu-button', markup)
         self.assertIn('Menu', markup)
-        self.assertIn('Design by Wei-Hao Lin', markup)
+        self.assertIn('Designed by Wei-Hao Lin', markup)
         self.assertIn('app-navbar-credit', markup)
         self.assertFalse(_credit_is_inside_anchor(nav))
         self.assertEqual([page['label'] for page in PAGE_LINKS], ['Schedule', 'Team Stats'])
@@ -1432,7 +1432,7 @@ def _credit_is_inside_anchor(node, inside_anchor=False):
     children = getattr(node, 'children', None)
     nodes = children if isinstance(children, (list, tuple)) else [children]
     for child in nodes:
-        if child == 'Design by Wei-Hao Lin' and here:
+        if child == 'Designed by Wei-Hao Lin' and here:
             return True
         if hasattr(child, 'children') and _credit_is_inside_anchor(child, here):
             return True

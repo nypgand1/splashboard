@@ -74,7 +74,7 @@ ROTATION_ERROR = 'Could not load rotation.'
 SHOT_CHART_DEFAULT_H = 10
 SHOT_CHART_EMPTY = 'No shot chart for this game.'
 SHOT_CHART_ERROR = 'Could not load shot chart.'
-HEADER_CREDIT = 'Design by Wei-Hao Lin'
+HEADER_CREDIT = 'Designed by Wei-Hao Lin'
 
 
 def layout_storage_key(game_id):

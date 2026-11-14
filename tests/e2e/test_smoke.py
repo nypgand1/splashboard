@@ -323,6 +323,16 @@ def test_home_viewports(page, e2e_server):
     _wait(page, '#home-last-update')
     box = page.locator('.home-schedule-list').bounding_box()
     assert box and box['width'] > 200
+    _wait(page, '#home-season')
+    phone_select = page.locator('#home-season').evaluate(
+        'el => parseFloat(getComputedStyle(el).fontSize)'
+    )
+    phone_probe = page.locator('#home-team-wrap .select-sizer-probe').first.evaluate(
+        'el => parseFloat(getComputedStyle(el).fontSize)'
+    )
+    assert phone_select == 16
+    assert phone_probe == 16
+    assert page.locator('.app-navbar-credit').inner_text() == 'Designed by Wei-Hao Lin'
     overflow = page.evaluate(
         'document.documentElement.scrollWidth > document.documentElement.clientWidth + 4'
     )
@@ -336,6 +346,11 @@ def test_home_viewports(page, e2e_server):
     _wait(page, '#home-last-update')
     assert page.locator('.game-info-banner').count() == 0
     assert page.locator('#home-show').count() == 1
+    _wait(page, '#home-season')
+    desktop_select = page.locator('#home-season').evaluate(
+        'el => parseFloat(getComputedStyle(el).fontSize)'
+    )
+    assert desktop_select == 12
 
 
 def _nav_box(page):

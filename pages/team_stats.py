@@ -343,6 +343,7 @@ def layout():
                     'opponent': OPPONENT_ALL,
                     'stadium': STADIUM_ALL,
                     'site': SITE_ALL,
+                    'period': 'all',
                 },
             ),
             dmc.Tabs(
@@ -572,10 +573,7 @@ clientside_callback(
         ) {
             return [skip, skip, skip, skip, skip];
         }
-        var cards = skip;
-        if (current.team && current.team !== 'all' && (team === 'all' || team == null)) {
-            cards = __LOADING_BODY__;
-        }
+        var cards = __LOADING_BODY__;
         var chart = __CHART_LOADING__;
         var shot = skip;
         var lineup = skip;
@@ -608,6 +606,28 @@ clientside_callback(
     Input('ts-opponent', 'value'),
     Input('ts-stadium', 'value'),
     Input('ts-site', 'value'),
+    State('ts-slice', 'data'),
+    prevent_initial_call=True,
+)
+
+
+clientside_callback(
+    """
+    function(period, painted) {
+        var current = painted || {};
+        var next = period == null || period === '' ? 'all' : period;
+        var prev = current.period == null || current.period === '' ? null : current.period;
+        if (prev == null && next == 'all') {
+            return window.dash_clientside.no_update;
+        }
+        if (prev != null && next == prev) {
+            return window.dash_clientside.no_update;
+        }
+        return __LOADING_BODY__;
+    }
+    """.replace('__LOADING_BODY__', _LOADING_BODY),
+    Output('ts-body', 'children', allow_duplicate=True),
+    Input('ts-period', 'value'),
     State('ts-slice', 'data'),
     prevent_initial_call=True,
 )
@@ -854,6 +874,7 @@ def _paint(payload, league, season_id, game_type, period, opponent, stadium, sit
             'opponent': selected_opponent,
             'stadium': selected_stadium,
             'site': selected_site,
+            'period': selected_period,
         },
         chips,
         period_out,

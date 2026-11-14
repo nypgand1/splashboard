@@ -340,6 +340,13 @@ body {
         flex-shrink: 0 !important;
         white-space: nowrap !important;
     }
+    /* 16px computed size stops iOS Safari from zooming a focused Select. */
+    .mantine-Select-input {
+        font-size: max(1rem, 1em) !important;
+    }
+    .select-sizer-probe {
+        font-size: max(1rem, 1em) !important;
+    }
 }
 
 @media (max-width: 767px) {

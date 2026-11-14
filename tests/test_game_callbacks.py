@@ -846,6 +846,9 @@ class TabsDmcContractTests(unittest.TestCase):
         self.assertIn('box-shadow: 0 8px 30px rgba(15, 23, 42, 0.15)', phone)
         self.assertIn('margin: 0 !important', phone)
         self.assertNotIn('border-radius: 0', phone)
+        self.assertIn('.mantine-Select-input', phone)
+        self.assertIn('.select-sizer-probe', phone)
+        self.assertIn('font-size: max(1rem, 1em)', phone)
 
 
 def _shot_frame():
