@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from synergy_inbounder.parser import Parser
+from synergy_inbounder.player_minutes_log import reset_player_minutes_log
 
 
 def _empty_stats():
@@ -145,6 +146,14 @@ class ParseGameBundleTests(unittest.TestCase):
         seen, _result = self._run_bundle(True)
         live_calls = [live for name, live in seen if name != 'roster']
         self.assertTrue(all(live is True for live in live_calls))
+
+    def test_live_bundle_logs_player_minutes_and_a_finished_bundle_does_not(self):
+        with self.assertLogs('synergy.live.minutes', level='INFO') as caught:
+            self._run_bundle(True)
+        self.assertTrue(any('player-minutes' in line and 'route=live' in line for line in caught.output))
+        reset_player_minutes_log()
+        with self.assertNoLogs('synergy.live.minutes', level='INFO'):
+            self._run_bundle(False)
 
     def test_fixture_roster_supplies_bib_and_starters(self):
         _seen, result = self._run_bundle(False)

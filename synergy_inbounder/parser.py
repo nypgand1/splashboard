@@ -8,6 +8,7 @@ from synergy_inbounder import frame_store
 from synergy_inbounder.http_wave import run_wave
 from synergy_inbounder.logs import data as log_data
 from synergy_inbounder.logs import unexpected as log_unexpected
+from synergy_inbounder.player_minutes_log import note_player_minutes
 from synergy_inbounder.runtime_cache import (
     cached_fixture_status,
     get_cached_id_table,
@@ -291,6 +292,14 @@ class Parser:
             if any(roster_starters.values()):
                 starter_dict = roster_starters
         player_periods_df = Parser._player_periods_from_json(player_periods_json)
+        note_player_minutes(
+            org_id,
+            game_id,
+            live,
+            status or cached_fixture_status(org_id, game_id),
+            player_json,
+            player_periods_json,
+        )
         if not live:
             frame_store.store(
                 org_id,
