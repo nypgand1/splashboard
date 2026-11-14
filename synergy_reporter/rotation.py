@@ -83,6 +83,81 @@ def _infer_period_seconds(clocks):
     return int(math.ceil(max(values) / 60.0) * 60) or 60
 
 
+QUARTER_SECONDS_12 = 12 * 60
+QUARTER_SECONDS_10 = 10 * 60
+OT_SECONDS = 5 * 60
+NOW_DESC = 'Now'
+
+
+def quarter_seconds_for_season(season_id):
+    """Nominal quarter. PLG seasons are 12:00. Every other season, including a missing id, is 10:00."""
+    from synergy_inbounder.settings import regulation_minutes
+    if regulation_minutes(season_id) == 48:
+        return QUARTER_SECONDS_12
+    return QUARTER_SECONDS_10
+
+
+def _is_ot_period(period_id):
+    try:
+        return int(period_id) > 4
+    except (TypeError, ValueError):
+        return False
+
+
+def _format_clock(label, remaining_seconds):
+    remaining = max(0, int(remaining_seconds))
+    return f"{label} {remaining // 60:02d}:{remaining % 60:02d}"
+
+
+def _clocks_have_value(clocks):
+    for clock in clocks:
+        if clock_to_seconds(clock) is not None:
+            return True
+    return False
+
+
+def _last_remaining(rows):
+    remaining = None
+    for row in rows.to_dict('records'):
+        value = clock_to_seconds(row.get('clock'))
+        if value is not None:
+            remaining = float(value)
+    return remaining
+
+
+def _open_regulation(period_id, clocks, completed, quarter_seconds, ot_seconds):
+    """Reserved length of the in-progress period. Completed periods do not use this."""
+    inferred = _infer_period_seconds(clocks) if _clocks_have_value(clocks) else None
+    if _is_ot_period(period_id):
+        previous = None
+        for period in completed:
+            if _is_ot_period(period.get('id')):
+                previous = int(period['seconds'])
+        base = previous if previous else int(ot_seconds)
+    elif int(period_id) == 1:
+        base = int(quarter_seconds)
+    else:
+        q1 = next(
+            (int(period['seconds']) for period in completed if int(period.get('id') or 0) == 1),
+            int(quarter_seconds),
+        )
+        base = q1
+    if inferred is None:
+        return base
+    return max(base, int(inferred))
+
+
+def _place_on_period(period, remaining):
+    span = float(period['seconds'])
+    played = float(period.get('drawn_end', period['end'])) - float(period['start'])
+    offset = span - float(remaining)
+    if offset < 0:
+        offset = 0.0
+    if offset > played:
+        offset = played
+    return float(period['start']) + offset
+
+
 def _made_points(row):
     if row is None:
         return 0
@@ -347,7 +422,7 @@ def _elapsed_on_period(period_id, clock, periods):
         return None
     for period in periods or []:
         if _same_id(period.get('id'), period_id):
-            return period['start'] + max(0.0, float(period['seconds']) - remaining)
+            return _place_on_period(period, remaining)
     return None
 
 
@@ -507,6 +582,9 @@ def build_rotation_payload(
     away_team_id,
     roster=None,
     marks=True,
+    live=False,
+    quarter_seconds=None,
+    ot_seconds=None,
 ):
     id_table = id_table or {}
     starter_dict = starter_dict or {}
@@ -535,16 +613,32 @@ def build_rotation_payload(
 
     periods = []
     cursor = 0.0
-    for period_id in period_ids:
+    nominal_quarter = int(quarter_seconds if quarter_seconds is not None else QUARTER_SECONDS_10)
+    nominal_ot = int(ot_seconds if ot_seconds is not None else OT_SECONDS)
+    last_index = len(period_ids) - 1
+    for index, period_id in enumerate(period_ids):
         clocks = df.loc[df['periodId'] == period_id, 'clock']
-        seconds = _infer_period_seconds(clocks)
         native_period = int(period_id) if pd.notna(period_id) and str(period_id).replace('.', '', 1).isdigit() else period_id
+        is_open = bool(live) and index == last_index
+        if is_open:
+            seconds = _open_regulation(
+                native_period, clocks, periods, nominal_quarter, nominal_ot,
+            )
+            remaining = _last_remaining(df.loc[df['periodId'] == period_id])
+            if remaining is None:
+                played = 0.0
+            else:
+                played = min(float(seconds), max(0.0, float(seconds) - float(remaining)))
+        else:
+            seconds = _infer_period_seconds(clocks)
+            played = float(seconds)
         periods.append({
             'id': native_period,
             'label': period_label(native_period),
             'seconds': int(seconds),
             'start': float(cursor),
             'end': float(cursor + seconds),
+            'drawn_end': float(cursor + played),
         })
         cursor += seconds
 
@@ -575,7 +669,7 @@ def build_rotation_payload(
             remaining = clock_to_seconds(row.get('clock'))
             if remaining is None:
                 continue
-            elapsed = period['start'] + max(0.0, period['seconds'] - remaining)
+            elapsed = _place_on_period(period, remaining)
             lineups = {}
             for team_id in team_ids:
                 column = _find_column(df, team_id)
@@ -586,8 +680,9 @@ def build_rotation_payload(
         events.sort(key=lambda item: item[0])
         if events[0][0] > period['start']:
             events.insert(0, (period['start'], events[0][1]))
-        if events[-1][0] < period['end']:
-            events.append((period['end'], events[-1][1]))
+        limit = float(period.get('drawn_end', period['end']))
+        if events[-1][0] < limit:
+            events.append((limit, events[-1][1]))
 
         for index in range(len(events) - 1):
             start_t, lineups = events[index]
@@ -609,7 +704,11 @@ def build_rotation_payload(
                     else:
                         stints.append({'start': start_t, 'end': end_t})
 
-    margin = [{'t': 0.0, 'margin': 0, 'home_score': 0, 'away_score': 0, 'desc': GAME_START_DESC, 'clock_label': '1Q 12:00' if periods else '0:00'}]
+    if periods:
+        opening_clock = _format_clock(periods[0]['label'], periods[0]['seconds'])
+    else:
+        opening_clock = '0:00'
+    margin = [{'t': 0.0, 'margin': 0, 'home_score': 0, 'away_score': 0, 'desc': GAME_START_DESC, 'clock_label': opening_clock}]
     score_events = [(0.0, 0, 0)]
     curr_h, curr_a = 0, 0
 
@@ -633,7 +732,7 @@ def build_rotation_payload(
             remaining = clock_to_seconds(row.get('clock'))
             if remaining is None:
                 continue
-            elapsed = period['start'] + max(0.0, period['seconds'] - remaining)
+            elapsed = _place_on_period(period, remaining)
             h_val = curr_h
             a_val = curr_a
             for key, value in scores.items():
@@ -662,8 +761,8 @@ def build_rotation_payload(
             shot_type = _clean_shot_type(row.get('eventType'), row.get('subType'))
             desc = f"{player_name} {shot_type}".strip() if player_name else shot_type
 
-            rem_sec = max(0, int(remaining))
-            clock_label = f"{period['label']} {rem_sec // 60:02d}:{rem_sec % 60:02d}"
+            shown_remaining = float(period['seconds']) - (elapsed - float(period['start']))
+            clock_label = _format_clock(period['label'], shown_remaining)
 
             point = {
                 't': elapsed,
@@ -681,17 +780,28 @@ def build_rotation_payload(
                 score_events.append((elapsed, curr_h, curr_a))
 
     game_end = periods[-1]['end'] if periods else 0.0
-    if margin and margin[-1]['t'] < game_end:
+    tail_t = float(periods[-1].get('drawn_end', game_end)) if periods else 0.0
+    if live and periods:
+        last_period = periods[-1]
+        shown = float(last_period['seconds']) - (tail_t - float(last_period['start']))
+        tail_desc = NOW_DESC
+        tail_clock = _format_clock(last_period['label'], shown)
+        extend_to = tail_t
+    else:
+        tail_desc = GAME_END_DESC
+        tail_clock = f"{periods[-1]['label']} 00:00" if periods else '0:00'
+        extend_to = game_end
+    if margin and margin[-1]['t'] < extend_to:
         last_m = margin[-1]
         margin.append({
-            't': game_end,
+            't': extend_to,
             'margin': last_m['margin'],
             'home_score': last_m['home_score'],
             'away_score': last_m['away_score'],
-            'desc': GAME_END_DESC,
-            'clock_label': f"{periods[-1]['label']} 00:00" if periods else '0:00',
+            'desc': tail_desc,
+            'clock_label': tail_clock,
         })
-        score_events.append((game_end, curr_h, curr_a))
+        score_events.append((extend_to, curr_h, curr_a))
 
     halftime = next((period['end'] for period in periods if period.get('id') == 2), None)
     if marks:
