@@ -49,7 +49,9 @@ from synergy_inbounder.parser import Parser
 from synergy_inbounder.possessions import annotate_possessions, possession_counts
 from synergy_inbounder.pre_processing_func import process_lineup_stats
 from synergy_reporter.rotation import (
+    OT_SECONDS,
     build_rotation_payload,
+    quarter_seconds_for_season,
     walk_lineup,
 )
 
@@ -873,8 +875,8 @@ class PostGameReport():
                 cached[str(size)] = self.get_lineup_stats_json_dict(lineup_size=size)
             return {str(size): cached[str(size)] for size in sizes}
    
-    def get_rotation_payload(self, home_team_id=None, away_team_id=None):
-        cache_key = (str(home_team_id), str(away_team_id))
+    def get_rotation_payload(self, home_team_id=None, away_team_id=None, live=False, season_id=None):
+        cache_key = (str(home_team_id), str(away_team_id), bool(live), str(season_id or ''))
         with self._lock():
             cached = self.__dict__.get('_rotation_payload')
             if cached is not None and self.__dict__.get('_rotation_key') == cache_key:
@@ -887,6 +889,9 @@ class PostGameReport():
                 home_team_id=home_team_id,
                 away_team_id=away_team_id,
                 roster=self.roster,
+                live=bool(live),
+                quarter_seconds=quarter_seconds_for_season(season_id),
+                ot_seconds=OT_SECONDS,
             )
             self._rotation_key = cache_key
             return self._rotation_payload

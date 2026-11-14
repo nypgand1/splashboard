@@ -6,6 +6,7 @@ import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import pandas as pd
 
+from synergy_inbounder.game_status import is_live_play_status
 from synergy_inbounder.logs import payload as log_payload
 from synergy_inbounder.runtime_cache import get_cached_report
 from synergy_reporter.report_components import render_report_workspace
@@ -87,10 +88,13 @@ def _report_rotation_figure_json(game_id, match_info):
     try:
         mod = _game_module()
         fig_fn = getattr(mod, 'report_rotation_figure', report_rotation_figure)
-        report = _open_report_proxy(game_id, _report_org(match_info))
+        info = match_info or {}
+        report = _open_report_proxy(game_id, _report_org(info))
         payload = report.get_rotation_payload(
-            home_team_id=(match_info or {}).get('home_team_id'),
-            away_team_id=(match_info or {}).get('away_team_id'),
+            home_team_id=info.get('home_team_id'),
+            away_team_id=info.get('away_team_id'),
+            live=is_live_play_status(info.get('status')),
+            season_id=info.get('season_id'),
         )
         if not isinstance(payload, dict) or payload.get('_ui') == 'error':
             return json.dumps({'_ui': 'error'})

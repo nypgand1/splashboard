@@ -49,7 +49,9 @@ class Parser:
                 continue
             matched = frame[frame['fixtureId'].astype(str) == wanted]
             if not matched.empty:
-                return matched.iloc[0]
+                row = matched.iloc[0].copy()
+                row['seasonId'] = season_id
+                return row
         return None
 
     @staticmethod

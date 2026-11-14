@@ -17,8 +17,11 @@ from synergy_reporter.rotation import (
     detect_kills,
     detect_runs,
     format_kill_label,
+    GAME_END_DESC,
+    NOW_DESC,
     format_run_label,
     live_playhead_t,
+    quarter_seconds_for_season,
     margin_tick_span,
     period_clock_label,
     period_label,
@@ -1151,6 +1154,293 @@ class RunLabelTests(unittest.TestCase):
             periods,
         )
         self.assertEqual(label, '1Q 08:24–06:24  4 STOPS')
+
+
+def _clock_row(period, clock, home, away, scores=None):
+    return {
+        'periodId': period,
+        'clock': clock,
+        'eventType': '2pt' if scores else 'clock',
+        'subType': None,
+        'entityId': home,
+        'personId': 'p1',
+        'scores': None if scores is None else json.dumps(scores),
+        home: ['p1'],
+        away: ['p2'],
+    }
+
+
+def _scale_payload(rows, live=False, quarter_seconds=720):
+    home, away = 'home-id', 'away-id'
+    kwargs = {
+        'starter_dict': {home: ['p1'], away: ['p2']},
+        'id_table': {home: 'Home', away: 'Away', 'p1': 'A', 'p2': 'B'},
+        'home_team_id': home,
+        'away_team_id': away,
+        'live': live,
+    }
+    if quarter_seconds is not None:
+        kwargs['quarter_seconds'] = quarter_seconds
+    return build_rotation_payload(_pbp(rows), **kwargs)
+
+
+def _stint_ends(payload):
+    ends = []
+    for team in payload['teams']:
+        for player in team['players']:
+            for stint in player.get('stints') or []:
+                ends.append(float(stint['end']))
+    return ends
+
+
+class LivePeriodScaleTests(unittest.TestCase):
+    def test_finished_game_still_pads_the_open_looking_quarter(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT12M00S', home, away),
+            _clock_row(2, 'PT06M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=False, quarter_seconds=720)
+        self.assertEqual([period['seconds'] for period in payload['periods']], [720, 720])
+        self.assertEqual(payload['periods'][1]['end'], 1440)
+        self.assertEqual(payload['periods'][1]['drawn_end'], 1440)
+        self.assertEqual(payload['margin'][0]['clock_label'], '1Q 12:00')
+        self.assertEqual(payload['margin'][-1]['desc'], GAME_END_DESC)
+        self.assertEqual(payload['margin'][-1]['clock_label'], '2Q 00:00')
+        self.assertEqual(payload['margin'][-1]['t'], 1440)
+        self.assertIn(1440.0, _stint_ends(payload))
+
+    def test_live_q2_keeps_the_quarter_and_stops_at_six_minutes(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT12M00S', home, away),
+            _clock_row(2, 'PT06M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        q2 = payload['periods'][1]
+        self.assertEqual(q2['seconds'], 720)
+        self.assertEqual(q2['end'], 1440)
+        self.assertEqual(q2['drawn_end'], 1080)
+        self.assertEqual(payload['margin'][-1]['t'], 1080)
+        self.assertEqual(payload['margin'][-1]['desc'], NOW_DESC)
+        self.assertEqual(payload['margin'][-1]['clock_label'], '2Q 06:00')
+        self.assertNotIn(GAME_END_DESC, {point['desc'] for point in payload['margin']})
+        self.assertEqual(live_playhead_t(payload), 1080)
+        self.assertNotIn(1440.0, _stint_ends(payload))
+        self.assertIn(1080.0, _stint_ends(payload))
+        for figure in (build_rotation_figure(payload), report_rotation_figure(payload)):
+            self.assertEqual(list(figure.layout.xaxis.range), [0, 1440])
+
+    def test_live_q2_lone_six_minute_clock_uses_q1(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT06M00S', home, away),
+        ]
+        q2 = _scale_payload(rows, live=True, quarter_seconds=720)['periods'][1]
+        self.assertEqual(q2['seconds'], 720)
+        self.assertEqual(q2['drawn_end'], 1080)
+        self.assertEqual(q2['end'], 1440)
+
+    def test_live_q2_mid_clock_does_not_shrink_the_ruler(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT09M30S', home, away),
+            _clock_row(2, 'PT06M00S', home, away),
+        ]
+        q2 = _scale_payload(rows, live=True, quarter_seconds=720)['periods'][1]
+        self.assertEqual(q2['seconds'], 720)
+        self.assertEqual(q2['drawn_end'], 1080)
+
+    def test_live_q2_tip_reserves_the_quarter_without_a_stint(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT12M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        q2 = payload['periods'][1]
+        self.assertEqual(q2['drawn_end'], 720)
+        self.assertEqual(q2['end'], 1440)
+        self.assertTrue(all(end <= 720 for end in _stint_ends(payload)))
+        self.assertEqual(payload['margin'][-1]['desc'], NOW_DESC)
+        self.assertEqual(payload['margin'][-1]['clock_label'], '2Q 12:00')
+
+    def test_live_q1_uses_the_nominal_quarter(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT06M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        q1 = payload['periods'][0]
+        self.assertEqual(q1['seconds'], 720)
+        self.assertEqual(q1['drawn_end'], 360)
+        self.assertEqual(q1['end'], 720)
+        self.assertEqual(payload['margin'][0]['clock_label'], '1Q 12:00')
+        self.assertEqual(payload['margin'][-1]['desc'], NOW_DESC)
+        self.assertEqual(payload['margin'][-1]['clock_label'], '1Q 06:00')
+
+    def test_ten_minute_quarter_scales_the_open_period(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT10M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT10M00S', home, away),
+            _clock_row(2, 'PT05M00S', home, away),
+        ]
+        q2 = _scale_payload(rows, live=True, quarter_seconds=600)['periods'][1]
+        self.assertEqual(q2['seconds'], 600)
+        self.assertEqual(q2['drawn_end'], 900)
+        self.assertEqual(q2['end'], 1200)
+
+    def test_first_overtime_is_five_minutes(self):
+        home, away = 'home-id', 'away-id'
+        rows = []
+        for period in (1, 2, 3, 4):
+            rows.append(_clock_row(period, 'PT12M00S', home, away))
+            rows.append(_clock_row(period, 'PT00M00S', home, away))
+        rows.append(_clock_row(11, 'PT02M30S', home, away))
+        ot = _scale_payload(rows, live=True, quarter_seconds=720)['periods'][-1]
+        self.assertEqual(ot['seconds'], 300)
+        self.assertEqual(ot['start'], 2880)
+        self.assertEqual(ot['drawn_end'], 3030)
+        self.assertEqual(ot['end'], 3180)
+
+    def test_overtime_elapsed_uses_the_five_minute_slot(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(11, 'PT05M00S', home, away),
+            _clock_row(11, 'PT03M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        ot = payload['periods'][0]
+        self.assertEqual(ot['seconds'], 300)
+        self.assertEqual(ot['drawn_end'], 120)
+        self.assertEqual(payload['margin'][-1]['clock_label'], 'OT 03:00')
+
+    def test_later_overtime_keeps_the_previous_length(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(11, 'PT06M00S', home, away),
+            _clock_row(11, 'PT00M00S', home, away),
+            _clock_row(12, 'PT02M00S', home, away),
+        ]
+        ot2 = _scale_payload(rows, live=True, quarter_seconds=720)['periods'][1]
+        self.assertEqual(ot2['seconds'], 360)
+        self.assertEqual(ot2['drawn_end'], 600)
+
+    def test_a_later_clock_in_feed_order_is_now(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT06M00S', home, away, scores={home: 2, away: 0}),
+            _clock_row(1, 'PT07M10S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        q1 = payload['periods'][0]
+        self.assertEqual(q1['drawn_end'], 290)
+        point = payload['margin'][-1]
+        self.assertEqual(point['t'], 290)
+        self.assertEqual(point['home_score'], 2)
+        self.assertEqual(point['clock_label'], '1Q 07:10')
+        self.assertNotEqual(point['desc'], NOW_DESC)
+        self.assertNotIn(GAME_END_DESC, {item['desc'] for item in payload['margin']})
+
+    def test_live_buzzer_is_now_not_game_end(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+            _clock_row(2, 'PT12M00S', home, away),
+            _clock_row(2, 'PT00M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        q2 = payload['periods'][1]
+        self.assertEqual(q2['drawn_end'], q2['end'])
+        self.assertEqual(payload['margin'][-1]['desc'], NOW_DESC)
+        self.assertEqual(payload['margin'][-1]['clock_label'], '2Q 00:00')
+
+    def test_a_finished_earlier_period_still_pads(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT12M00S', home, away),
+            _clock_row(1, 'PT00M40S', home, away),
+            _clock_row(2, 'PT12M00S', home, away),
+            _clock_row(2, 'PT06M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=True, quarter_seconds=720)
+        q1 = payload['periods'][0]
+        self.assertEqual(q1['seconds'], 720)
+        self.assertEqual(q1['drawn_end'], 720)
+        stints = [
+            stint
+            for team in payload['teams']
+            for player in team['players']
+            for stint in player.get('stints') or []
+        ]
+        self.assertTrue(any(stint['start'] <= 680 and stint['end'] >= 720 for stint in stints))
+        self.assertTrue(all(stint['end'] <= 1080 for stint in stints))
+
+    def test_finished_ten_minute_quarter_opens_at_its_own_clock(self):
+        home, away = 'home-id', 'away-id'
+        rows = [
+            _clock_row(1, 'PT10M00S', home, away),
+            _clock_row(1, 'PT00M00S', home, away),
+        ]
+        payload = _scale_payload(rows, live=False, quarter_seconds=720)
+        self.assertEqual(payload['margin'][0]['clock_label'], '1Q 10:00')
+        self.assertEqual(payload['margin'][-1]['desc'], GAME_END_DESC)
+
+    def test_missing_quarter_length_falls_back_to_ten_minutes(self):
+        home, away = 'home-id', 'away-id'
+        payload = _scale_payload(
+            [_clock_row(1, 'PT06M00S', home, away)],
+            live=True,
+            quarter_seconds=None,
+        )
+        q1 = payload['periods'][0]
+        self.assertEqual(q1['seconds'], 600)
+        self.assertEqual(q1['drawn_end'], 240)
+        self.assertEqual(q1['end'], 600)
+        self.assertEqual(payload['margin'][-1]['clock_label'], '1Q 06:00')
+
+    def test_season_table_picks_the_quarter(self):
+        from synergy_inbounder.settings import EASL_SEASONS, SYNERGY_SEASONS
+        self.assertEqual(quarter_seconds_for_season(SYNERGY_SEASONS[0][1]), 720)
+        self.assertEqual(quarter_seconds_for_season(EASL_SEASONS[0][1]), 600)
+        self.assertEqual(quarter_seconds_for_season(None), 600)
+        self.assertEqual(quarter_seconds_for_season('missing'), 600)
+
+    def test_live_and_finished_payloads_stay_cached_apart(self):
+        from synergy_inbounder.settings import SYNERGY_SEASONS
+        from synergy_reporter.post_game_report import PostGameReport
+        home, away = 'home-id', 'away-id'
+        report = PostGameReport.__new__(PostGameReport)
+        report._lineup_frame_df = _pbp([_clock_row(1, 'PT06M00S', home, away)])
+        report.starter_dict = {home: ['p1'], away: ['p2']}
+        report.id_table = {home: 'Home', away: 'Away', 'p1': 'A', 'p2': 'B'}
+        report.roster = []
+        live = report.get_rotation_payload(home, away, live=True, season_id='missing')
+        self.assertIs(report.get_rotation_payload(home, away, live=True, season_id='missing'), live)
+        self.assertEqual(live['periods'][0]['end'], 600)
+        self.assertEqual(live['periods'][0]['drawn_end'], 240)
+        finished = report.get_rotation_payload(home, away, live=False, season_id='missing')
+        self.assertIsNot(finished, live)
+        self.assertEqual(finished['periods'][0]['drawn_end'], finished['periods'][0]['end'])
+        self.assertIs(report.get_rotation_payload(home, away, live=False, season_id='missing'), finished)
+        plg = report.get_rotation_payload(home, away, live=True, season_id=SYNERGY_SEASONS[0][1])
+        self.assertEqual(plg['periods'][0]['end'], 720)
+        self.assertIsNot(plg, live)
+        self.assertIs(report.get_rotation_payload(home, away, live=True, season_id=SYNERGY_SEASONS[0][1]), plg)
 
 
 class LivePlayheadTests(unittest.TestCase):

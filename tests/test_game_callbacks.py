@@ -464,6 +464,75 @@ class RotationViewTests(unittest.TestCase):
         )
         self.assertEqual(parked, 20.0)
 
+    def test_live_click_in_the_unplayed_tail_stops_at_now(self):
+        store = json.dumps({
+            'periods': [{
+                'id': 2, 'start': 720.0, 'end': 1440.0, 'drawn_end': 1080.0,
+            }],
+            'teams': [],
+        })
+        view = game_page.apply_rotation_view_event(
+            'rotation-click-t',
+            False,
+            [],
+            1300.0,
+            store,
+            'g1',
+            {'follow_live': True, 't': None},
+            {'status': 'IN_PROGRESS'},
+        )
+        self.assertEqual(view['t'], 1080.0)
+        self.assertFalse(view['follow_live'])
+
+    def test_rotation_dict_keeps_live_and_season_apart(self):
+        report = Mock()
+        report.get_rotation_payload.return_value = {'periods': []}
+        info = {
+            'home_team_id': 'h',
+            'away_team_id': 'a',
+            'status': 'IN_PROGRESS',
+            'season_id': 'plg-season',
+        }
+        game_page._rotation_dict(report, info)
+        report.get_rotation_payload.assert_called_once_with(
+            home_team_id='h',
+            away_team_id='a',
+            live=True,
+            season_id='plg-season',
+        )
+        report.get_rotation_payload.reset_mock()
+        game_page._rotation_dict(report, info)
+        report.get_rotation_payload.assert_not_called()
+
+        finished = Mock()
+        finished.get_rotation_payload.return_value = {'periods': []}
+        game_page._rotation_dict(finished, {**info, 'status': 'FINISHED'})
+        finished.get_rotation_payload.assert_called_once_with(
+            home_team_id='h',
+            away_team_id='a',
+            live=False,
+            season_id='plg-season',
+        )
+
+    def test_report_rotation_forwards_live_and_season(self):
+        report = Mock()
+        report.get_rotation_payload.return_value = {'teams': []}
+        with patch.object(game_page, '_open_report', return_value=report):
+            text = game_page._report_rotation_figure_json('g1', {
+                'organization_id': 'org',
+                'home_team_id': 'h',
+                'away_team_id': 'a',
+                'status': 'IN_PROGRESS',
+                'season_id': 'season-1',
+            })
+        self.assertEqual(json.loads(text), {'_ui': 'empty'})
+        report.get_rotation_payload.assert_called_once_with(
+            home_team_id='h',
+            away_team_id='a',
+            live=True,
+            season_id='season-1',
+        )
+
     def test_graph_click_unfollows_live(self):
         store = json.dumps(self._payload())
         view = game_page.apply_rotation_view_event(

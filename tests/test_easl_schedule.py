@@ -257,6 +257,7 @@ class PlgGameLookupTests(unittest.TestCase):
         with patch.object(Parser, 'parse_season_game_list_df', side_effect=_frame):
             row = Parser.find_game_row('b1vqz', 'wanted', ['season-a', 'season-b'])
         self.assertEqual(row['status'], 'IN_PROGRESS')
+        self.assertEqual(row['seasonId'], 'season-b')
 
     def test_lookup_game_status_tries_the_default_season_first(self):
         from synergy_inbounder.runtime_cache import lookup_game_status

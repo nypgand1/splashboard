@@ -245,9 +245,11 @@ def apply_rotation_view_event(
             t_val = float(click_t)
         except (TypeError, ValueError):
             return no_update
-        game_end = periods[-1]['end'] if periods else None
-        if game_end is not None:
-            t_val = min(max(0.0, t_val), float(game_end))
+        if periods:
+            last = periods[-1]
+            limit = last.get('drawn_end', last.get('end'))
+            if limit is not None:
+                t_val = min(max(0.0, t_val), float(limit))
         view['t'] = t_val
         view['follow_live'] = False
         return view

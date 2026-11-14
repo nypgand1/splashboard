@@ -398,6 +398,7 @@ def warmup_game_report(game_id, match_info=None, organization_id=None):
                 report.get_rotation_payload(
                     home_team_id=info.get('home_team_id'),
                     away_team_id=info.get('away_team_id'),
+                    season_id=info.get('season_id'),
                 )
         except Exception:
             from synergy_inbounder.logs import unexpected

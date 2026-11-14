@@ -421,7 +421,14 @@ def _matchup_payload(report, info):
 
 
 def _rotation_dict(report, info):
-    key = (str(info.get('home_team_id')), str(info.get('away_team_id')))
+    live = is_live_play_status(info.get('status'))
+    season_id = info.get('season_id')
+    key = (
+        str(info.get('home_team_id')),
+        str(info.get('away_team_id')),
+        bool(live),
+        str(season_id or ''),
+    )
     _, cached = _report_slot(report, '_rotation_store_dict')
     _, cached_key = _report_slot(report, '_rotation_store_key')
     if cached is not None and cached_key == key:
@@ -429,6 +436,8 @@ def _rotation_dict(report, info):
     data = report.get_rotation_payload(
         home_team_id=info.get('home_team_id'),
         away_team_id=info.get('away_team_id'),
+        live=live,
+        season_id=season_id,
     )
     _store_slot(report, '_rotation_store_dict', data)
     _store_slot(report, '_rotation_store_key', key)
@@ -484,6 +493,11 @@ def _info_dict(org, game_id):
         time_display = ''
     home_id = row.get('teamIdHome')
     away_id = row.get('teamIdAway')
+    season_raw = row.get('seasonId')
+    try:
+        season_missing = season_raw is None or pd.isna(season_raw)
+    except (TypeError, ValueError):
+        season_missing = False
     return {
         'date': date_display,
         'time': time_display,
@@ -496,6 +510,7 @@ def _info_dict(org, game_id):
         'away_score': str(row.get('teamScoreAway', '')),
         'status': str(row.get('status', '')).strip(),
         'organization_id': org,
+        'season_id': None if season_missing else str(season_raw),
     }
 
 
