@@ -1705,3 +1705,177 @@ def test_matchups_tab_keeps_both_fives_and_switches_viewpoint(page, e2e_server):
     assert shown['matchups'] != 'none'
     assert shown['report'] == 'none'
     assert _matchup_lineup(page, 0) == 'Lin-Wu'
+
+
+def _marked_box_payload(mode):
+    import io
+
+    import pandas as pd
+
+    import app  # noqa: F401
+    from pages.game import _box_payload
+    from tests.e2e.fixtures import HOME, FakeReport, _player_frame, _split
+
+    class _Marked(FakeReport):
+        def __init__(self, minute_mode):
+            self.minute_mode = minute_mode
+
+        def get_player_stats_json_dict(self):
+            payload = super().get_player_stats_json_dict()
+            home = pd.read_json(io.StringIO(payload[HOME]), orient='split')
+            extra = _player_frame('DnpLive', False, 1).astype(object)
+            extra.loc[0, '#'] = 99
+            if self.minute_mode == 'dnp':
+                extra.loc[0, 'Min'] = 'DNP'
+                extra.loc[0, '2M'] = ''
+                extra.loc[0, 'PTS'] = ''
+            else:
+                extra.loc[0, 'Min'] = '5:00'
+                extra.loc[0, '2M'] = 1
+                extra.loc[0, 'PTS'] = 2
+            payload[HOME] = _split(pd.concat([home, extra], ignore_index=True))
+            return payload
+
+    return _box_payload(_Marked(mode), FINISHED_ID)
+
+
+def _push_box_store(page, payload):
+    page.evaluate(
+        '''(payload) => window.dash_clientside.set_props('bs_store', {data: payload})''',
+        payload,
+    )
+
+
+def test_box_score_dnp_span_clears_when_minutes_arrive(page, e2e_server):
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    page.goto(e2e_server + f'/game/plg/{FINISHED_ID}', wait_until='domcontentloaded')
+    _wait(page, '.game-info-banner')
+    _select_tab(page, 'Box Score')
+    page.locator('#bs-player-grid-1 .ag-header-cell[col-id="PTS"]').wait_for(timeout=20000)
+    page.locator('#bs-player-title-1').filter(has_text=HOME).wait_for(timeout=20000)
+    page.locator('#bs-player-grid-1 .ag-header-cell[col-id="PTS"]').click()
+    page.wait_for_function(
+        '''() => document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="PTS"]')?.getAttribute('aria-sort') === 'descending' '''
+    )
+    page.evaluate(
+        '''() => window.dash_clientside.set_props('interval-component', {disabled: true})'''
+    )
+    page.evaluate(
+        '''() => {
+            window.__bsDnpLiveParts = () => {
+                const player = [...document.querySelectorAll('#bs-player-grid-1 .ag-cell[col-id="Player"]')]
+                    .find((cell) => (cell.innerText || '').includes('DnpLive'));
+                const host = player && player.closest('.ag-row');
+                const rowId = host ? host.getAttribute('row-id') : null;
+                const rows = rowId
+                    ? [...document.querySelectorAll('#bs-player-grid-1 .ag-row')]
+                        .filter((node) => node.getAttribute('row-id') === rowId)
+                    : [];
+                return {
+                    min: rows.map((node) => node.querySelector('.ag-cell[col-id="Min"]')).find(Boolean) || null,
+                    makes: rows.map((node) => node.querySelector('.ag-cell[col-id="2M"]')).find(Boolean) || null,
+                };
+            };
+        }'''
+    )
+    held = page.evaluate(
+        '''() => {
+            const header = document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="Min"]');
+            const host = document.querySelector('#bs-player-grid-1 .ag-center-cols-viewport');
+            const max = host.scrollWidth - host.clientWidth;
+            host.scrollLeft = Math.min(36, Math.max(0, max));
+            window.__bsMinHeader = header;
+            return {
+                width: header.getBoundingClientRect().width,
+                scroll: host.scrollLeft,
+            };
+        }'''
+    )
+    _push_box_store(page, _marked_box_payload('dnp'))
+    page.locator('#bs-player-grid-1 .ag-cell[col-id="Player"]').filter(has_text='DnpLive').wait_for(
+        timeout=20000,
+    )
+    spanned_row = page.evaluate(
+        '''() => {
+            const parts = window.__bsDnpLiveParts();
+            const header = document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="Min"]');
+            return {
+                min: parts.min ? parts.min.innerText.trim() : null,
+                width: parts.min ? parts.min.getBoundingClientRect().width : 0,
+                header: header ? header.getBoundingClientRect().width : 0,
+                makes: !!parts.makes,
+            };
+        }'''
+    )
+    assert spanned_row['min'] == 'DNP', spanned_row
+    assert spanned_row['width'] > spanned_row['header'] + 24, spanned_row
+    assert spanned_row['makes'] is False
+    spanned = page.evaluate(
+        '''(held) => {
+            const header = document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="Min"]');
+            const host = document.querySelector('#bs-player-grid-1 .ag-center-cols-viewport');
+            return {
+                sameHeader: header === window.__bsMinHeader,
+                width: header.getBoundingClientRect().width,
+                scroll: host.scrollLeft,
+                sort: document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="PTS"]')?.getAttribute('aria-sort'),
+            };
+        }''',
+        held,
+    )
+    assert spanned['sameHeader'] is True
+    assert abs(spanned['width'] - held['width']) <= 1
+    assert spanned['scroll'] == held['scroll']
+    assert spanned['sort'] == 'descending'
+    _push_box_store(page, _marked_box_payload('time'))
+    page.wait_for_function(
+        '''() => {
+            const parts = window.__bsDnpLiveParts();
+            return !!(
+                parts.min
+                && parts.min.innerText.trim() === '5:00'
+                && parts.makes
+            );
+        }''',
+        timeout=20000,
+    )
+    painted = page.evaluate(
+        '''() => {
+            const parts = window.__bsDnpLiveParts();
+            const style = getComputedStyle(parts.min);
+            const header = document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="Min"]');
+            const host = document.querySelector('#bs-player-grid-1 .ag-center-cols-viewport');
+            return {
+                makes: parts.makes.innerText.trim(),
+                color: style.color,
+                weight: style.fontWeight,
+                spacing: style.letterSpacing,
+                sameHeader: header === window.__bsMinHeader,
+                width: header.getBoundingClientRect().width,
+                scroll: host.scrollLeft,
+                sort: document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="PTS"]')?.getAttribute('aria-sort'),
+                wider: parts.min.getBoundingClientRect().width > header.getBoundingClientRect().width + 24,
+            };
+        }'''
+    )
+    assert painted['makes'] == '1'
+    assert painted['color'] != 'rgb(148, 163, 184)'
+    assert painted['weight'] == '400'
+    assert painted['spacing'] in ('normal', '0px')
+    assert painted['wider'] is False
+    assert painted['sameHeader'] is True
+    assert abs(painted['width'] - held['width']) <= 1
+    assert painted['scroll'] == held['scroll']
+    assert painted['sort'] == 'descending'
+    _push_box_store(page, _marked_box_payload('dnp'))
+    page.wait_for_function(
+        '''() => {
+            const parts = window.__bsDnpLiveParts();
+            const header = document.querySelector('#bs-player-grid-1 .ag-header-cell[col-id="Min"]');
+            if (!parts.min || !header) return false;
+            return parts.min.innerText.trim() === 'DNP'
+                && parts.min.getBoundingClientRect().width > header.getBoundingClientRect().width + 24
+                && !parts.makes;
+        }''',
+        timeout=20000,
+    )
