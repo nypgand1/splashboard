@@ -27,7 +27,53 @@ def _page_menu_item(page):
     )
 
 
-def create_navbar():
+def _account_control(user):
+    if user is None:
+        return dmc.Anchor(
+            'Log in',
+            href='/login',
+            underline='never',
+            className='app-account-menu app-account-login',
+        )
+    items = [
+        dmc.Text(user.email, className='app-account-email'),
+    ]
+    if getattr(user, 'role', None) == 'admin':
+        items.append(
+            dmc.Anchor(
+                'Admin',
+                href='/admin',
+                underline='never',
+                className='app-account-admin',
+            )
+        )
+    items.append(
+        html.Form(
+            html.Button('Logout', className='app-account-logout'),
+            method='post',
+            action='/logout',
+            className='app-account-logout-form',
+        )
+    )
+    return dmc.Box(
+        dmc.Menu(
+            [
+                dmc.MenuTarget(
+                    dmc.UnstyledButton(
+                        'Account',
+                        className='app-account-button',
+                    )
+                ),
+                dmc.MenuDropdown(items, className='app-account-dropdown'),
+            ],
+            position='bottom-end',
+            transitionProps={'transition': 'pop-top-right', 'duration': 150},
+        ),
+        className='app-account-menu',
+    )
+
+
+def create_navbar(user=None):
     brand = dmc.Anchor(
         dmc.Group(
             [
@@ -105,6 +151,7 @@ def create_navbar():
                         className='app-page-nav',
                         **{'aria-label': 'Pages', 'data-mode': 'links'},
                     ),
+                    _account_control(user),
                     credit,
                 ],
                 className='app-navbar-bar',

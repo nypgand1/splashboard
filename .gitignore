@@ -1,4 +1,5 @@
 .env
+.auth/
 *.sqlite
 docs/api_reference/
 scratch/

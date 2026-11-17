@@ -19,7 +19,7 @@ cp .env.example .env
 uvicorn app:server --host 127.0.0.1 --port 8050 --workers 1
 ```
 
-Open `http://127.0.0.1:8050`. The live budget is process-local, so the process stays at one worker. Fly uses the same pin in `Procfile`.
+Open `http://localhost:8050` (not `127.0.0.1`; Google keeps the OAuth state cookie on one host). The live budget is process-local, so the process stays at one worker. Fly uses the same pin in `Procfile`. Sign-in is Google. Without `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` the process still starts, and `POST /login` answers that sign-in is unavailable.
 
 ## Tests
 
@@ -49,6 +49,12 @@ Smoke drives a local app with fixtures. It does not call live Synergy. `tests/e2
 | `SYNERGY_EASL_CREDENTIAL_ID` | EASL credential id for the token endpoint |
 | `SYNERGY_EASL_CREDENTIAL_SECRET` | EASL credential secret for the token endpoint |
 | `PORT` | listen port locally or on Fly (Fly default 8080) |
+| `SESSION_SECRET` | signs `splashboard_session`; required on Fly |
+| `GOOGLE_CLIENT_ID` | Google OAuth client id |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `AUTH_BOOTSTRAP_ADMINS` | comma-separated extra permanent admins |
+| `PUBLIC_BASE_URL` | `http://localhost:8050` locally, `https://splashboard.fly.dev` on Fly |
+| `AUTH_DB_PATH` | optional sqlite path; default off Fly is `.auth/auth.db` |
 
 Hosts, organization ids, and both season tables live in `synergy_inbounder/settings.py`. They are tracked. Do **not** put credentials in `fly.toml` `[env]`.
 
@@ -70,6 +76,7 @@ Dash links each file in `assets/` with `?m=` set to a content hash (`asset_url.p
 - `inbound/`: Synergy HTTP wave, repository (`inbound/repository.py`), and 3-module cache (`inbound/cache/catalog_cache.py`, `inbound/cache/frame_store.py`, `inbound/cache/live_cache.py`) with shared `SingleflightGroup` coalescing (`inbound/cache/singleflight.py`). `synergy_inbounder/` re-exports compatible entrypoints.
 - `domain/`: Pure basketball calculation and domain rules (`clocks.py`, `periods.py`, `rates.py`, `ids.py`, `schedule_filters.py`, `shot_zones.py`). `synergy_reporter/` orchestrates post-game reports, rotation timelines, and season aggregations over `domain/`.
 - `ui/`: Design tokens (`ui/tokens.py`), shared DMC components (`ui/components.py`), shared 4-card DMC and AG-Grid table builders (`ui/tables/stat_cards.py`, `ui/tables/ag_grid.py`), Plotly/SVG chart renderers (`ui/charts/rotation_fig.py`, `ui/charts/shot_svg.py`), and Game tab controllers (`ui/game_tabs/`).
-- `pages/`: Dash `use_pages` route entrypoints (`pages/home.py`, `pages/game.py`, `pages/team_stats.py`).
+- `pages/`: Dash `use_pages` route entrypoints (`pages/home.py`, `pages/game.py`, `pages/team_stats.py`, `pages/admin.py`).
+- `auth/`: login policy, sqlite allowlist, Google OIDC, and the ASGI gate. It does not import `domain/`, `inbound/`, `synergy_inbounder/`, `synergy_reporter/`, or `pages/`.
 
 Product behavior: `docs/spec.md`. Synergy contract: `docs/synergy.md`. Agent entry: `AGENTS.md`.

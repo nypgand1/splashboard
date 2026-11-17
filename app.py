@@ -79,25 +79,30 @@ app.index_string = """<!DOCTYPE html>
     </body>
 </html>"""
 
-NAVBAR = create_navbar()
-app.layout = dmc.MantineProvider(
-    theme=MANTINE_THEME,
-    forceColorScheme="light",
-    children=dmc.AppShell(
-        [
-            dmc.AppShellHeader(
-                NAVBAR,
-                className="app-navbar no-print",
-                px=0,
-            ),
-            dmc.AppShellMain(page_container, className="app-main-content"),
-        ],
-        header={"height": 72},
-        padding=0,
-        className="app-shell",
-        id="app-shell",
+def serve_layout():
+    from auth.current import get as current_principal
+
+    return dmc.MantineProvider(
+        theme=MANTINE_THEME,
+        forceColorScheme="light",
+        children=dmc.AppShell(
+            [
+                dmc.AppShellHeader(
+                    create_navbar(current_principal()),
+                    className="app-navbar no-print",
+                    px=0,
+                ),
+                dmc.AppShellMain(page_container, className="app-main-content"),
+            ],
+            header={"height": 72},
+            padding=0,
+            className="app-shell",
+            id="app-shell",
+        ),
     )
-)
+
+
+app.layout = serve_layout
 
 clientside_callback(
     """
@@ -119,6 +124,29 @@ clientside_callback(
 # clears the global callback list tests read. Copy it back. The flag stays
 # set, so a later request does not register those callbacks twice.
 import dash._callback as _dash_callback
+from starlette.middleware.sessions import SessionMiddleware
+
+from auth.config import load_config, prepare_storage
+from auth.cookie import COOKIE_NAME
+from auth.gate import AuthGate
+from auth.policy import SESSION_MAX_AGE
+from auth.routes import mount as mount_auth
+
+_auth_config = load_config()
+prepare_storage()
+mount_auth(server)
+# add_middleware inserts at the front. Register the gate first, then the
+# session, so a request sees Session -> Gate -> Dash.
+server.add_middleware(AuthGate)
+server.add_middleware(
+    SessionMiddleware,
+    secret_key=_auth_config.session_secret,
+    session_cookie=COOKIE_NAME,
+    max_age=SESSION_MAX_AGE,
+    same_site='lax',
+    https_only=_auth_config.https_only,
+    path='/',
+)
 
 app._setup_server()
 _dash_callback.GLOBAL_CALLBACK_LIST.extend(app._callback_list)

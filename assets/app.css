@@ -75,7 +75,7 @@ body {
 
 .app-navbar-bar {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     grid-template-rows: auto auto;
     align-items: center;
     align-content: center;
@@ -109,6 +109,7 @@ body {
 
 .app-page-nav[data-mode="menu"] {
     justify-content: flex-end;
+    min-width: max-content;
 }
 
 .app-page-links {
@@ -182,7 +183,10 @@ body {
 }
 
 .app-page-link:focus-visible,
-.app-navbar-menu-button:focus-visible {
+.app-navbar-menu-button:focus-visible,
+.app-account-button:focus-visible,
+.app-account-login:focus-visible,
+.app-account-logout:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
 }
@@ -238,6 +242,147 @@ body {
 .mantine-Menu-dropdown .app-page-menu-item[data-current="true"] {
     color: var(--brand);
     font-weight: 600;
+}
+
+.app-account-menu {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    align-self: center;
+    min-width: 0;
+}
+
+.app-account-login,
+.app-account-button {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #1e293b;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.app-account-dropdown {
+    background-color: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    max-width: 280px;
+}
+
+.app-account-email {
+    display: block;
+    padding: 8px 12px 4px;
+    font-size: 12px;
+    line-height: 1.3;
+    color: #64748b;
+    overflow-wrap: anywhere;
+}
+
+.app-account-admin {
+    display: block;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #1e293b;
+    text-decoration: none;
+}
+
+.app-account-logout-form {
+    margin: 0;
+}
+
+.app-account-logout,
+.admin-remove {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 8px 12px;
+    border: 0;
+    background: transparent;
+    color: #1e293b;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: left;
+    cursor: pointer;
+}
+
+.admin-remove {
+    display: inline;
+    width: auto;
+    padding: 0;
+    color: #e63946;
+    font-weight: 600;
+    text-align: center;
+}
+
+.admin-table th,
+.admin-table td {
+    text-align: center;
+}
+
+dialog:modal {
+    overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+    overflow: hidden;
+    overscroll-behavior: contain;
+}
+
+#admin-remove-dialog {
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 20px;
+    max-width: min(420px, calc(100vw - 32px));
+    color: #0f172a;
+}
+
+#admin-remove-dialog::backdrop {
+    background: rgba(15, 23, 42, 0.35);
+}
+
+#admin-remove-dialog h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+}
+
+#admin-remove-dialog p {
+    margin: 0;
+}
+
+#admin-remove-dialog form {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+#admin-remove-dialog button {
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+#admin-remove-dialog button[value="remove"] {
+    border-color: #e63946;
+    background: #e63946;
+    color: #ffffff;
 }
 
 .app-main-content {
@@ -350,6 +495,25 @@ body {
 }
 
 @media (max-width: 767px) {
+    .app-navbar-bar {
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        column-gap: 8px;
+        padding-inline: 8px;
+    }
+
+    .app-navbar-brand-link,
+    .app-navbar-brand-link .mantine-Group-root {
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    .app-navbar-brand-link .mantine-Text-root {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+    }
+
     .braves-clean-tabs .mantine-Tabs-list {
         display: grid !important;
         grid-template-columns: repeat(3, minmax(0, 1fr));

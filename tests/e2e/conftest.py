@@ -8,6 +8,9 @@ import urllib.request
 
 import pytest
 
+from auth.cookie import COOKIE_NAME, sign_session
+from tests.e2e.auth_env import E2E_EMAIL, E2E_SESSION_SECRET
+
 REPO = __file__.rsplit('/tests/', 1)[0]
 
 
@@ -52,3 +55,22 @@ def e2e_server():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+@pytest.fixture(autouse=True)
+def e2e_auth_cookie(context, e2e_server):
+    value = sign_session(
+        {
+            'email': E2E_EMAIL,
+            'role': 'admin',
+            'issued_at': int(time.time()),
+        },
+        E2E_SESSION_SECRET,
+    )
+    context.add_cookies([{
+        'name': COOKIE_NAME,
+        'value': value,
+        'url': e2e_server,
+        'httpOnly': True,
+        'sameSite': 'Lax',
+    }])
