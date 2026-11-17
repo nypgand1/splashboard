@@ -220,7 +220,7 @@ def test_report_table_block_hugs_table_not_viewport(page, e2e_server):
     assert not geom.get('missing')
     assert geom['contentH'] > 20
     assert geom['blockH'] < geom['viewportH'] * 0.45
-    assert geom['gsH'] < 12
+    assert geom['gsH'] < 24
     assert geom['blockH'] - geom['contentH'] <= 48
 
 
@@ -266,12 +266,20 @@ def test_report_page_four_away_lineup_stays_above_home(page, e2e_server):
             if (!home || !away) return { ok: false };
             const hy = (home.gridstackNode && home.gridstackNode.y) || 0;
             const ay = (away.gridstackNode && away.gridstackNode.y) || 0;
-            return { ok: true, homeY: hy, awayY: ay, homeH: home.gridstackNode && home.gridstackNode.h };
+            const ah = (away.gridstackNode && away.gridstackNode.h) || 0;
+            return {
+                ok: true,
+                homeY: hy,
+                awayY: ay,
+                awayH: ah,
+                homeH: home.gridstackNode && home.gridstackNode.h,
+            };
         }'''
     )
     assert order['ok'] is True
     assert order['homeH'] > 8, order
     assert order['awayY'] < order['homeY'], order
+    assert order['homeY'] == order['awayY'] + order['awayH'], order
     fit = page.evaluate(
         '''() => {
             const paper = document.getElementById('report-paper-page-4');
@@ -653,7 +661,8 @@ def test_report_pdf_warns_when_paper_overflows(page, e2e_server):
             const item = paper && paper.querySelector('.grid-stack-item');
             const grid = paper && paper.querySelector('.report-grid') && paper.querySelector('.report-grid').gridstack;
             if (!item || !grid) return false;
-            grid.update(item, { minH: 1, h: 40 });
+            const note = paper.querySelector('.grid-stack-item[data-block-type="text"]') || item;
+            grid.update(note, { minH: 2, h: 80 });
             if (window.splashboardReport && window.splashboardReport.markOverflow) {
                 window.splashboardReport.markOverflow();
             }

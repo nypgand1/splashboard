@@ -30,7 +30,7 @@ from synergy_reporter.csv_table import (
 A4_WIDTH_MM = 210
 A4_HEIGHT_MM = 297
 GRID_COLUMNS = 12
-LAYOUT_VERSION = 4
+LAYOUT_VERSION = 5
 STORAGE_KEY_PREFIX = 'splashboard.report.layout.'
 IMAGE_MAX_BYTES = 1_000_000
 ALLOWED_IMAGE_MIMES = frozenset({'image/jpeg', 'image/png', 'image/webp'})
@@ -68,10 +68,10 @@ TABLE_TITLES = {
 }
 ALLOWED_BLOCK_TYPES = ('builtin_table', 'text', 'image', 'rotation', 'shot_chart', 'csv_table')
 ROTATION_TITLE = 'Rotation'
-ROTATION_DEFAULT_H = 11
+ROTATION_DEFAULT_H = 22
 ROTATION_EMPTY = 'No rotation chart for this game.'
 ROTATION_ERROR = 'Could not load rotation.'
-SHOT_CHART_DEFAULT_H = 10
+SHOT_CHART_DEFAULT_H = 20
 SHOT_CHART_EMPTY = 'No shot chart for this game.'
 SHOT_CHART_ERROR = 'Could not load shot chart.'
 HEADER_CREDIT = 'Designed by Wei-Hao Lin'
@@ -243,7 +243,7 @@ def chrome_spec():
         'overflow_chrome': 'paper_ring',
         'overflow_color': '#e63946',
         'overflow_ring_px': 2,
-        'overflow_detect': 'item_box_vs_paper',
+        'overflow_detect': 'table_bottom_else_item_box',
         'pdf_overflow': 'confirm_modal',
         'pdf_overflow_confirm': 'This export will crop content that sits outside A4.',
         'pdf_overflow_ok': 'Export',
@@ -275,8 +275,8 @@ def chrome_spec():
         'drag_handle': 'title_left',
         'note_drag_handle': 'overlay',
         'page_number': False,
-        'notes_default_h': 2,
-        'notes_min_h': 1,
+        'notes_default_h': 4,
+        'notes_min_h': 2,
         'notes_resize': 'content',
         'notes_preserve_w': True,
         'notes_editor': 'execCommand',
@@ -303,7 +303,7 @@ def chrome_spec():
         'paper_padding_top': '4mm',
         'paper_padding_x': '6mm',
         'paper_padding_bottom': 'calc(6mm - 2px)',
-        'paper_rows_oneline_header': 29,
+        'paper_rows_oneline_header': 58,
         'header_padding_bottom': '2mm',
         'header_credit_size': '9px',
         'header_credit_align': 'table_content_right',
@@ -407,35 +407,35 @@ def default_layout(match_info=None):
             {
                 'id': 'page-1',
                 'blocks': [
-                    _table('p1-score', 'score_group', 0, 0, half, 3),
-                    _table('p1-four', 't_adv_df', 0, 3, half, 3),
-                    _table('p1-advanced', 'adv_df', 0, 6, half, 3),
-                    _text('p1-notes', half, 0, half, 9),
-                    _rotation('p1-rotation', 0, 9, GRID_COLUMNS, ROTATION_DEFAULT_H),
+                    _table('p1-score', 'score_group', 0, 0, half, 6),
+                    _table('p1-four', 't_adv_df', 0, 6, half, 6),
+                    _table('p1-advanced', 'adv_df', 0, 12, half, 6),
+                    _text('p1-notes', half, 0, half, 18),
+                    _rotation('p1-rotation', 0, 18, GRID_COLUMNS, ROTATION_DEFAULT_H),
                 ],
             },
             {
                 'id': 'page-2',
                 'blocks': [
-                    _table('p2-team', 't_df', 0, 0, GRID_COLUMNS, 3),
-                    _table('p2-key', 'k_df', 0, 3, GRID_COLUMNS, 3),
-                    _shot_chart('p2-shot-chart', 0, 6, GRID_COLUMNS, SHOT_CHART_DEFAULT_H),
-                    _text('p2-notes-left', 0, 6 + SHOT_CHART_DEFAULT_H, half, 2),
-                    _text('p2-notes-right', half, 6 + SHOT_CHART_DEFAULT_H, half, 2),
+                    _table('p2-team', 't_df', 0, 0, GRID_COLUMNS, 6),
+                    _table('p2-key', 'k_df', 0, 6, GRID_COLUMNS, 6),
+                    _shot_chart('p2-shot-chart', 0, 12, GRID_COLUMNS, SHOT_CHART_DEFAULT_H),
+                    _text('p2-notes-left', 0, 12 + SHOT_CHART_DEFAULT_H, half, 4),
+                    _text('p2-notes-right', half, 12 + SHOT_CHART_DEFAULT_H, half, 4),
                 ],
             },
             {
                 'id': 'page-3',
                 'blocks': [
-                    _table('p3-away', 'p_df_away', 0, 0, GRID_COLUMNS, 8),
-                    _table('p3-home', 'p_df_home', 0, 8, GRID_COLUMNS, 8),
+                    _table('p3-away', 'p_df_away', 0, 0, GRID_COLUMNS, 16),
+                    _table('p3-home', 'p_df_home', 0, 16, GRID_COLUMNS, 16),
                 ],
             },
             {
                 'id': 'page-4',
                 'blocks': [
-                    _table('p4-away', 'lineup_away', 0, 0, GRID_COLUMNS, 8),
-                    _table('p4-home', 'lineup_home', 0, 8, GRID_COLUMNS, 8),
+                    _table('p4-away', 'lineup_away', 0, 0, GRID_COLUMNS, 16),
+                    _table('p4-home', 'lineup_home', 0, 16, GRID_COLUMNS, 16),
                 ],
             },
         ],
@@ -475,8 +475,23 @@ def _swap_pair_ys(blocks):
             away['y'] = home_y
 
 
-def migrate_v3_layout(layout):
-    """Version 3 keeps notes and images. Stacked home/away pairs trade y."""
+def _scale_units(blocks, factor):
+    scaled = []
+    for block in blocks:
+        copied = dict(block)
+        for key in ('y', 'h'):
+            value = copied.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                copied[key] = value * factor
+            elif isinstance(value, float) and value == int(value):
+                copied[key] = int(value) * factor
+        scaled.append(copied)
+    return scaled
+
+
+def _map_pages(layout, transform):
     pages = []
     for page in layout.get('pages') or []:
         if not isinstance(page, dict):
@@ -484,18 +499,34 @@ def migrate_v3_layout(layout):
         blocks = [
             dict(block) for block in (page.get('blocks') or []) if isinstance(block, dict)
         ]
-        _swap_pair_ys(blocks)
         migrated = dict(page)
-        migrated['blocks'] = blocks
+        migrated['blocks'] = transform(blocks)
         pages.append(migrated)
     return {'version': LAYOUT_VERSION, 'pages': pages}
+
+
+def migrate_v4_layout(layout):
+    """Version 4 used 36px rows. Version 5 uses 18px, so y and h double."""
+    return _map_pages(layout, lambda blocks: _scale_units(blocks, 2))
+
+
+def migrate_v3_layout(layout):
+    """Version 3 swaps a home block still above its away partner, then doubles y and h."""
+    def swap_then_scale(blocks):
+        _swap_pair_ys(blocks)
+        return _scale_units(blocks, 2)
+
+    return _map_pages(layout, swap_then_scale)
 
 
 def normalize_layout(layout):
     if not isinstance(layout, dict) or not layout.get('pages'):
         return default_layout()
-    if layout.get('version') == 3:
+    version = layout.get('version')
+    if version == 3:
         layout = migrate_v3_layout(layout)
+    elif version == 4:
+        layout = migrate_v4_layout(layout)
     if layout.get('version') != LAYOUT_VERSION:
         return default_layout()
     pages = layout.get('pages') or []

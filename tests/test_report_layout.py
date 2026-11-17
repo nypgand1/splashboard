@@ -51,7 +51,7 @@ def _leaf_widths(column_defs):
 class DefaultLayoutTests(unittest.TestCase):
     def test_version_and_four_pages(self):
         layout = _layout()
-        self.assertEqual(layout['version'], 4)
+        self.assertEqual(layout['version'], 5)
         self.assertEqual(len(layout['pages']), 4)
 
     def test_header_is_not_a_block(self):
@@ -71,7 +71,7 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(p1_notes[0].get('x'), 6)
         self.assertEqual(p1_notes[0].get('w'), 6)
         self.assertEqual(p1_notes[0].get('y'), 0)
-        self.assertEqual(p1_notes[0].get('h'), 9)
+        self.assertEqual(p1_notes[0].get('h'), 18)
         self.assertEqual(len(p2_notes), 2)
         left, right = sorted(p2_notes, key=lambda block: block.get('x'))
         self.assertEqual(left.get('content'), '')
@@ -81,8 +81,8 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(left.get('w'), 6)
         self.assertEqual(right.get('w'), 6)
         self.assertEqual(left.get('y'), right.get('y'))
-        self.assertEqual(left.get('h'), 2)
-        self.assertEqual(right.get('h'), 2)
+        self.assertEqual(left.get('h'), 4)
+        self.assertEqual(right.get('h'), 4)
         for index in (2, 3):
             texts = [b for b in _blocks(layout, index) if b.get('type') == 'text']
             self.assertEqual(texts, [])
@@ -141,7 +141,7 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(four.get('y'), score.get('y') + score.get('h'))
         self.assertEqual(advanced.get('x'), 0)
         self.assertEqual(advanced.get('w'), 6)
-        self.assertEqual(advanced.get('h'), 3)
+        self.assertEqual(advanced.get('h'), 6)
         self.assertEqual(advanced.get('y'), four.get('y') + four.get('h'))
         stack_h = score.get('h') + four.get('h') + advanced.get('h')
         self.assertEqual(texts[0].get('h'), stack_h)
@@ -199,7 +199,7 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(chart['x'], 0)
         self.assertEqual(chart['w'], 12)
         self.assertEqual(chart['y'], key['y'] + key['h'])
-        self.assertEqual(chart['h'], 10)
+        self.assertEqual(chart['h'], 20)
         self.assertNotIn('src', chart)
         self.assertEqual(len(notes), 2)
         self.assertEqual(notes[0]['x'], 0)
@@ -208,12 +208,12 @@ class DefaultLayoutTests(unittest.TestCase):
         self.assertEqual(notes[1]['w'], 6)
         self.assertEqual(notes[0]['y'], chart['y'] + chart['h'])
         self.assertEqual(notes[1]['y'], notes[0]['y'])
-        self.assertEqual(notes[0]['h'], 2)
-        self.assertEqual(notes[1]['h'], 2)
+        self.assertEqual(notes[0]['h'], 4)
+        self.assertEqual(notes[1]['h'], 4)
         self.assertEqual(notes[0].get('content'), '')
         self.assertEqual(notes[1].get('content'), '')
         self.assertNotIn('spacer', [b.get('type') for b in page2])
-        self.assertLess(_occupied_rows(page2), 28)
+        self.assertLess(_occupied_rows(page2), 58)
 
 
 class PaperAndStorageTests(unittest.TestCase):
@@ -587,14 +587,30 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('Plotly.toImage', js)
         self.assertIn('Plotly.react', js)
         self.assertIn('noResize: true', js)
-        self.assertIn('var LAYOUT_VERSION = 4', js)
+        self.assertIn('var LAYOUT_VERSION = 5', js)
+        self.assertIn('var CELL_HEIGHT = 18', js)
+        self.assertIn('function closeShrinkGaps', js)
+        self.assertIn('function migrateV4Layout', js)
         self.assertIn('function migrateV3Layout', js)
         self.assertIn('function teamStripeColor', js)
         self.assertIn('match.away_team', js)
         boot = js.split('function bootReport', 1)[1].split('function widgetFromBlock', 1)[0]
         self.assertIn('stored.version === 3', boot)
+        self.assertIn('stored.version === 4', boot)
         self.assertIn('migrateV3Layout(stored)', boot)
+        self.assertIn('migrateV4Layout(stored)', boot)
         self.assertLess(boot.find('migrateV3Layout(stored)'), boot.find('applyStoredLayout(stored)'))
+        hydrate = js.split('function hydratePage', 1)[1].split('function restoreVisiblePage', 1)[0]
+        self.assertLess(
+            hydrate.find('resolveOverlaps(grid, originY)'),
+            hydrate.find('closeShrinkGaps(grid, originY, originH)'),
+        )
+        self.assertIn('snapshotNodeHs(grid)', hydrate)
+        pdf_refit = js.split('function refitPaperForPdf', 1)[1].split('function exportPapersToPdf', 1)[0]
+        self.assertLess(
+            pdf_refit.find('resolveOverlaps(grid, originY)'),
+            pdf_refit.find('closeShrinkGaps(grid, originY, originH)'),
+        )
         self.assertIn('No shot chart for this game.', js)
         self.assertIn('Could not load shot chart.', js)
         self.assertIn('function drawShotChartImage', js)
@@ -832,7 +848,7 @@ class ReportTableComponentTests(unittest.TestCase):
             'pages': [{'id': 'old', 'blocks': [_blocks(_layout(), 0)[0]]}],
         }
         fresh = report_layout.normalize_layout(stale)
-        self.assertEqual(fresh['version'], 4)
+        self.assertEqual(fresh['version'], 5)
         types = [b.get('type') for b in fresh['pages'][0]['blocks']]
         self.assertIn('rotation', types)
         replaced = report_layout.normalize_layout({
@@ -844,7 +860,7 @@ class ReportTableComponentTests(unittest.TestCase):
                 }],
             }],
         })
-        self.assertEqual(replaced['version'], 4)
+        self.assertEqual(replaced['version'], 5)
         self.assertNotIn('keep me', str(replaced))
         page_two = [b.get('type') for b in replaced['pages'][1]['blocks']]
         self.assertIn('shot_chart', page_two)
@@ -913,26 +929,67 @@ class ReportTableComponentTests(unittest.TestCase):
             ],
         }
         fresh = report_layout.normalize_layout(stored)
-        self.assertEqual(fresh['version'], 4)
+        self.assertEqual(fresh['version'], 5)
         page3 = {block['id']: block for block in fresh['pages'][0]['blocks']}
         self.assertEqual(page3['note']['content'], 'keep')
         self.assertEqual(page3['note']['y'], 0)
+        self.assertEqual(page3['note']['h'], 4)
         self.assertEqual(page3['img']['y'], 0)
+        self.assertEqual(page3['img']['h'], 4)
         self.assertEqual(page3['img']['src'], 'data:image/png,x')
-        self.assertEqual(page3['away']['y'], 2)
-        self.assertEqual(page3['away']['h'], 6)
-        self.assertEqual(page3['home']['y'], 10)
-        self.assertEqual(page3['home']['h'], 8)
+        self.assertEqual(page3['away']['y'], 4)
+        self.assertEqual(page3['away']['h'], 12)
+        self.assertEqual(page3['home']['y'], 20)
+        self.assertEqual(page3['home']['h'], 16)
         page4 = {block['id']: block for block in fresh['pages'][1]['blocks']}
         self.assertEqual(page4['near-away']['y'], 0)
-        self.assertEqual(page4['near-home']['y'], 5)
-        self.assertEqual(page4['near-home']['h'], 9)
-        self.assertEqual(page4['far-away']['y'], 12)
-        self.assertEqual(page4['far-home']['y'], 20)
-        self.assertEqual(page4['far-home']['h'], 4)
+        self.assertEqual(page4['near-away']['h'], 14)
+        self.assertEqual(page4['near-home']['y'], 10)
+        self.assertEqual(page4['near-home']['h'], 18)
+        self.assertEqual(page4['far-away']['y'], 24)
+        self.assertEqual(page4['far-away']['h'], 6)
+        self.assertEqual(page4['far-home']['y'], 40)
+        self.assertEqual(page4['far-home']['h'], 8)
         already = {block['id']: block for block in fresh['pages'][2]['blocks']}
         self.assertEqual(already['a']['y'], 0)
-        self.assertEqual(already['h']['y'], 8)
+        self.assertEqual(already['a']['h'], 16)
+        self.assertEqual(already['h']['y'], 16)
+        self.assertEqual(already['h']['h'], 16)
+        self.assertEqual(report_layout.normalize_layout(fresh), fresh)
+
+    def test_v4_layout_doubles_y_and_h_without_swapping(self):
+        if report_layout is None:
+            raise unittest.SkipTest('synergy_reporter.report_layout is not implemented')
+        stored = {
+            'version': 4,
+            'pages': [{
+                'id': 'page-4',
+                'blocks': [
+                    {
+                        'id': 'away', 'type': 'builtin_table', 'table_key': 'lineup_away',
+                        'x': 0, 'y': 0, 'w': 12, 'h': 8,
+                    },
+                    {
+                        'id': 'home', 'type': 'builtin_table', 'table_key': 'lineup_home',
+                        'x': 0, 'y': 8, 'w': 12, 'h': 8,
+                    },
+                    {
+                        'id': 'note', 'type': 'text', 'content': 'keep',
+                        'x': 0, 'y': 16, 'w': 6, 'h': 2,
+                    },
+                ],
+            }],
+        }
+        fresh = report_layout.normalize_layout(stored)
+        self.assertEqual(fresh['version'], 5)
+        blocks = {block['id']: block for block in fresh['pages'][0]['blocks']}
+        self.assertEqual(blocks['away']['y'], 0)
+        self.assertEqual(blocks['away']['h'], 16)
+        self.assertEqual(blocks['home']['y'], 16)
+        self.assertEqual(blocks['home']['h'], 16)
+        self.assertEqual(blocks['note']['y'], 32)
+        self.assertEqual(blocks['note']['h'], 4)
+        self.assertEqual(blocks['note']['content'], 'keep')
         self.assertEqual(report_layout.normalize_layout(fresh), fresh)
 
     def test_empty_page_has_no_blocks(self):
@@ -1075,14 +1132,14 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['drag_handle'], 'title_left')
         self.assertEqual(chrome['note_drag_handle'], 'overlay')
         self.assertFalse(chrome['page_number'])
-        self.assertEqual(chrome['notes_default_h'], 2)
-        self.assertEqual(chrome['notes_min_h'], 1)
+        self.assertEqual(chrome['notes_default_h'], 4)
+        self.assertEqual(chrome['notes_min_h'], 2)
         self.assertEqual(chrome['page_list_align'], 'paper_top')
         self.assertEqual(chrome['page_list_sticky'], 'toolbar_plus_gap')
         self.assertEqual(chrome['overflow_chrome'], 'paper_ring')
         self.assertEqual(chrome['overflow_color'], '#e63946')
         self.assertEqual(chrome['overflow_ring_px'], 2)
-        self.assertEqual(chrome['overflow_detect'], 'item_box_vs_paper')
+        self.assertEqual(chrome['overflow_detect'], 'table_bottom_else_item_box')
         self.assertEqual(chrome['pdf_overflow'], 'confirm_modal')
         self.assertEqual(
             chrome['pdf_overflow_confirm'],
@@ -1137,7 +1194,7 @@ class TableEngineAndChromeContractTests(unittest.TestCase):
         self.assertEqual(chrome['paper_padding_top'], '4mm')
         self.assertEqual(chrome['paper_padding_x'], '6mm')
         self.assertEqual(chrome['paper_padding_bottom'], 'calc(6mm - 2px)')
-        self.assertEqual(chrome['paper_rows_oneline_header'], 29)
+        self.assertEqual(chrome['paper_rows_oneline_header'], 58)
         self.assertEqual(chrome['header_padding_bottom'], '2mm')
         self.assertEqual(chrome['header_credit_size'], '9px')
         self.assertEqual(chrome['header_credit_align'], 'table_content_right')

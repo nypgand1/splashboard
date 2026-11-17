@@ -1128,13 +1128,16 @@
         var grid = gridEl && gridEl.gridstack;
         if (grid) {
             var originY = R.snapshotNodeYs ? R.snapshotNodeYs(grid) : {};
+            var originH = R.snapshotNodeHs ? R.snapshotNodeHs(grid) : {};
             if (grid.el) {
                 grid.el._splashboardOriginY = originY;
+                grid.el._splashboardOriginH = originH;
             }
             if (R.fitTableBlocksOnGrid) R.fitTableBlocksOnGrid(grid);
             if (R.fitRotationBlocksOnGrid) R.fitRotationBlocksOnGrid(grid);
             if (R.fitShotChartBlocksOnGrid) R.fitShotChartBlocksOnGrid(grid);
             if (R.resolveOverlaps) R.resolveOverlaps(grid, originY);
+            if (R.closeShrinkGaps) R.closeShrinkGaps(grid, originY, originH);
         }
         if (paper) {
             void paper.offsetHeight;
