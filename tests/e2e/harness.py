@@ -84,8 +84,22 @@ def apply_patches():
                 setattr(communicator.Communicator, name, staticmethod(_blocked))
 
 
+def _prepare_auth(port):
+    import tempfile
+
+    from tests.e2e.auth_env import E2E_SESSION_SECRET
+
+    handle, path = tempfile.mkstemp(prefix='splashboard-e2e-auth-', suffix='.sqlite')
+    os.close(handle)
+    os.environ['SESSION_SECRET'] = E2E_SESSION_SECRET
+    os.environ['AUTH_DB_PATH'] = path
+    os.environ['PUBLIC_BASE_URL'] = f'http://127.0.0.1:{port}'
+    os.environ['FLY_APP_NAME'] = ''
+
+
 def main(port):
     apply_patches()
+    _prepare_auth(port)
     import uvicorn
     import app  # noqa: F401
     uvicorn.run(app.server, host='127.0.0.1', port=int(port), log_level='warning')

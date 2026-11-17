@@ -119,10 +119,59 @@ def _ensure_fga(row):
     return row
 
 
+_MISSING_MINUTE_TEXT = frozenset({'', 'null', 'nul', 'none'})
+
+
+def _minutes_missing(value):
+    """True when the API sent no clock: blank, None, NaN, null, or nul."""
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except TypeError:
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in _MISSING_MINUTE_TEXT
+    return False
+
+
+def _did_not_play(row):
+    """True only when participated is present and false.
+
+    A missing or NA flag stays "played", matching ``row.get(..., True)``.
+    ``bool`` covers NumPy false, where ``value is False`` does not.
+    """
+    try:
+        value = row.get('participated', True)
+    except AttributeError:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except TypeError:
+        pass
+    return not bool(value)
+
+
 def _game_long_dnp(row):
-    return (not row.get('participated', True)) or (
-        pd.isna(row.get('minutes')) and not bool(row.get('starter', False))
-    )
+    return _did_not_play(row)
+
+
+def _player_min_label(row):
+    if _did_not_play(row):
+        return 'DNP'
+    minutes = row.get('minutes')
+    if _minutes_missing(minutes):
+        return ''
+    return minutes_to_mmss(minutes)
+
+
+def _clocks_present(values):
+    for value in values:
+        if not _minutes_missing(value):
+            return True
+    return False
 
 
 def _regulation_base(minutes):
@@ -339,6 +388,7 @@ class PostGameReport():
                 kept['_blank_usage'] = False
                 built.append(kept)
                 continue
+            played = not _minutes_missing(game_row.get('minutes'))
             if len(source) and 'personId' in source.columns and 'entityId' in source.columns:
                 matched = source[(source['personId'] == person_id) & (source['entityId'] == entity_id)]
             else:
@@ -350,6 +400,8 @@ class PostGameReport():
                 row['starter'] = bool(game_row.get('starter', False))
                 row['participated'] = True
                 row['_blank_usage'] = False
+                if _minutes_missing(row.get('minutes')) and played:
+                    row['minutes'] = 'PT0S'
                 built.append(row)
                 continue
             row = {field: 0 for field in _PLAYER_COUNT_FIELDS}
@@ -358,7 +410,7 @@ class PostGameReport():
                 'entityId': entity_id,
                 'starter': bool(game_row.get('starter', False)),
                 'participated': True,
-                'minutes': 'PT0S',
+                'minutes': 'PT0S' if played else None,
                 '_blank_usage': True,
                 'usageRate': None,
             })
@@ -367,7 +419,13 @@ class PostGameReport():
             if len(matched):
                 row.update(_sum_fields(matched, _PLAYER_COUNT_FIELDS))
                 if 'minutes' in matched.columns:
-                    row['minutes'] = _sum_clocks(matched['minutes'])
+                    clocks = matched['minutes']
+                    if _clocks_present(clocks):
+                        row['minutes'] = _sum_clocks(clocks)
+                    elif played:
+                        row['minutes'] = 'PT0S'
+                    else:
+                        row['minutes'] = None
             built.append(row)
         return pd.DataFrame(built)
 
@@ -495,9 +553,7 @@ class PostGameReport():
             p_df_t['_playerFull'] = p_df['personId'].apply(lambda pid: person_full_name(self.id_table, pid))
             p_df_t['S'] = p_df['personId'].apply(lambda pid: '○' if (roster_starter_dict.get(pid) or pid in starters_for_team) else '')
 
-            is_participated = p_df['participated'].fillna(True) if 'participated' in p_df.columns else pd.Series(True, index=p_df.index)
-            # If minutes is None/empty and not participated -> DNP
-            p_df_t['Min'] = p_df.apply(lambda x: 'DNP' if (not x.get('participated', True) or (pd.isna(x.get('minutes')) and not x.get('starter', False))) else minutes_to_mmss(x.get('minutes')), axis=1)
+            p_df_t['Min'] = p_df.apply(_player_min_label, axis=1)
             p_df_t['+/-'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or pd.isna(x.get('plusMinus')) else int(round(float(x.get('plusMinus')))), axis=1)
 
             p_df_t['2M'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsTwoMade')), axis=1)
@@ -555,7 +611,7 @@ class PostGameReport():
                     return ''
                 if blank_usage or x.get('_blank_usage') == True:  # noqa: E712
                     return ''
-                if not x.get('minutes'):
+                if clock_to_seconds(x.get('minutes')) is None:
                     return ''
                 usg_val = x.get('usageRate')
                 return f"{usg_val:0.1f}%" if pd.notnull(usg_val) else '0.0%'

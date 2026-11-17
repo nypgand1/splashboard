@@ -252,6 +252,45 @@ function splashboardFitLineupWidth(params) {
 window.splashboardFitLineupWidth = splashboardFitLineupWidth;
 dagFuncs.splashboardFitLineupWidth = splashboardFitLineupWidth;
 
+var dnpSpanTimers = new WeakMap();
+
+function splashboardSyncDnpSpan(params) {
+    var api = params && params.api;
+    if (!api || (api.isDestroyed && api.isDestroyed())) {
+        return;
+    }
+    var pending = dnpSpanTimers.get(api);
+    if (pending) {
+        clearTimeout(pending);
+    }
+    dnpSpanTimers.set(api, setTimeout(function () {
+        dnpSpanTimers.delete(api);
+        if (api.isDestroyed && api.isDestroyed()) {
+            return;
+        }
+        var changed = [];
+        api.forEachNode(function (node) {
+            if (!node || !node.data || node.rowPinned) {
+                return;
+            }
+            var dnp = node.data.Min === 'DNP';
+            if (!Object.prototype.hasOwnProperty.call(node, '__bsDnp')) {
+                node.__bsDnp = dnp;
+                return;
+            }
+            if (node.__bsDnp !== dnp) {
+                node.__bsDnp = dnp;
+                changed.push(node);
+            }
+        });
+        if (changed.length) {
+            api.redrawRows({rowNodes: changed});
+        }
+    }, 0));
+}
+window.splashboardSyncDnpSpan = splashboardSyncDnpSpan;
+dagFuncs.splashboardSyncDnpSpan = splashboardSyncDnpSpan;
+
 var dagComponentFuncs = window.dashAgGridComponentFunctions = window.dashAgGridComponentFunctions || {};
 
 dagComponentFuncs.PlusMinusCell = function (props) {

@@ -73,6 +73,7 @@ def _bs_player_block(index, dot_color):
                     className='ag-theme-alpine braves-clean-ag-grid',
                     style={'width': '100%'},
                     getRowId='params.data._row',
+                    eventListeners={'rowDataUpdated': ['splashboardSyncDnpSpan(params)']},
                 ),
                 id=f'bs-player-wrap-{index}',
                 withBorder=True,

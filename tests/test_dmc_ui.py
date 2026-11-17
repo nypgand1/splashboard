@@ -1526,6 +1526,45 @@ class PlayerGridSortTests(unittest.TestCase):
         self.assertIn('!ka || !kb', player['comparator']['function'])
         self.assertEqual(player.get('tooltipField'), '_playerFull')
         self.assertNotIn('tooltipValueGetter', player)
+        minutes = field('Min')
+        style = minutes['cellStyle']
+        self.assertNotIn('default', style)
+        reset = style['defaultStyle']
+        self.assertEqual(reset['textAlign'], 'center')
+        self.assertEqual(reset['fontWeight'], 400)
+        self.assertEqual(reset['color'], 'inherit')
+        self.assertEqual(reset['letterSpacing'], 'normal')
+        self.assertEqual(style['styleConditions'][0]['condition'], "params.value === 'DNP'")
+
+    def test_player_grids_redraw_only_a_changed_dnp_span(self):
+        from ui.game_tabs.box_score import _box_score_wrap
+
+        grids = find_type(_box_score_wrap(), dag.AgGrid)
+        player_grids = [grid for grid in grids if str(grid.id).startswith('bs-player-grid-')]
+        self.assertEqual([grid.id for grid in player_grids], ['bs-player-grid-0', 'bs-player-grid-1'])
+        for grid in player_grids:
+            self.assertEqual(grid.getRowId, 'params.data._row')
+            self.assertEqual(
+                grid.eventListeners['rowDataUpdated'],
+                ['splashboardSyncDnpSpan(params)'],
+            )
+        source = os.path.join(REPO, 'ui', 'tables', 'ag_grid.py')
+        with open(source, 'r', encoding='utf-8') as handle:
+            ag_grid = handle.read()
+        self.assertNotIn('"default":', ag_grid)
+        self.assertNotIn('splashboardSyncDnpSpan', ag_grid)
+        cells = os.path.join(REPO, 'assets', 'ag_grid_cells.js')
+        with open(cells, 'r', encoding='utf-8') as handle:
+            js = handle.read()
+        self.assertIn('function splashboardSyncDnpSpan(params)', js)
+        self.assertIn('dagFuncs.splashboardSyncDnpSpan = splashboardSyncDnpSpan', js)
+        self.assertIn('setTimeout(function () {', js)
+        self.assertIn('api.redrawRows({rowNodes: changed})', js)
+        self.assertNotIn('refreshCells', js)
+        from ui.tables.ag_grid import _LINEUP_FIT_EVENTS
+        self.assertNotIn('rowDataUpdated', _LINEUP_FIT_EVENTS)
+        joined = ' '.join(call for calls in _LINEUP_FIT_EVENTS.values() for call in calls)
+        self.assertNotIn('splashboardSyncDnpSpan', joined)
 
 
 class GameBannerStatusTests(unittest.TestCase):

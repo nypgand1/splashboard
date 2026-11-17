@@ -24,3 +24,10 @@ primary_region = "nrt"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 1024
+
+[mounts]
+  source = "splashboard_auth"
+  destination = "/data"
+  initial_size = "1gb"
+  processes = ["app"]
+  snapshot_retention = 5

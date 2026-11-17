@@ -357,7 +357,12 @@ def _build_stats_column_defs(columns, filterable_cols=None, lineup_size=5):
                         "style": {"textAlign": "center", "fontWeight": "700", "color": DNP_TEXT, "letterSpacing": "0.05em"}
                     }
                 ],
-                "default": {"textAlign": "center"}
+                "defaultStyle": {
+                    "textAlign": "center",
+                    "fontWeight": 400,
+                    "color": "inherit",
+                    "letterSpacing": "normal",
+                }
             },
             "colSpan": {"function": "params.data && params.data['Min'] === 'DNP' ? 30 : 1"},
             "cellClass": "ag-cell-align-center",

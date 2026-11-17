@@ -1,6 +1,7 @@
 import json
 import unittest
 
+import numpy as np
 import pandas as pd
 
 from synergy_reporter.post_game_report import PostGameReport
@@ -558,3 +559,186 @@ class BoxScoreSliceTests(unittest.TestCase):
         self.assertNotIn('PPP', advance.columns)
         self.assertEqual(set(advanced['PPP']), {''})
         self.assertEqual(set(advance['TO%']), {''})
+
+
+def _home_table(report):
+    return report._get_player_stats_df_dict()['Braves']
+
+
+class BoxScoreMinutesTests(unittest.TestCase):
+    def _players(self, rows):
+        names = {'home': 'Braves', 'away': 'Visitors'}
+        roster = []
+        starters = []
+        built = []
+        for index, (person_id, name, overrides) in enumerate(rows):
+            names[person_id] = name
+            row = _player_game(person_id, 'home', **overrides)
+            built.append(row)
+            roster.append({
+                'personId': person_id,
+                'starter': bool(overrides.get('starter')),
+                'shirtNumber': str(index + 1),
+            })
+            if overrides.get('starter'):
+                starters.append(person_id)
+        frame = pd.DataFrame(built).astype({'participated': object, 'minutes': object})
+        report = _report(
+            players=frame,
+            id_table=names,
+            roster=roster,
+            starter_dict={'home': starters, 'away': []},
+        )
+        return _home_table(report)
+
+    def test_only_explicit_did_not_play_is_dnp_and_missing_clocks_stay_blank(self):
+        table = self._players([
+            ('scratch', 'Scratch', {
+                'starter': True, 'participated': False, 'minutes': None, 'points': 9, 'plusMinus': 99,
+            }),
+            ('npfalse', 'NpFalse', {
+                'participated': np.False_, 'minutes': 'PT3M', 'points': 1,
+            }),
+            ('pyfalse', 'PyFalse', {
+                'participated': False, 'minutes': 'PT4M', 'points': 1,
+            }),
+            ('blank', 'Blank', {
+                'starter': False, 'participated': True, 'minutes': None,
+                'points': 6, 'plusMinus': 8, 'usageRate': 15,
+            }),
+            ('empty', 'Empty', {
+                'participated': True, 'minutes': '', 'usageRate': 9, 'plusMinus': 2, 'points': 1,
+            }),
+            ('nulls', 'NullText', {'participated': True, 'minutes': 'null', 'usageRate': 4}),
+            ('nuls', 'NulText', {'participated': True, 'minutes': ' nul '}),
+            ('nones', 'NoneText', {'participated': True, 'minutes': 'NONE'}),
+            ('nano', 'Nano', {'participated': True, 'minutes': np.nan, 'usageRate': None}),
+            ('zero', 'ZeroClock', {
+                'participated': True, 'minutes': 'PT0S', 'usageRate': None, 'points': 0, 'plusMinus': 0,
+            }),
+            ('start', 'StarterBlank', {
+                'starter': True, 'participated': True, 'minutes': None, 'points': 2, 'plusMinus': 1,
+            }),
+            ('junk', 'Garbage', {'participated': True, 'minutes': 'abc', 'usageRate': 4}),
+            ('clock', 'Clock', {
+                'participated': True, 'minutes': 'PT10M', 'usageRate': None, 'points': 4, 'plusMinus': 3,
+            }),
+        ])
+        by_name = {row['Player']: row for _, row in table.iterrows()}
+        for name in ('Scratch', 'NpFalse', 'PyFalse'):
+            self.assertEqual(by_name[name]['Min'], 'DNP', name)
+            self.assertEqual(by_name[name]['PTS'], '', name)
+            self.assertEqual(by_name[name]['USG%'], '', name)
+        for name in ('Blank', 'Empty', 'NullText', 'NulText', 'NoneText', 'Nano', 'StarterBlank'):
+            self.assertEqual(by_name[name]['Min'], '', name)
+            self.assertEqual(by_name[name]['USG%'], '', name)
+        self.assertEqual(by_name['Blank']['PTS'], 6)
+        self.assertEqual(by_name['Blank']['+/-'], 8)
+        self.assertEqual(by_name['StarterBlank']['S'], '○')
+        self.assertEqual(by_name['ZeroClock']['Min'], '0:00')
+        self.assertEqual(by_name['ZeroClock']['USG%'], '0.0%')
+        self.assertEqual(by_name['ZeroClock']['PTS'], '')
+        self.assertEqual(by_name['Garbage']['Min'], 'abc')
+        self.assertEqual(by_name['Garbage']['USG%'], '')
+        self.assertEqual(by_name['Clock']['Min'], '10:00')
+        self.assertEqual(by_name['Clock']['USG%'], '0.0%')
+        names = list(table['Player'])
+        self.assertLess(names.index('Blank'), names.index('Clock'))
+        self.assertEqual(names[-3:], ['Scratch', 'NpFalse', 'PyFalse'])
+
+    def test_missing_participated_or_minutes_column_stays_blank(self):
+        gone = pd.DataFrame([
+            _player_game('gone', 'home', minutes=None, points=5, plusMinus=2),
+        ]).drop(columns=['participated'])
+        named = _report(
+            players=gone,
+            id_table={'home': 'Braves', 'away': 'Visitors', 'gone': 'Gone'},
+            roster=[{'personId': 'gone', 'starter': False, 'shirtNumber': '4'}],
+        )
+        row = _home_table(named).iloc[0]
+        self.assertEqual(row['Min'], '')
+        self.assertEqual(row['PTS'], 5)
+        self.assertEqual(row['USG%'], '')
+
+        no_clock = pd.DataFrame([
+            _player_game('noclock', 'home', participated=True, points=3, plusMinus=1),
+        ]).drop(columns=['minutes'])
+        named = _report(
+            players=no_clock,
+            id_table={'home': 'Braves', 'away': 'Visitors', 'noclock': 'NoClock'},
+            roster=[{'personId': 'noclock', 'starter': True, 'shirtNumber': '8'}],
+            starter_dict={'home': ['noclock'], 'away': []},
+        )
+        row = _home_table(named).iloc[0]
+        self.assertEqual(row['Min'], '')
+        self.assertEqual(row['S'], '○')
+        self.assertEqual(row['PTS'], 3)
+
+        na_flag = pd.DataFrame([
+            _player_game('naflag', 'home', minutes=None, points=1),
+        ])
+        na_flag['participated'] = pd.NA
+        named = _report(
+            players=na_flag,
+            id_table={'home': 'Braves', 'away': 'Visitors', 'naflag': 'NaFlag'},
+            roster=[{'personId': 'naflag', 'starter': False, 'shirtNumber': '9'}],
+        )
+        self.assertEqual(_home_table(named).iloc[0]['Min'], '')
+
+    def test_missing_game_clock_stays_blank_on_slices_and_a_real_clock_is_zero(self):
+        players = pd.DataFrame([
+            _player_game('p1', 'home', starter=True, minutes='PT20M0S', plusMinus=4, points=12),
+            _player_game('p0', 'home', minutes='PT5M0S', plusMinus=1, points=2),
+            _player_game('dnp', 'home', participated=False, minutes=None, points=0),
+            _player_game('gap', 'home', minutes='PT10M', plusMinus=2, points=3),
+            _player_game('miss', 'home', minutes=None, plusMinus=6, points=5),
+            _player_game('keep', 'home', minutes=None, plusMinus=1, points=1),
+            _player_game('noch', 'home', minutes=None, plusMinus=1, points=1),
+        ])
+        periods = pd.DataFrame([
+            {'personId': 'p1', 'entityId': 'home', 'periodId': 1, 'minutes': 'PT8M0S', 'points': 2},
+            {'personId': 'p1', 'entityId': 'home', 'periodId': 2, 'minutes': 'PT6M0S', 'points': 2},
+            {'personId': 'gap', 'entityId': 'home', 'periodId': 1, 'minutes': None, 'points': 1},
+            {'personId': 'gap', 'entityId': 'home', 'periodId': 2, 'minutes': None, 'points': 0},
+            {'personId': 'miss', 'entityId': 'home', 'periodId': 1, 'minutes': None, 'points': 4},
+            {'personId': 'miss', 'entityId': 'home', 'periodId': 2, 'minutes': 'null', 'points': 0},
+            {'personId': 'keep', 'entityId': 'home', 'periodId': 1, 'minutes': 'PT8M0S', 'points': 1},
+        ])
+        report = _report(
+            players=players,
+            player_periods=periods,
+            team_periods=pd.DataFrame([
+                _team_row('home', 1),
+                _team_row('home', 2),
+                _team_row('away', 1),
+                _team_row('away', 2),
+            ]),
+            id_table={
+                'home': 'Braves', 'away': 'Visitors',
+                'p1': 'Lin', 'p0': 'Zero', 'dnp': 'Bench',
+                'gap': 'Gap', 'miss': 'Miss', 'keep': 'Keep', 'noch': 'NoChip',
+            },
+            roster=[
+                {'personId': person_id, 'starter': person_id == 'p1', 'shirtNumber': str(index + 1)}
+                for index, person_id in enumerate(['p1', 'p0', 'dnp', 'gap', 'miss', 'keep', 'noch'])
+            ],
+            starter_dict={'home': ['p1'], 'away': []},
+        )
+        quarter = _split_records(report.box_score_slice_json()['1']['p_df_dict']['Braves'])
+        by_name = {row['Player']: row for _, row in quarter.iterrows()}
+        self.assertEqual(by_name['Bench']['Min'], 'DNP')
+        self.assertEqual(by_name['Zero']['Min'], '0:00')
+        self.assertEqual(by_name['Gap']['Min'], '0:00')
+        self.assertEqual(by_name['Miss']['Min'], '')
+        self.assertEqual(by_name['Miss']['PTS'], 4)
+        self.assertEqual(by_name['Keep']['Min'], '8:00')
+        self.assertEqual(by_name['NoChip']['Min'], '')
+        half = _split_records(report.box_score_slice_json()['h1']['p_df_dict']['Braves'])
+        half_by = {row['Player']: row for _, row in half.iterrows()}
+        self.assertEqual(half_by['Bench']['Min'], 'DNP')
+        self.assertEqual(half_by['Zero']['Min'], '0:00')
+        self.assertEqual(half_by['Gap']['Min'], '0:00')
+        self.assertEqual(half_by['Miss']['Min'], '')
+        self.assertEqual(half_by['Miss']['USG%'], '')
+        self.assertEqual(half_by['Keep']['Min'], '8:00')
+        self.assertEqual(half_by['NoChip']['Min'], '')

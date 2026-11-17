@@ -74,7 +74,10 @@
         if (!isFinite(gap)) {
             gap = 20;
         }
-        var available = bar.clientWidth - pad - brand.getBoundingClientRect().width - gap;
+        var account = bar.querySelector('.app-account-menu');
+        var accountWidth = account ? account.getBoundingClientRect().width : 0;
+        var gaps = accountWidth > 0 ? 2 : 1;
+        var available = bar.clientWidth - pad - brand.getBoundingClientRect().width - accountWidth - (gap * gaps);
         var mode = links.scrollWidth <= available + 1 ? 'links' : 'menu';
         if (nav.getAttribute('data-mode') !== mode) {
             nav.setAttribute('data-mode', mode);
