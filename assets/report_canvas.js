@@ -1205,15 +1205,7 @@
         var cloneH = Math.max(clone.scrollHeight || 0, clone.offsetHeight || 0);
         document.body.removeChild(clone);
         var liveH = Math.max(table.getBoundingClientRect().height || 0, table.scrollHeight || 0);
-        var headH = 0;
-        Array.prototype.forEach.call(table.querySelectorAll('thead tr'), function (tr) {
-            headH += tr.getBoundingClientRect().height || 0;
-        });
-        var bodySample = table.querySelector('tbody tr');
-        var bodyH = bodySample ? (bodySample.getBoundingClientRect().height || 0) : 0;
-        var nBody = table.querySelectorAll('tbody tr').length;
-        var fromRows = headH + bodyH * nBody;
-        return titleH + Math.max(cloneH, liveH, fromRows);
+        return titleH + Math.max(cloneH, liveH);
     }
 
     function measureBlockH(block, grid, node) {
