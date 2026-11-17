@@ -237,7 +237,7 @@
     height: 297mm;
     background: #ffffff;
     color: #0f172a;
-    padding: 4mm 6mm 6mm;
+    padding: 4mm 6mm calc(6mm - 2px);
     box-sizing: border-box;
     overflow: hidden;
     box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
@@ -901,7 +901,7 @@
         page-break-after: always !important;
         break-after: page !important;
         margin: 0 !important;
-        padding: 4mm 6mm 6mm !important;
+        padding: 4mm 6mm calc(6mm - 2px) !important;
         box-sizing: border-box !important;
         background: #ffffff !important;
         overflow: hidden !important;

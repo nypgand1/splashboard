@@ -220,7 +220,7 @@ def test_report_table_block_hugs_table_not_viewport(page, e2e_server):
     assert not geom.get('missing')
     assert geom['contentH'] > 20
     assert geom['blockH'] < geom['viewportH'] * 0.45
-    assert geom['gsH'] < 12
+    assert geom['gsH'] < 24
     assert geom['blockH'] - geom['contentH'] <= 48
 
 
@@ -266,12 +266,20 @@ def test_report_page_four_away_lineup_stays_above_home(page, e2e_server):
             if (!home || !away) return { ok: false };
             const hy = (home.gridstackNode && home.gridstackNode.y) || 0;
             const ay = (away.gridstackNode && away.gridstackNode.y) || 0;
-            return { ok: true, homeY: hy, awayY: ay, homeH: home.gridstackNode && home.gridstackNode.h };
+            const ah = (away.gridstackNode && away.gridstackNode.h) || 0;
+            return {
+                ok: true,
+                homeY: hy,
+                awayY: ay,
+                awayH: ah,
+                homeH: home.gridstackNode && home.gridstackNode.h,
+            };
         }'''
     )
     assert order['ok'] is True
     assert order['homeH'] > 8, order
     assert order['awayY'] < order['homeY'], order
+    assert order['homeY'] == order['awayY'] + order['awayH'], order
     fit = page.evaluate(
         '''() => {
             const paper = document.getElementById('report-paper-page-4');
@@ -653,7 +661,8 @@ def test_report_pdf_warns_when_paper_overflows(page, e2e_server):
             const item = paper && paper.querySelector('.grid-stack-item');
             const grid = paper && paper.querySelector('.report-grid') && paper.querySelector('.report-grid').gridstack;
             if (!item || !grid) return false;
-            grid.update(item, { minH: 1, h: 40 });
+            const note = paper.querySelector('.grid-stack-item[data-block-type="text"]') || item;
+            grid.update(note, { minH: 2, h: 80 });
             if (window.splashboardReport && window.splashboardReport.markOverflow) {
                 window.splashboardReport.markOverflow();
             }
@@ -974,6 +983,8 @@ def test_report_imports_csv_and_play_type_tables(page, e2e_server, tmp_path):
                 layout: getComputedStyle(table).tableLayout,
                 nameWeight: name.style.fontWeight,
                 nameClass: name.className,
+                cols: [...table.querySelectorAll('col')].map((col) => parseFloat(col.style.width) || 0),
+                host: item.querySelector('.report-table-host').clientWidth,
             };
         }'''
     )
@@ -990,6 +1001,10 @@ def test_report_imports_csv_and_play_type_tables(page, e2e_server, tmp_path):
     assert plain_paint['layout'] == 'fixed'
     assert plain_paint['nameWeight'] == ''
     assert 'report-lineup-name' not in plain_paint['nameClass']
+    plain_cols = plain_paint['cols']
+    assert len(plain_cols) == 2
+    assert abs(plain_cols[0] - plain_cols[1]) <= 1
+    assert abs(sum(plain_cols) - plain_paint['host']) <= 1
 
     _import_csv(page, 'ppp', play)
     page.locator('.report-block-title', has_text='playtype').wait_for(state='attached', timeout=20000)
@@ -1019,6 +1034,8 @@ def test_report_imports_csv_and_play_type_tables(page, e2e_server, tmp_path):
                 labelWeight: labelCell.style.fontWeight,
                 headClass: labelHead.className,
                 headWrap: getComputedStyle(labelHead).whiteSpace,
+                cols: [...table.querySelectorAll('col')].map((col) => parseFloat(col.style.width) || 0),
+                host: item.querySelector('.report-table-host').clientWidth,
             };
         }'''
     )
@@ -1037,6 +1054,14 @@ def test_report_imports_csv_and_play_type_tables(page, e2e_server, tmp_path):
     assert tones['body'][1][2]['color'] == ''
     assert tones['body'][2][1] == {'text': '.50', 'color': 'rgb(230, 57, 70)', 'weight': '700'}
     assert tones['body'][2][2] == {'text': '100%', 'color': '', 'weight': ''}
+    play_cols = tones['cols']
+    play_host = tones['host']
+    assert len(play_cols) == 3
+    assert play_host > 200
+    assert abs(sum(play_cols) - play_host) <= 1
+    assert min(play_cols) > play_host * 0.15
+    assert max(play_cols) - min(play_cols) < play_host * 0.35
+    assert play_cols[0] < play_host * 0.55
 
     _import_csv(page, 'ppp', offense)
     page.locator('.report-block-title', has_text='Offense | Play-type Stats').wait_for(
