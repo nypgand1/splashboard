@@ -651,6 +651,13 @@ class ReportTableComponentTests(unittest.TestCase):
         self.assertIn('csvBlockTitle(file.name, coloring)', js)
         self.assertIn('function commitTableResize', js)
         self.assertIn('function applyCsvColumns', js)
+        csv_cols = js.split('function applyCsvColumns', 1)[1].split('function paintCsvTable', 1)[0]
+        self.assertIn('var share = Math.floor(leftover / count);', csv_cols)
+        self.assertNotIn('leftover / labels.length', csv_cols)
+        self.assertIn('widths.push(floors[b] + share + (b < rem ? 1 : 0));', csv_cols)
+        floors_fn = js.split('function measureCsvFloors', 1)[1].split('function applyCsvColGroup', 1)[0]
+        self.assertNotIn('if (!label)', floors_fn)
+        self.assertIn('pairTextWidth(cell)', floors_fn)
         self.assertIn('data-resize-start-h', js)
         self.assertIn("coloring === 'ppp' ? 6 : 12", js)
         self.assertIn("title.setAttribute('contenteditable', 'true')", js)

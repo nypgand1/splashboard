@@ -1196,18 +1196,15 @@
         var rows = table.querySelectorAll('tbody tr');
         var floors = [];
         for (var i = 0; i < heads.length; i++) {
-            var label = heads[i].getAttribute('data-csv-label') === '1';
             var max = pairTextWidth(heads[i]);
-            if (!label) {
-                for (var r = 0; r < rows.length; r++) {
-                    var cell = rows[r].children[i];
-                    if (!cell) {
-                        continue;
-                    }
-                    var width = pairTextWidth(cell);
-                    if (width > max) {
-                        max = width;
-                    }
+            for (var r = 0; r < rows.length; r++) {
+                var cell = rows[r].children[i];
+                if (!cell) {
+                    continue;
+                }
+                var width = pairTextWidth(cell);
+                if (width > max) {
+                    max = width;
                 }
             }
             floors.push(Math.max(1, max));
@@ -1267,31 +1264,20 @@
             applyCsvColGroup(table, widths, hostW);
             return;
         }
-        var statSum = 0;
-        var labelSum = 0;
+        var sum = 0;
         for (var k = 0; k < count; k++) {
-            if (labels.indexOf(k) === -1) {
-                statSum += floors[k];
-            } else {
-                labelSum += floors[k];
-            }
+            sum += floors[k];
         }
-        if (statSum + labelSum > hostW + 1) {
+        if (sum > hostW + 1) {
             for (var a = 0; a < count; a++) {
                 widths.push(floors[a]);
             }
         } else {
-            var leftover = hostW - statSum - labelSum;
-            var share = Math.floor(leftover / labels.length);
-            var rem = leftover - share * labels.length;
-            var seen = 0;
+            var leftover = hostW - sum;
+            var share = Math.floor(leftover / count);
+            var rem = leftover - share * count;
             for (var b = 0; b < count; b++) {
-                if (labels.indexOf(b) === -1) {
-                    widths.push(floors[b]);
-                } else {
-                    widths.push(floors[b] + share + (seen < rem ? 1 : 0));
-                    seen += 1;
-                }
+                widths.push(floors[b] + share + (b < rem ? 1 : 0));
             }
         }
         applyCsvColGroup(table, widths, hostW);
