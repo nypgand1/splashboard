@@ -62,12 +62,17 @@ class Store:
             conn.execute('BEGIN IMMEDIATE')
             now = int(time.time())
             for email in sorted(self.bootstrap):
+                # Fly image SQLite is 3.22.0 and rejects INSERT ... ON CONFLICT.
                 conn.execute(
                     '''
-                    INSERT INTO users (email, role, created_at) VALUES (?, 'admin', ?)
-                    ON CONFLICT(email) DO UPDATE SET role='admin'
+                    INSERT OR IGNORE INTO users (email, role, created_at)
+                    VALUES (?, 'admin', ?)
                     ''',
                     (email, now),
+                )
+                conn.execute(
+                    "UPDATE users SET role = 'admin' WHERE email = ?",
+                    (email,),
                 )
             conn.execute('COMMIT')
         except sqlite3.Error as exc:
