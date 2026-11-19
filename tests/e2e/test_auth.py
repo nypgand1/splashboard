@@ -11,9 +11,25 @@ def test_authenticated_home_and_account_menu(page, e2e_server):
     box = header.bounding_box()
     assert box is not None and round(box['height']) == 72
 
-    account_btn = page.locator('.app-account-button')
+    account_btn = page.get_by_role('button', name='Account', exact=True)
     account_btn.wait_for(state='visible', timeout=15000)
-    assert account_btn.inner_text().strip() == 'Account'
+    account_btn.locator('svg').wait_for(state='visible', timeout=15000)
+    box = account_btn.bounding_box()
+    assert box is not None
+    assert round(box['width']) == 34
+    assert round(box['height']) == 34
+    styles = account_btn.evaluate(
+        "el => { const cs = getComputedStyle(el); "
+        "return { pad: cs.paddingTop, lh: cs.lineHeight, "
+        "border: cs.borderTopWidth, bg: cs.backgroundColor }; }"
+    )
+    assert styles['pad'] == '8px'
+    assert styles['lh'] == '0px'
+    assert styles['border'] == '0px'
+    assert styles['bg'] in ('rgba(0, 0, 0, 0)', 'transparent')
+    icon = account_btn.locator('.app-account-icon')
+    assert icon.get_attribute('aria-hidden') == 'true'
+    assert account_btn.locator('svg').count() == 1
 
     account_btn.click()
     dropdown = page.locator('.app-account-dropdown')
@@ -58,7 +74,7 @@ def test_anonymous_redirects_to_login(context, page, e2e_server):
 
 def test_logout_posts_and_lands_on_login(page, e2e_server):
     page.goto(e2e_server + '/', wait_until='domcontentloaded')
-    account_btn = page.locator('.app-account-button')
+    account_btn = page.get_by_role('button', name='Account', exact=True)
     account_btn.wait_for(state='visible', timeout=15000)
     account_btn.click()
 

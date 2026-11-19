@@ -60,8 +60,18 @@ def _account_control(user):
             [
                 dmc.MenuTarget(
                     dmc.UnstyledButton(
-                        'Account',
+                        html.Span(
+                            icon(
+                                'tabler:user-circle',
+                                width=18,
+                                height=18,
+                                color='#1e293b',
+                            ),
+                            className='app-account-icon',
+                            **{'aria-hidden': 'true'},
+                        ),
                         className='app-account-button',
+                        **{'aria-label': 'Account'},
                     )
                 ),
                 dmc.MenuDropdown(items, className='app-account-dropdown'),
