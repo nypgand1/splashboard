@@ -19,14 +19,6 @@ def _page_anchor(page):
     )
 
 
-def _page_menu_item(page):
-    return dmc.MenuItem(
-        page['label'],
-        href=page['href'],
-        className='app-page-menu-item app-section-' + page['section'],
-    )
-
-
 def _account_control(user):
     if user is None:
         return dmc.Anchor(
@@ -37,11 +29,19 @@ def _account_control(user):
         )
     items = [
         dmc.Text(user.email, className='app-account-email'),
+        html.Hr(className='app-account-divider'),
     ]
     if getattr(user, 'role', None) == 'admin':
         items.append(
             dmc.Anchor(
-                'Admin',
+                [
+                    html.Span(
+                        icon('tabler:settings', width=16, height=16),
+                        className='app-account-item-icon',
+                        **{'aria-hidden': 'true'},
+                    ),
+                    html.Span('Admin', className='app-account-item-label'),
+                ],
                 href='/admin',
                 underline='never',
                 className='app-account-admin',
@@ -49,7 +49,17 @@ def _account_control(user):
         )
     items.append(
         html.Form(
-            html.Button('Logout', className='app-account-logout'),
+            html.Button(
+                [
+                    html.Span(
+                        icon('tabler:logout', width=16, height=16),
+                        className='app-account-item-icon',
+                        **{'aria-hidden': 'true'},
+                    ),
+                    html.Span('Logout', className='app-account-item-label'),
+                ],
+                className='app-account-logout',
+            ),
             method='post',
             action='/logout',
             className='app-account-logout-form',
@@ -63,9 +73,8 @@ def _account_control(user):
                         html.Span(
                             icon(
                                 'tabler:user-circle',
-                                width=18,
-                                height=18,
-                                color='#1e293b',
+                                width=20,
+                                height=20,
                             ),
                             className='app-account-icon',
                             **{'aria-hidden': 'true'},
@@ -84,16 +93,24 @@ def _account_control(user):
 
 
 def create_navbar(user=None):
-    brand = dmc.Anchor(
+    brand_link = dmc.Anchor(
         dmc.Group(
             [
-                dmc.Text('Splashboard', fw=800, fz='17px', c='#0f172a', style={'letterSpacing': '0.3px'}),
+                dmc.Text(
+                    'Splashboard',
+                    fw=800,
+                    fz='17px',
+                    c='#0f172a',
+                    className='app-navbar-wordmark',
+                    style={'letterSpacing': '0.3px'},
+                ),
                 dmc.Badge(
                     'TFB',
                     variant='gradient',
                     gradient={'from': '#0077b6', 'to': '#00b4d8', 'deg': 135},
                     size='sm',
                     radius='sm',
+                    className='app-navbar-badge',
                     style={'fontWeight': 800, 'letterSpacing': '0.5px', 'color': '#ffffff'},
                 ),
             ],
@@ -110,45 +127,16 @@ def create_navbar(user=None):
         className='app-navbar-credit',
         span=True,
     )
+    brand = dmc.Box(
+        [brand_link, credit],
+        className='app-navbar-brand',
+    )
     links = dmc.Group(
         [_page_anchor(page) for page in PAGE_LINKS],
         className='app-page-links',
-        gap=0,
+        gap=6,
         align='center',
         wrap='nowrap',
-    )
-    menu = dmc.Box(
-        dmc.Menu(
-            [
-                dmc.MenuTarget(
-                    dmc.UnstyledButton(
-                        dmc.Group(
-                            [
-                                'Menu',
-                                icon('tabler:chevron-down', width=14, color='#1e293b'),
-                            ],
-                            gap=4,
-                            align='center',
-                            wrap='nowrap',
-                        ),
-                        className='app-navbar-menu-button',
-                    )
-                ),
-                dmc.MenuDropdown(
-                    [_page_menu_item(page) for page in PAGE_LINKS],
-                    style={
-                        'backgroundColor': 'rgba(255, 255, 255, 0.95)',
-                        'backdropFilter': 'blur(20px)',
-                        'border': '1px solid #e2e8f0',
-                        'boxShadow': '0 10px 30px rgba(0, 0, 0, 0.08)',
-                        'borderRadius': '10px',
-                    },
-                ),
-            ],
-            position='bottom-end',
-            transitionProps={'transition': 'pop-top-right', 'duration': 150},
-        ),
-        className='app-navbar-menu',
     )
     return html.Div(
         [
@@ -156,13 +144,12 @@ def create_navbar(user=None):
                 [
                     brand,
                     html.Nav(
-                        [links, menu],
+                        [links],
                         id='app-page-nav',
                         className='app-page-nav',
-                        **{'aria-label': 'Pages', 'data-mode': 'links'},
+                        **{'aria-label': 'Pages'},
                     ),
                     _account_control(user),
-                    credit,
                 ],
                 className='app-navbar-bar',
             ),

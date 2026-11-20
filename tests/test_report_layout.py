@@ -1461,8 +1461,8 @@ class DmcInfrastructureContractTests(unittest.TestCase):
         self.assertIn('AppShellMain', code)
         self.assertIn('"primaryColor": "bravesBlue"', code)
         self.assertNotIn('"cyan"', code)
-        self.assertIn('header={"height": 72}', code)
-        self.assertNotIn('header={"height": 56}', code)
+        self.assertIn('header={"height": 60}', code)
+        self.assertNotIn('header={"height": 72}', code)
 
 
 class NavbarDmcContractTests(unittest.TestCase):
@@ -1487,12 +1487,13 @@ class NavbarDmcContractTests(unittest.TestCase):
         self.assertNotIn('tabler:home', markup)
         self.assertNotIn('tabler:chart-histogram', markup)
         self.assertNotIn('#f1f5f9', markup)
+        self.assertIn('app-navbar-brand', markup)
         self.assertIn('app-page-nav', markup)
         self.assertIn('Pages', markup)
         self.assertIn('app-section-schedule', markup)
         self.assertIn('app-section-team-stats', markup)
-        self.assertIn('app-navbar-menu-button', markup)
-        self.assertIn('Menu', markup)
+        self.assertNotIn('app-navbar-menu-button', markup)
+        self.assertNotIn('app-page-menu-item', markup)
         self.assertIn('Designed by Wei-Hao Lin', markup)
         self.assertIn('app-navbar-credit', markup)
         self.assertIn('Log in', markup)
@@ -1515,16 +1516,36 @@ class NavbarDmcContractTests(unittest.TestCase):
             if node.get('props', {}).get('icon') == 'tabler:user-circle'
         ]
         self.assertEqual(len(icons), 1)
-        self.assertEqual(icons[0]['props'].get('width'), 18)
-        self.assertEqual(icons[0]['props'].get('height'), 18)
-        self.assertEqual(icons[0]['props'].get('color'), '#1e293b')
+        self.assertEqual(icons[0]['props'].get('width'), 20)
+        self.assertEqual(icons[0]['props'].get('height'), 20)
         hidden = [
             node for node in _walk_layout(buttons[0])
             if node.get('props', {}).get('className') == 'app-account-icon'
         ]
         self.assertEqual(len(hidden), 1)
         self.assertEqual(hidden[0]['props'].get('aria-hidden'), 'true')
+        dividers = [
+            node for node in _walk_layout(spec)
+            if node.get('props', {}).get('className') == 'app-account-divider'
+        ]
+        self.assertEqual(len(dividers), 1)
+        logout_icons = [
+            node for node in _walk_layout(spec)
+            if node.get('props', {}).get('icon') == 'tabler:logout'
+        ]
+        self.assertEqual(len(logout_icons), 1)
+        self.assertEqual(logout_icons[0]['props'].get('width'), 16)
+        self.assertEqual(logout_icons[0]['props'].get('height'), 16)
         self.assertNotIn('Admin', str(spec))
+
+        admin_spec = to_jsonable(create_navbar(SimpleNamespace(email='admin@example.com', role='admin')))
+        admin_icons = [
+            node for node in _walk_layout(admin_spec)
+            if node.get('props', {}).get('icon') == 'tabler:settings'
+        ]
+        self.assertEqual(len(admin_icons), 1)
+        self.assertEqual(admin_icons[0]['props'].get('width'), 16)
+        self.assertEqual(admin_icons[0]['props'].get('height'), 16)
 
 
 def _walk_layout(node):

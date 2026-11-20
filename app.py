@@ -94,7 +94,7 @@ def serve_layout():
                 ),
                 dmc.AppShellMain(page_container, className="app-main-content"),
             ],
-            header={"height": 72},
+            header={"height": 60},
             padding=0,
             className="app-shell",
             id="app-shell",
