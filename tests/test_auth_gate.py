@@ -169,7 +169,8 @@ class AuthGateTests(unittest.TestCase):
             self.assertEqual(resp.headers.get('cache-control'), 'no-store')
             body = resp.text
             self.assertIn(LOCKED_ADMIN, body)
-            self.assertIn('Account', body)
+            self.assertIn('"aria-label":"Account"', body)
+            self.assertIn('tabler:user-circle', body)
             self.assertIn('Admin', body)
             self.assertIn('Logout', body)
 
