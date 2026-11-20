@@ -182,16 +182,22 @@ def flag_split_counts(pbp, entity_ids, period_ids):
     missing = pbp is None or len(pbp) == 0 or 'entityId' not in getattr(pbp, 'columns', [])
     if missing:
         return {entity: {key: '' for key in keys} for entity in entities}
-    frame = pbp if period_ids is None else filter_periods(pbp, period_ids)
     counts = {entity: {key: 0 for key in keys} for entity in entities}
-    if frame is None or len(frame) == 0:
-        return counts
-    events = frame['eventType'].tolist() if 'eventType' in frame.columns else [None] * len(frame)
-    teams = frame['entityId'].tolist()
-    successes = frame['success'].tolist() if 'success' in frame.columns else [None] * len(frame)
-    options = frame['options'].tolist() if 'options' in frame.columns else [None] * len(frame)
-    for entity, event, success, raw_options in zip(teams, events, successes, options):
+    wanted = None
+    if period_ids is not None:
+        from domain.periods import period_id_value
+        wanted = {int(pid) for pid in period_ids}
+        periods = pbp['periodId'].tolist() if 'periodId' in pbp.columns else [None] * len(pbp)
+    else:
+        periods = None
+    events = pbp['eventType'].tolist() if 'eventType' in pbp.columns else [None] * len(pbp)
+    teams = pbp['entityId'].tolist()
+    successes = pbp['success'].tolist() if 'success' in pbp.columns else [None] * len(pbp)
+    options = pbp['options'].tolist() if 'options' in pbp.columns else [None] * len(pbp)
+    for idx, (entity, event, success, raw_options) in enumerate(zip(teams, events, successes, options)):
         if entity not in counts or event not in ('2pt', '3pt'):
+            continue
+        if wanted is not None and period_id_value(periods[idx]) not in wanted:
             continue
         parsed = _parsed_option(raw_options)
         if not parsed:

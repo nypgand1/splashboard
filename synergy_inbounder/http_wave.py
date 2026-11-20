@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 from requests.adapters import HTTPAdapter
 
-from synergy_inbounder.communicator import _cache_hits, _wave_local
+from synergy_inbounder.communicator import _cache_hits, _force_expire, _force_refresh, _wave_local
 
 
 def run_wave(calls):
@@ -22,13 +22,19 @@ def run_wave(calls):
     session.mount('https://', adapter)
     session.mount('http://', adapter)
     box = _cache_hits.get()
+    force_exp = _force_expire.get()
+    force_ref = _force_refresh.get()
 
     def _invoke(call):
         _wave_local.session = session
         _wave_local.cache_hits = box
+        tok_exp = _force_expire.set(force_exp)
+        tok_ref = _force_refresh.set(force_ref)
         try:
             return call()
         finally:
+            _force_expire.reset(tok_exp)
+            _force_refresh.reset(tok_ref)
             _wave_local.session = None
             _wave_local.cache_hits = None
 

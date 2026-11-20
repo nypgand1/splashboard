@@ -642,20 +642,23 @@ def _banner_time_and_scores(info):
     return tip, info.get('home_score'), info.get('away_score')
 
 
-def update_bs_store(n, game_id, league='plg', previous=None):
+def update_bs_store(n, game_id, league='plg', previous=None, *, _status=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store(game_id=game_id)
-    try:
-        status = _fixture_status(game_id, org)
-    except SynergyAuthError:
-        log_auth.exception('box score status failed game=%s', game_id)
-        return _error_store(game_id=game_id)
-    except Exception:
-        log_unexpected.exception('box score status failed game=%s', game_id)
-        return _keep_previous(previous, game_id)
+    if _status is not None:
+        status = _status
+    else:
+        try:
+            status = _fixture_status(game_id, org)
+        except SynergyAuthError:
+            log_auth.exception('box score status failed game=%s', game_id)
+            return _error_store(game_id=game_id)
+        except Exception:
+            log_unexpected.exception('box score status failed game=%s', game_id)
+            return _keep_previous(previous, game_id)
     if not is_live_play_status(status):
         return no_update
     try:
@@ -693,20 +696,23 @@ def update_bs_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-def update_match_info_store(n, game_id, league='plg', previous=None):
+def update_match_info_store(n, game_id, league='plg', previous=None, *, _info=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store(game_id=game_id)
-    try:
-        info = _info_dict(org, game_id)
-    except SynergyAuthError:
-        log_auth.exception('match info failed game=%s', game_id)
-        return _error_store(game_id=game_id)
-    except Exception:
-        log_unexpected.exception('match info failed game=%s', game_id)
-        return _keep_previous(previous, game_id)
+    if _info is not None:
+        info = dict(_info) if isinstance(_info, dict) else _info
+    else:
+        try:
+            info = _info_dict(org, game_id)
+        except SynergyAuthError:
+            log_auth.exception('match info failed game=%s', game_id)
+            return _error_store(game_id=game_id)
+        except Exception:
+            log_unexpected.exception('match info failed game=%s', game_id)
+            return _keep_previous(previous, game_id)
     if not info:
         return json.dumps({})
     if not is_live_play_status(info.get('status')):
@@ -795,9 +801,10 @@ def toggle_report_tab(match_info_store, active_tab):
         return style, 'tab-bs'
     return style, no_update
 
-def _live_report(game_id, org):
+def _live_report(game_id, org, status=None):
     """Return ``(report, generation)`` while the fixture is still live."""
-    status = _fixture_status(game_id, org)
+    if status is None:
+        status = _fixture_status(game_id, org)
     if not is_live_play_status(status):
         return None, None
     report = _open_report(game_id, org)
@@ -818,22 +825,25 @@ def _finish_outputs(game_id, org, report, info):
     )
 
 
-def publish_finished_snapshot(n, game_id, league='plg', _sentinel='finished'):
+def publish_finished_snapshot(n, game_id, league='plg', _sentinel='finished', *, _status=None):
     hold = (no_update, no_update, no_update, no_update, no_update, no_update)
     if not game_id:
         return hold
     org = _organization(league)
     if org is None:
         return hold
-    try:
-        status = _fixture_status(game_id, org)
-    except SynergyAuthError:
-        log_auth.exception('finished game status failed game=%s', game_id)
-        err = _error_store(game_id=game_id)
-        return (err, err, err, err, err, err)
-    except Exception:
-        log_unexpected.exception('finished game status failed game=%s', game_id)
-        return hold
+    if _status is not None:
+        status = _status
+    else:
+        try:
+            status = _fixture_status(game_id, org)
+        except SynergyAuthError:
+            log_auth.exception('finished game status failed game=%s', game_id)
+            err = _error_store(game_id=game_id)
+            return (err, err, err, err, err, err)
+        except Exception:
+            log_unexpected.exception('finished game status failed game=%s', game_id)
+            return hold
     if is_live_play_status(status):
         return hold
     try:
@@ -859,14 +869,14 @@ def publish_finished_snapshot(n, game_id, league='plg', _sentinel='finished'):
         return hold
 
 
-def update_pbp_store(n, game_id, league='plg', previous=None):
+def update_pbp_store(n, game_id, league='plg', previous=None, *, _status=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     try:
-        report, generation = _live_report(game_id, org)
+        report, generation = _live_report(game_id, org, status=_status)
     except LiveBudgetWait:
         return _keep_or_wait(previous, game_id)
     except SynergyAuthError:
@@ -886,14 +896,14 @@ def update_pbp_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-def update_lineup_store(n, game_id, league='plg', previous=None):
+def update_lineup_store(n, game_id, league='plg', previous=None, *, _status=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     try:
-        report, generation = _live_report(game_id, org)
+        report, generation = _live_report(game_id, org, status=_status)
     except LiveBudgetWait:
         return _keep_or_wait(previous, game_id)
     except SynergyAuthError:
@@ -913,16 +923,17 @@ def update_lineup_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-def update_matchup_store(n, game_id, league='plg', previous=None):
+def update_matchup_store(n, game_id, league='plg', previous=None, *, _status=None, _info=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     try:
-        if not is_live_play_status(_fixture_status(game_id, org)):
+        status = _status if _status is not None else _fixture_status(game_id, org)
+        if not is_live_play_status(status):
             return no_update
-        info = _info_dict(org, game_id) or {}
+        info = (_info if _info is not None else _info_dict(org, game_id)) or {}
     except SynergyAuthError:
         log_auth.exception('matchups status failed game=%s', game_id)
         return _error_store(game_id=game_id)
@@ -932,7 +943,7 @@ def update_matchup_store(n, game_id, league='plg', previous=None):
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return json.dumps({})
     try:
-        report, generation = _live_report(game_id, org)
+        report, generation = _live_report(game_id, org, status=status)
     except LiveBudgetWait:
         return _keep_or_wait(previous, game_id)
     except SynergyAuthError:
@@ -952,14 +963,14 @@ def update_matchup_store(n, game_id, league='plg', previous=None):
         return no_update
     return _with_generation(payload, generation, game_id, org)
 
-def update_rotation_store(n, game_id, league='plg', previous=None):
+def update_rotation_store(n, game_id, league='plg', previous=None, *, _status=None, _info=None):
     if not game_id:
         return json.dumps({})
     org = _organization(league)
     if org is None:
         return _error_store()
     try:
-        info = _info_dict(org, game_id) or {}
+        info = (_info if _info is not None else _info_dict(org, game_id)) or {}
     except SynergyAuthError:
         log_auth.exception('rotation status failed game=%s', game_id)
         return _error_store(game_id=game_id)
@@ -969,7 +980,7 @@ def update_rotation_store(n, game_id, league='plg', previous=None):
     if not info.get('home_team_id') or not info.get('away_team_id'):
         return no_update
     try:
-        report, generation = _live_report(game_id, org)
+        report, generation = _live_report(game_id, org, status=_status)
     except LiveBudgetWait:
         return _keep_or_wait(previous, game_id)
     except SynergyAuthError:
@@ -998,6 +1009,7 @@ def _official_digest(org, game_id, status):
     import hashlib
 
     from synergy_inbounder.communicator import Communicator, force_body_refresh
+    from synergy_inbounder.http_wave import run_wave
     from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
 
     calls = (
@@ -1020,10 +1032,8 @@ def _official_digest(org, game_id, status):
             org, game_id, fixture_status=status,
         ),
     )
-    blobs = []
     with force_body_refresh(SHORT_CACHE_SECONDS):
-        for call in calls:
-            blobs.append(call())
+        blobs = run_wave(calls)
     raw = json.dumps(blobs, sort_keys=True, default=str, ensure_ascii=False)
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
 
@@ -1059,13 +1069,18 @@ def background_game_snapshot(org, game_id, league, previous, fingerprint):
         return {'unchanged': True, 'kind': 'live', 'fingerprint': fingerprint}
     if is_live_play_status(status):
         prev = previous or {}
+        shared_info = None
+        try:
+            shared_info = _info_dict(org, game_id)
+        except Exception:
+            shared_info = None
         values = (
-            update_bs_store(1, game_id, league, prev.get('bs')),
-            update_pbp_store(1, game_id, league, prev.get('pbp')),
-            update_lineup_store(1, game_id, league, prev.get('lineup')),
-            update_matchup_store(1, game_id, league, prev.get('matchup')),
-            update_rotation_store(1, game_id, league, prev.get('rotation')),
-            update_match_info_store(1, game_id, league, prev.get('info')),
+            update_bs_store(1, game_id, league, prev.get('bs'), _status=status),
+            update_pbp_store(1, game_id, league, prev.get('pbp'), _status=status),
+            update_lineup_store(1, game_id, league, prev.get('lineup'), _status=status),
+            update_matchup_store(1, game_id, league, prev.get('matchup'), _status=status, _info=shared_info),
+            update_rotation_store(1, game_id, league, prev.get('rotation'), _status=status, _info=shared_info),
+            update_match_info_store(1, game_id, league, prev.get('info'), _info=shared_info),
         )
         stores = _merge_game_stores(previous, values)
         return {'stores': stores, 'fingerprint': fingerprint, 'kind': 'live'}
@@ -1082,7 +1097,7 @@ def background_game_snapshot(org, game_id, league, previous, fingerprint):
             mark_stale(org, game_id)
             forget_finished_report(game_id, org)
     # n=1 is not a page load, so this does not start the lineup warmup thread.
-    values = publish_finished_snapshot(1, game_id, league)
+    values = publish_finished_snapshot(1, game_id, league, _status=status)
     stores = _merge_game_stores(previous, values)
     return {
         'stores': stores,
@@ -1340,7 +1355,15 @@ def update_rotation_graph(rotation_store, view_store, active_tab, match_info_sto
     hidden_paper = {'overflow': 'hidden', 'display': 'none'}
     if payload.get('_ui') == 'error' or not payload or not payload.get('teams'):
         return {}, {'width': '100%', 'height': '520px'}, hidden_paper
-    fig = _rotation_figure_from_view(payload, _rotation_view(view_store), match_info_store)
+    view = _rotation_view(view_store)
+    if (
+        _triggered_id() == 'rotation_view_store'
+        and view.get('follow_live', True)
+        and not view.get('reattached')
+        and is_live_play_status(safe_loads(match_info_store).get('status'))
+    ):
+        return no_update, no_update, no_update
+    fig = _rotation_figure_from_view(payload, view, match_info_store)
     return (
         fig,
         {'width': '100%', 'height': f"{fig.layout.height or 520}px"},

@@ -84,16 +84,19 @@ def scoreboard_from_pbp_frame(frame, home_id, away_id):
     records = frame.to_dict('records')
     clock_at = None
     label = None
-    for index, row in enumerate(records):
+    for index in range(len(records) - 1, -1, -1):
+        row = records[index]
         text = format_period_clock(row.get('periodId'), row.get('clock'))
         if text:
             clock_at = index
             label = text
+            break
     if clock_at is None:
         return None, None, None
     home_score = None
     away_score = None
-    for row in records[:clock_at + 1]:
+    for index in range(clock_at, -1, -1):
+        row = records[index]
         found_home = None
         found_away = None
         for key, value in _parse_scores(row.get('scores')).items():
@@ -107,6 +110,7 @@ def scoreboard_from_pbp_frame(frame, home_id, away_id):
         if found_home is not None and found_away is not None:
             home_score = found_home
             away_score = found_away
+            break
     return label, home_score, away_score
 
 

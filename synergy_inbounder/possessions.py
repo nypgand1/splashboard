@@ -334,13 +334,17 @@ def possession_counts(df, period_ids=None):
     if df is None or len(df) == 0:
         return {}
     annotated = df if 'poss_end' in df.columns else annotate_possessions(df)
-    ended = annotated[annotated['poss_end'] == True]  # noqa: E712
-    if period_ids is not None:
-        wanted = {int(period) for period in period_ids}
-        ended = ended[ended['periodId'].map(_period_id).isin(wanted)]
+    wanted = None if period_ids is None else {int(period) for period in period_ids}
+    ends = annotated['poss_end'].tolist()
+    teams = annotated['poss_team_id'].tolist()
+    periods = annotated['periodId'].tolist() if wanted is not None and 'periodId' in annotated.columns else None
     counts = {}
-    for team, size in ended.groupby('poss_team_id').size().items():
-        if _missing(team):
-            continue
-        counts[team] = int(size)
+    if periods is None:
+        for end, team in zip(ends, teams):
+            if end == True and not _missing(team):  # noqa: E712
+                counts[team] = counts.get(team, 0) + 1
+    else:
+        for end, team, pid in zip(ends, teams, periods):
+            if end == True and not _missing(team) and _period_id(pid) in wanted:  # noqa: E712
+                counts[team] = counts.get(team, 0) + 1
     return counts
