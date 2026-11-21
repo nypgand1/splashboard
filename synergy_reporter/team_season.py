@@ -1401,6 +1401,9 @@ def team_stats_payload(
         'cards': built['cards'],
         'card_order': ['pace', 'advanced', 'key', 'team'],
     }
+    if view_reason not in ('chip', 'slice'):
+        from synergy_inbounder.publisher import note_prefetch_season
+        note_prefetch_season(org_id, selected_season, league=key, game_type=built['game_type'])
     return payload
 
 
@@ -1629,9 +1632,104 @@ def advance_watched_season(org_id, season_id, view, state, now):
     return _finish_watched_season(org_id, season_id, view, state, now)
 
 
+def _ordered_finished_for_prefetch(schedule, preferred_type=None):
+    """Finished rows for P3 warmup: preferred_type first (latest start first), then other types."""
+    from domain.clocks import parse_timestamp as _parse_start_time
+    options = fixture_type_options(schedule)
+    chosen = choose_game_type(options, preferred_type)
+    primary = []
+    secondary = []
+    for pos, row in enumerate(schedule or []):
+        if not isinstance(row, dict) or not is_finished_status(row.get('status')):
+            continue
+        fid = str(row.get('fixtureId') or '').strip()
+        if not fid:
+            continue
+        ftype = plain_fixture_type(row.get('fixtureType'))
+        if not ftype:
+            continue
+        start = _parse_start_time(row.get('startTimeLocal'))
+        key = (start is not None, start if start is not None else 0, pos)
+        if ftype == chosen:
+            primary.append((key, row))
+        else:
+            secondary.append((key, row))
+    primary.sort(key=lambda item: item[0], reverse=True)
+    secondary.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in primary] + [item[1] for item in secondary]
+
+
+def advance_prefetch_season(org_id, season_id, state):
+    """One P3 incremental step: bundle -> pbp (batch 4) -> facts & rotation/lineup summaries (batch 4)."""
+    from synergy_inbounder.publisher import PREFETCH_FACTS_BATCH, PREFETCH_PBP_BATCH
+    from synergy_reporter.team_lineups import summary_for as lineup_summary_for
+    from synergy_reporter.team_rotation import _ensure_summary as ensure_rotation_summary, load_fixture_facts
+
+    state = dict(state or {})
+    phase = state.get('phase') or 'bundle'
+    with _bundle_lock:
+        bundle = _bundles.get((org_id, season_id))
+    if phase == 'bundle' or not _bundle_complete(bundle):
+        bundle = _load_bundle(org_id, season_id, 'type', force=False)
+        state['phase'] = 'pbp'
+        return state
+    schedule = bundle.get('schedule') or []
+    ordered = _ordered_finished_for_prefetch(schedule, state.get('game_type'))
+    if phase == 'pbp':
+        pending_pbp = _pbp_pending(org_id, ordered)
+        if pending_pbp:
+            batch = pending_pbp[:PREFETCH_PBP_BATCH]
+            run_wave([lambda row=row: _download_pbp(org_id, row) for row in batch])
+            if len(pending_pbp) > len(batch):
+                state['phase'] = 'pbp'
+            else:
+                state['phase'] = 'facts'
+            return state
+        state['phase'] = 'facts'
+    pending_facts = []
+    for row in ordered:
+        fid = str(row.get('fixtureId') or '').strip()
+        frame = frame_store.peek(org_id, fid)
+        if frame is None or frame.pbp_failed or frame.playbyplay_df is None:
+            continue
+        pbp = frame.playbyplay_df
+        home = _entity_text(row.get('teamIdHome'))
+        away = _entity_text(row.get('teamIdAway'))
+        fact_ready = frame_store.is_fact_attempted(org_id, fid)
+        rot_ready = frame_store.get_rotation_summary(org_id, fid, id(pbp)) is not None
+        lin_ready = frame_store.get_lineup_summary(org_id, fid, id(pbp)) is not None
+        if not (fact_ready and rot_ready and lin_ready):
+            pending_facts.append({
+                'fixture_id': fid,
+                'status': row.get('status'),
+                'home': home,
+                'away': away,
+                'pbp': pbp,
+            })
+    if not pending_facts:
+        state['phase'] = 'done'
+        return state
+    batch_games = pending_facts[:PREFETCH_FACTS_BATCH]
+    load_fixture_facts({'org_id': org_id, 'games': batch_games})
+    for game in batch_games:
+        home = game.get('home')
+        away = game.get('away')
+        if home:
+            ensure_rotation_summary(org_id, game, home)
+        elif away:
+            ensure_rotation_summary(org_id, game, away)
+        lineup_summary_for(org_id, game)
+    state['phase'] = 'facts' if len(pending_facts) > len(batch_games) else 'done'
+    return state
+
+
 def _register_watched_season():
-    from synergy_inbounder.publisher import register_season_step
+    from synergy_inbounder.publisher import (
+        register_prefetch_season_step,
+        register_season_step,
+    )
     register_season_step(advance_watched_season)
+    register_prefetch_season_step(advance_prefetch_season)
 
 
 _register_watched_season()

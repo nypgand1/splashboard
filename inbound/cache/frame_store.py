@@ -18,6 +18,8 @@ from synergy_inbounder.live_budget import SHORT_CACHE_SECONDS
 
 OPEN_PIN_LRU_LIMIT = 8
 PIN_OPEN_LIMIT = OPEN_PIN_LRU_LIMIT
+HOME_PIN_LRU_LIMIT = 4
+REPORT_CACHE_LIMIT = OPEN_PIN_LRU_LIMIT + HOME_PIN_LRU_LIMIT
 
 _lock = threading.Lock()
 _singleflight = SingleflightGroup()
@@ -203,7 +205,11 @@ def _pinned_ids(organization_id):
         pinned.update(open_lru.keys())
     elif open_lru:
         pinned.add(str(open_lru))
-    pinned.update(_home_pins.get(organization_id) or ())
+    home_lru = _home_pins.get(organization_id)
+    if isinstance(home_lru, OrderedDict):
+        pinned.update(home_lru.keys())
+    elif home_lru:
+        pinned.update(home_lru)
     for (org, _season_id), fixture_ids in _season_pins.items():
         if org == organization_id:
             pinned.update(fixture_ids)
@@ -251,13 +257,56 @@ def pin_open(organization_id, fixture_id, max_open=OPEN_PIN_LRU_LIMIT):
             _drop_released(organization_id, released)
 
 
-def pin_home(organization_id, fixture_ids):
+def pin_home(organization_id, fixture_ids, max_home=HOME_PIN_LRU_LIMIT):
+    """Pin Home hotspot fixtures in a bounded per-org LRU (default 4)."""
     if not organization_id:
         return
+    limit = max(1, int(max_home))
+    incoming = [str(item) for item in fixture_ids or () if item]
     with _lock:
-        released = set(_home_pins.get(organization_id) or ())
-        _home_pins[organization_id] = {str(item) for item in fixture_ids or () if item}
-        _drop_released(organization_id, released)
+        current = _home_pins.get(organization_id)
+        if not isinstance(current, OrderedDict):
+            lru = OrderedDict()
+            for item in current or ():
+                if item:
+                    lru[str(item)] = True
+            _home_pins[organization_id] = lru
+        else:
+            lru = current
+        if not incoming:
+            released = set(lru.keys())
+            lru.clear()
+            if released:
+                _drop_released(organization_id, released)
+            return
+        for fid in incoming:
+            if fid in lru:
+                lru.move_to_end(fid)
+            else:
+                lru[fid] = True
+        released = set()
+        while len(lru) > limit:
+            oldest, _ = lru.popitem(last=False)
+            released.add(str(oldest))
+        if released:
+            _drop_released(organization_id, released)
+
+
+def report_pinned_ids(organization_id):
+    """Fixtures protected by open-game or Home hotspot pins for this organization."""
+    with _lock:
+        pinned = set()
+        open_lru = _open_pins.get(organization_id)
+        if isinstance(open_lru, OrderedDict):
+            pinned.update(open_lru.keys())
+        elif open_lru:
+            pinned.add(str(open_lru))
+        home_lru = _home_pins.get(organization_id)
+        if isinstance(home_lru, OrderedDict):
+            pinned.update(home_lru.keys())
+        elif home_lru:
+            pinned.update(home_lru)
+        return pinned
 
 
 def pin_season(organization_id, season_id, fixture_ids):

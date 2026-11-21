@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Process-local caches and singleflight. Cleared when the process exits."""
+from collections import OrderedDict
 from concurrent.futures import Future
 import datetime
 import threading
@@ -23,6 +24,7 @@ from inbound.cache.catalog_cache import (
     season_refresh_state,
     taipei_now_label,
 )
+from inbound.cache.frame_store import REPORT_CACHE_LIMIT, report_pinned_ids
 from synergy_inbounder.game_status import (
     FINISHED_STATUSES,
     is_finished_status,
@@ -48,7 +50,7 @@ def should_use_live_endpoints(status=None, game_id=None, organization_id=None):
 
 
 _report_lock = threading.Lock()
-_report_cache = {}
+_report_cache = OrderedDict()
 _report_inflight = {}
 _applied = {}
 _delay_paint = {}
@@ -144,6 +146,36 @@ def _clear_budget_wait(org, game_id):
     _budget_wait_notice.discard((str(org), str(game_id)))
 
 
+def _evict_finished_reports(org):
+    """Bound finished full reports per organization to REPORT_CACHE_LIMIT (12)."""
+    from synergy_inbounder.publisher import active_watched_game_ids, forget_game_snap
+    with _report_lock:
+        org_keys = [
+            k for k, entry in _report_cache.items()
+            if isinstance(k, tuple) and k[0] == org and not is_live_play_status(entry.get('status'))
+        ]
+    if len(org_keys) <= REPORT_CACHE_LIMIT:
+        return
+    protected = set(report_pinned_ids(org)) | active_watched_game_ids(org)
+    evicted = []
+    with _report_lock:
+        org_keys = [
+            k for k, entry in _report_cache.items()
+            if isinstance(k, tuple) and k[0] == org and not is_live_play_status(entry.get('status'))
+        ]
+        for candidate in org_keys:
+            if len([
+                k for k, entry in _report_cache.items()
+                if isinstance(k, tuple) and k[0] == org and not is_live_play_status(entry.get('status'))
+            ]) <= REPORT_CACHE_LIMIT:
+                break
+            if str(candidate[1]) not in protected:
+                _report_cache.pop(candidate, None)
+                evicted.append(candidate[1])
+    for gid in evicted:
+        forget_game_snap(org, gid)
+
+
 def _store_report(key, report, status, now):
     previous = _report_cache.get(key)
     _copy_starters(report, previous)
@@ -155,6 +187,8 @@ def _store_report(key, report, status, now):
         stats_label = None if stats_failed else label
     generation = int(previous.get('generation') or 0) + 1 if previous else 1
     _clear_budget_wait(key[0] if isinstance(key, tuple) else None, key[-1] if isinstance(key, tuple) else key)
+    if key in _report_cache:
+        del _report_cache[key]
     _report_cache[key] = {
         'report': report,
         'fetched_at': now,
@@ -234,6 +268,8 @@ def get_cached_report(game_id, organization_id=None, pin=None):
 
     with _report_lock:
         entry = _report_cache.get(key)
+        if entry and not is_live_play_status(entry.get('status')):
+            _report_cache.move_to_end(key)
     if entry and not is_live_play_status(entry.get('status')):
         BUDGET.forget(org, str(game_id))
         return entry['report']
@@ -296,6 +332,8 @@ def _build_report(key, game_id, org, now, live, future=None):
         with _report_lock:
             _store_report(key, report, status, time.monotonic())
             stored = _report_cache[key]['report']
+        if not is_live_play_status(status):
+            _evict_finished_reports(org)
         future.set_result(stored)
         return stored
     except SynergyAuthError as exc:
@@ -381,31 +419,15 @@ def get_cached_id_table(org_id, builder):
 
 
 def warmup_game_report(game_id, match_info=None, organization_id=None):
-    """Background warmup for finished games: computes 4,3,2 lineup combinations and rotation."""
+    """Queue P2 phase-2 warmup (4,3,2 lineup combinations) via the unified publisher."""
     if not game_id:
         return
     org = organization_id
     if org is None and isinstance(match_info, dict):
         org = match_info.get('organization_id')
-
-    def _run():
-        try:
-            report = get_cached_report(game_id, org)
-            status = lookup_game_status(game_id, org)
-            if is_finished_status(status):
-                report.get_all_lineup_stats_json_dict(sizes=(5, 4, 3, 2))
-                info = match_info or {}
-                report.get_rotation_payload(
-                    home_team_id=info.get('home_team_id'),
-                    away_team_id=info.get('away_team_id'),
-                    season_id=info.get('season_id'),
-                )
-        except Exception:
-            from synergy_inbounder.logs import unexpected
-            unexpected.exception('background warmup failed game=%s', game_id)
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
+    from synergy_inbounder.publisher import note_warmup_game
+    note_warmup_game(org or SYNERGY_ORGANIZATION_ID, game_id)
 
 
 def _fixture_id(value):
@@ -423,23 +445,49 @@ def _fixture_id(value):
     return text
 
 
-def latest_finished_fixture_ids(season_df, max_games=2):
-    """Up to max_games finished fixtures, latest startTimeLocal last."""
-    if max_games <= 0 or season_df is None or getattr(season_df, 'empty', True):
+def latest_finished_fixture_ids(season_df, max_games=2, team=None, game_type=None):
+    """Up to max_games finished fixtures, latest startTimeLocal last.
+
+    Accepts a DataFrame or a list of schedule record dicts, optionally filtered
+    by ``team`` (entityId) and ``game_type`` (fixtureType).
+    """
+    if max_games <= 0 or season_df is None:
         return []
-    columns = set(getattr(season_df, 'columns', []))
-    if 'status' not in columns or 'fixtureId' not in columns:
-        return []
-    finished = season_df[season_df['status'].map(is_finished_status)]
-    if finished.empty:
-        return []
+    if isinstance(season_df, list):
+        records = [r for r in season_df if isinstance(r, dict)]
+        if not records:
+            return []
+    else:
+        if getattr(season_df, 'empty', True):
+            return []
+        columns = set(getattr(season_df, 'columns', []))
+        if 'status' not in columns or 'fixtureId' not in columns:
+            return []
+        records = season_df.to_dict('records')
+    wanted_team = str(team or '').strip()
+    if wanted_team.lower() in ('', 'all', 'none'):
+        wanted_team = ''
+    wanted_type = str(game_type or '').strip()
+    if wanted_type.lower() in ('', 'none', 'nan'):
+        wanted_type = ''
     timed = []
     untimed = []
-    for position, row in enumerate(finished.to_dict('records')):
+    for position, row in enumerate(records):
+        if not is_finished_status(row.get('status')):
+            continue
+        if wanted_type:
+            row_type = str(row.get('fixtureType') or row.get('Game Type') or '').strip()
+            if row_type != wanted_type:
+                continue
+        if wanted_team:
+            home_id = str(row.get('teamIdHome') or '').strip()
+            away_id = str(row.get('teamIdAway') or '').strip()
+            if wanted_team not in (home_id, away_id):
+                continue
         fixture_id = _fixture_id(row.get('fixtureId'))
         if not fixture_id:
             continue
-        start = _parse_start_time(row.get('startTimeLocal'))
+        start = _parse_start_time(row.get('startTimeLocal') or row.get('Time'))
         (timed if start is not None else untimed).append((position, start, fixture_id))
     pool = sorted(timed, key=lambda item: (item[1], item[0])) if timed else untimed
     if not pool:
@@ -447,25 +495,23 @@ def latest_finished_fixture_ids(season_df, max_games=2):
     return [item[2] for item in pool[-max_games:]]
 
 
-def prefetch_latest_games(season_df, max_games=2, organization_id=None):
-    """Background sequential worker to prefetch up to max_games finished reports."""
-    target_ids = latest_finished_fixture_ids(season_df, max_games)
-    if not target_ids:
-        return
+def prefetch_latest_games(
+    season_df, max_games=2, organization_id=None, team=None, game_type=None,
+    season_id=None, league=None,
+):
+    """Queue P2 Home hotspot finished reports and P3 season warmup on the unified publisher."""
     from synergy_inbounder.frame_store import pin_home
+    from synergy_inbounder.publisher import note_prefetch_games, note_prefetch_season
     from synergy_inbounder.settings import SYNERGY_ORGANIZATION_ID
-    pin_home(organization_id or SYNERGY_ORGANIZATION_ID, target_ids)
-
-    def _worker():
-        for gid in target_ids:
-            try:
-                get_cached_report(gid, organization_id)
-            except Exception as exc:
-                from synergy_inbounder.logs import unexpected
-                unexpected.exception('prefetch failed game=%s: %s', gid, exc)
-
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
+    org = organization_id or SYNERGY_ORGANIZATION_ID
+    target_ids = latest_finished_fixture_ids(
+        season_df, max_games, team=team, game_type=game_type,
+    )
+    if target_ids:
+        pin_home(org, target_ids)
+        note_prefetch_games(org, target_ids, league=league)
+    if season_id:
+        note_prefetch_season(org, season_id, league=league, game_type=game_type)
 
 
 def clear_runtime_caches():

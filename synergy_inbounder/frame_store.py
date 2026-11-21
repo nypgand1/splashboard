@@ -2,7 +2,9 @@
 """Parsed fixture frames shared by Game and Team Stats (delegates to inbound.cache.frame_store)."""
 from inbound.cache.frame_store import (
     FixtureFrame,
+    HOME_PIN_LRU_LIMIT,
     OPEN_PIN_LRU_LIMIT,
+    REPORT_CACHE_LIMIT,
     _drop_released,
     _fact_attempts as _FACT_ATTEMPTS,
     _facts as _FACTS,
@@ -38,6 +40,7 @@ from inbound.cache.frame_store import (
     pin_open,
     pin_season,
     remember_team_shirts,
+    report_pinned_ids,
     set_fixture_starters,
     set_lineup_summary,
     set_rotation_summary,
@@ -49,7 +52,9 @@ from inbound.cache.frame_store import (
 
 __all__ = [
     'FixtureFrame',
+    'HOME_PIN_LRU_LIMIT',
     'OPEN_PIN_LRU_LIMIT',
+    'REPORT_CACHE_LIMIT',
     'absorb_fixture_facts',
     'clear',
     'clear_rotation_cache',
@@ -70,6 +75,7 @@ __all__ = [
     'pin_open',
     'pin_season',
     'remember_team_shirts',
+    'report_pinned_ids',
     'set_fixture_starters',
     'set_lineup_summary',
     'set_rotation_summary',

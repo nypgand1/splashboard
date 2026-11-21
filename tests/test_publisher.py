@@ -255,3 +255,193 @@ class OfficialRefreshTests(unittest.TestCase):
         refresh.assert_called_once()
         self.assertIsNone(built)
         self.assertEqual(state['index'], 1)
+
+
+class UnifiedPrefetchAndEvictionTests(unittest.TestCase):
+    def setUp(self):
+        self._game = publisher._game_builder
+        self._season = publisher._season_step
+        self._pf_season = publisher._prefetch_season_step
+        publisher.set_autostart(False)
+        clear_runtime_caches()
+
+    def tearDown(self):
+        publisher.register_game_builder(self._game)
+        publisher.register_season_step(self._season)
+        publisher.register_prefetch_season_step(self._pf_season)
+        publisher.set_autostart(True)
+        clear_runtime_caches()
+
+    def test_p0_and_p1_run_before_p2_and_p3_and_p2_populates_drawer(self):
+        order = []
+
+        def builder(org, gid, league, prev, fp, prefetch=False):
+            order.append(('game_pf' if prefetch else 'game', gid))
+            return {
+                'stores': {'bs': '{"ok": 1}', 'info': '{"status": "FINISHED"}'},
+                'fingerprint': 'fp-' + gid,
+                'kind': 'official',
+            }
+
+        def pf_season(org, sid, state):
+            order.append(('pf_season', sid))
+            return {'phase': 'done'}
+
+        publisher.register_game_builder(builder)
+        publisher.register_prefetch_season_step(pf_season)
+        publisher.note_prefetch_season('org', 's1', league='plg')
+        publisher.note_prefetch_games('org', ['g-pf'], league='plg')
+        publisher.note_game('org', 'g-live', 'plg', now=0)
+
+        self.assertEqual(publisher.run_once(now=0), 'game')
+        self.assertEqual(publisher.run_once(now=0), 'prefetch_game')
+        snap = publisher.peek_game('org', 'g-pf')
+        self.assertIsNotNone(snap)
+        self.assertEqual(snap['stores']['bs'], '{"ok": 1}')
+
+        with patch('synergy_inbounder.runtime_cache.peek_finished_report') as peek_rep, \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='FINISHED'):
+            class _Rep:
+                def get_all_lineup_stats_json_dict(self, sizes=()):
+                    order.append(('warmup_lineup', sizes))
+                    return {}
+            peek_rep.return_value = _Rep()
+            self.assertEqual(publisher.run_once(now=0), 'prefetch_game')
+
+        self.assertEqual(publisher.run_once(now=0), 'prefetch_season')
+        self.assertIsNone(publisher.run_once(now=0))
+        self.assertEqual(order, [
+            ('game', 'g-live'),
+            ('game_pf', 'g-pf'),
+            ('warmup_lineup', (5, 4, 3, 2)),
+            ('pf_season', 's1'),
+        ])
+
+    def test_report_cache_and_drawer_evict_beyond_12_preserving_pinned(self):
+        from inbound.cache.frame_store import REPORT_CACHE_LIMIT, pin_home, pin_open
+        from synergy_inbounder.runtime_cache import _report_cache, get_cached_report
+
+        class _DummyReport:
+            def __init__(self, gid, org=None):
+                self.gid = gid
+                self.stats_failed = False
+
+        pin_open('org', 'g0')
+        pin_home('org', ['g1'])
+        with patch('synergy_reporter.post_game_report.PostGameReport', _DummyReport), \
+                patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='CONFIRMED'):
+            for idx in range(REPORT_CACHE_LIMIT + 3):
+                gid = f'g{idx}'
+                with publisher._LOCK:
+                    publisher._store_game_snap_locked(('org', gid), {'bs': gid}, None)
+                get_cached_report(gid, 'org')
+
+        self.assertEqual(len(_report_cache), REPORT_CACHE_LIMIT)
+        self.assertIn(('org', 'g0'), _report_cache)
+        self.assertIn(('org', 'g1'), _report_cache)
+        self.assertNotIn(('org', 'g2'), _report_cache)
+        self.assertIsNone(publisher.peek_game('org', 'g2'))
+        self.assertIsNotNone(publisher.peek_game('org', 'g0'))
+        self.assertIsNotNone(publisher.peek_game('org', 'g1'))
+
+    def test_parse_game_bundle_absorbs_fixture_facts_into_frame_store(self):
+        from inbound.cache.frame_store import get_fixture_facts, get_fixture_starters, get_team_shirts
+        from synergy_inbounder.parser import Parser
+
+        team_json = {'data': [{'entityId': 't-home', 'statistics': {'minutes': 'PT40M'}}]}
+        periods_json = {'data': []}
+        player_json = {'data': [{
+            'personId': 'p1', 'entityId': 't-home', 'starter': True,
+            'participated': True, 'shirtNumber': '99', 'statistics': {'minutes': 'PT20M'},
+        }]}
+        roster_json = {'data': [{
+            'personId': 'p1', 'entityId': 't-home', 'starter': True, 'bib': '7',
+        }]}
+        pbp_json = {'data': []}
+        with patch('synergy_inbounder.parser.should_use_live_endpoints', return_value=False), \
+                patch('synergy_inbounder.parser.cached_fixture_status', return_value='CONFIRMED'), \
+                patch('synergy_inbounder.parser.run_wave', return_value=(
+                    team_json, periods_json, player_json, {'data': []},
+                    pbp_json, roster_json, {'p1': 'Jeremy Lin', 't-home': 'Braves'},
+                )):
+            Parser.parse_game_bundle('org', 'g-fact')
+
+        facts = get_fixture_facts('org', 'g-fact')
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]['shirtNumber'], '7')
+        self.assertEqual(get_team_shirts('t-home').get('p1'), '7')
+        self.assertEqual(get_fixture_starters('org', 'g-fact'), {'t-home': ['p1']})
+
+    def test_p3_advance_prefetch_season_steps_incrementally(self):
+        from inbound.cache.frame_store import (
+            get_lineup_summary,
+            get_rotation_summary,
+            is_fact_attempted,
+        )
+        from synergy_reporter import team_season
+        from synergy_reporter.team_season import advance_prefetch_season
+
+        schedule = [
+            {
+                'fixtureId': f'g{idx}',
+                'status': 'CONFIRMED',
+                'fixtureType': 'REGULAR',
+                'teamIdHome': 'h',
+                'teamIdAway': 'a',
+                'startTimeLocal': f'2026-10-0{idx}T19:00:00',
+            }
+            for idx in range(1, 6)
+        ]
+        bundle = {
+            'schedule': schedule,
+            'totals': pd.DataFrame([{'fixtureId': 'g1', 'entityId': 'h'}]),
+            'periods': pd.DataFrame([{'fixtureId': 'g1', 'entityId': 'h', 'periodId': 1}]),
+            'id_table': {'h': 'Home', 'a': 'Away', 'p1': 'P1'},
+            'stamp': 'Last Update: now',
+            'fetched_at': 100.0,
+        }
+        pbp_rows = [
+            {'periodId': 1, 'clock': 'PT10M00S', 'eventType': '2pt', 'subType': 'jump', 'entityId': 'h', 'personId': f'p{i}', 'success': 1, 'scores': {'h': 2, 'a': 0}, 'options': None}
+            for i in range(1, 6)
+        ] + [
+            {'periodId': 1, 'clock': 'PT10M00S', 'eventType': '2pt', 'subType': 'jump', 'entityId': 'a', 'personId': f'q{i}', 'success': 1, 'scores': {'h': 2, 'a': 2}, 'options': None}
+            for i in range(1, 6)
+        ] + [
+            {'periodId': 1, 'clock': 'PT00M00S', 'eventType': 'period', 'subType': 'end', 'entityId': None, 'personId': None, 'success': 0, 'scores': {'h': 2, 'a': 2}, 'options': None}
+        ]
+        pbp_calls = []
+
+        def fake_pbp(org, fid, status):
+            pbp_calls.append(fid)
+            return {'data': pbp_rows}
+
+        def fake_load_bundle(org, sid, reason, force=False):
+            team_season._store_bundle(org, sid, bundle)
+            return bundle
+
+        with patch.object(team_season, '_load_bundle', side_effect=fake_load_bundle), \
+                patch.object(team_season, 'Communicator_pbp', side_effect=fake_pbp), \
+                patch('synergy_reporter.team_rotation.default_fetch_roster', return_value=[]), \
+                patch('synergy_reporter.team_rotation.default_fetch_player_rows', return_value=[]):
+            st = advance_prefetch_season('org', 's1', {'phase': 'bundle', 'game_type': 'REGULAR'})
+            self.assertEqual(st['phase'], 'pbp')
+            # First PBP step downloads a batch of 4 (newest first: g5, g4, g3, g2)
+            st = advance_prefetch_season('org', 's1', st)
+            self.assertEqual(st['phase'], 'pbp')
+            self.assertEqual(pbp_calls, ['g5', 'g4', 'g3', 'g2'])
+            # Second PBP step downloads the remaining 1 (g1) and transitions to facts
+            st = advance_prefetch_season('org', 's1', st)
+            self.assertEqual(st['phase'], 'facts')
+            self.assertEqual(pbp_calls, ['g5', 'g4', 'g3', 'g2', 'g1'])
+            # First facts step warms 4 games
+            st = advance_prefetch_season('org', 's1', st)
+            self.assertEqual(st['phase'], 'facts')
+            self.assertTrue(is_fact_attempted('org', 'g5'))
+            self.assertFalse(is_fact_attempted('org', 'g1'))
+            # Second facts step warms the remaining 1 game and finishes
+            st = advance_prefetch_season('org', 's1', st)
+            self.assertEqual(st['phase'], 'done')
+            self.assertTrue(is_fact_attempted('org', 'g1'))
+            frame_g5 = peek('org', 'g5')
+            self.assertIsNotNone(get_rotation_summary('org', 'g5', id(frame_g5.playbyplay_df)))
+            self.assertIsNotNone(get_lineup_summary('org', 'g5', id(frame_g5.playbyplay_df)))

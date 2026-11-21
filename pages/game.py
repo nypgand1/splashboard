@@ -1060,7 +1060,7 @@ def _snapshot_kind(status, stores):
     return 'idle'
 
 
-def background_game_snapshot(org, game_id, league, previous, fingerprint):
+def background_game_snapshot(org, game_id, league, previous, fingerprint, prefetch=False):
     """Build one game off the request. A matching fingerprint skips the payload."""
     try:
         status = lookup_game_status(game_id, org)
@@ -1068,6 +1068,8 @@ def background_game_snapshot(org, game_id, league, previous, fingerprint):
         log_unexpected.exception('publisher status failed game=%s', game_id)
         return {'unchanged': True, 'kind': 'live', 'fingerprint': fingerprint}
     if is_live_play_status(status):
+        if prefetch:
+            return {'unchanged': True, 'kind': 'live', 'fingerprint': fingerprint}
         prev = previous or {}
         shared_info = None
         try:
@@ -1085,7 +1087,9 @@ def background_game_snapshot(org, game_id, league, previous, fingerprint):
         stores = _merge_game_stores(previous, values)
         return {'stores': stores, 'fingerprint': fingerprint, 'kind': 'live'}
     digest = None
-    if is_finished_status(status):
+    if is_finished_status(status) and not prefetch:
+        from synergy_inbounder.publisher import note_warmup_game
+        note_warmup_game(org, game_id, league)
         try:
             digest = _official_digest(org, game_id, status)
         except Exception:

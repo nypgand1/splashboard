@@ -284,10 +284,9 @@ class Parser:
             for payload in (team_json, periods_json, player_json)
         )
         playbyplay_df.attrs['stats_failed'] = stats_failed
-        roster = Parser._merge_roster(
-            Parser._roster_from_fixture_json(roster_json),
-            Parser._roster_from_json(player_json),
-        )
+        roster_rows = Parser._roster_from_fixture_json(roster_json)
+        stats_rows = Parser._roster_from_json(player_json)
+        roster = Parser._merge_roster(roster_rows, stats_rows)
         if roster:
             team_ids = team_stats_df['entityId'].to_list() if not team_stats_df.empty else []
             roster_starters = Parser.starter_dict_from_rows(roster, team_ids)
@@ -321,6 +320,12 @@ class Parser:
                     if flag not in reused
                 ),
             )
+            if roster_rows or stats_rows or roster:
+                frame_store.absorb_fixture_facts(
+                    org_id, game_id, roster_rows, stats_rows, roster,
+                )
+            if starter_dict:
+                frame_store.set_fixture_starters(org_id, game_id, starter_dict)
         return (
             team_stats_df, team_stats_periods_df, player_stats_df, starter_dict,
             playbyplay_df, id_table, roster, player_periods_df,
