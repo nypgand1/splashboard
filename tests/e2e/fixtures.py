@@ -223,7 +223,54 @@ class FakeReport:
         }
 
     def get_player_box_score_summary_json_dict(self):
-        return {}
+        def _summary_pair(plus_minus, pts, opp_pts, or_team, dr_team, to_team):
+            coaches = {col: None for col in PLAYER_COLS}
+            coaches.update({
+                '#': 'TEAM / COACHES',
+                'Player': '',
+                'S': '',
+                'OR': or_team,
+                'DR': dr_team,
+                'REB': (or_team or 0) + (dr_team or 0) or None,
+                'TO': to_team,
+                'PF': None,
+            })
+            total = {col: 0 for col in PLAYER_COLS}
+            total.update({
+                '#': 'TOTAL',
+                'Player': '',
+                'S': '',
+                'Min': '200:00',
+                '+/-': plus_minus,
+                '2M': 24,
+                '2A': 40,
+                '2FG%': '.600',
+                '3M': 8,
+                '3A': 24,
+                '3FG%': '.333',
+                'FTM': 16,
+                'FTA': 16,
+                'FT%': '1.000',
+                'OR': 9,
+                'DR': 18,
+                'REB': 27,
+                'AST': 16,
+                'TO': 10,
+                'ST': 8,
+                'BS': 0,
+                'PF': 16,
+                'FD': 8,
+                'PTS': pts,
+                'eFG%': '50.0%',
+                'USG%': None,
+                'PM': f'{pts}-{opp_pts}',
+            })
+            return [coaches, total]
+
+        return {
+            HOME: _summary_pair(9, 88, 79, 1, None, 0),
+            AWAY: _summary_pair(-9, 79, 88, None, 2, 1),
+        }
 
     def box_score_period_chips(self):
         return [

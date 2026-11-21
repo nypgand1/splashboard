@@ -835,10 +835,14 @@ class PostGameReport():
                     log_data.debug('box score int parse failed: %s', exc)
                     return None
 
-            or_team = _clean_int('reboundsTeamOffensive')
-            dr_team = _clean_int('reboundsTeamDefensive')
-            reb_team = _clean_int('reboundsTeamTotal')
-            to_team = _clean_int('turnoversTeam')
+            def _pos_int(k):
+                val = _clean_int(k)
+                return val if (val is not None and val > 0) else None
+
+            or_team = _pos_int('reboundsTeamOffensive')
+            dr_team = _pos_int('reboundsTeamDefensive')
+            reb_team = _pos_int('reboundsTeamTotal')
+            to_team = _pos_int('turnoversTeam')
             coach_fouls = int(_val('foulsCoachTechnical', 0)) + int(_val('foulsBenchTechnical', 0)) + int(_val('foulsCoachDisqualifying', 0))
             pf_team = coach_fouls if coach_fouls > 0 else None
 

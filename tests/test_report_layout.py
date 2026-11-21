@@ -2167,6 +2167,60 @@ class StatsMultiLevelHeaderAndTeamSummaryContractTests(unittest.TestCase):
         self.assertEqual(timeouts[''], [None])
 
 
+class ReportPlayerSummaryContractTests(unittest.TestCase):
+    def test_report_payload_includes_side_matched_player_summary_rows(self):
+        from synergy_reporter.report_components import report_table_payload
+
+        home_rows = [
+            {'#': 'TEAM / COACHES', 'OR': 1, 'DR': None, 'REB': 1, 'TO': None, 'PF': None},
+            {'#': 'TOTAL', 'Min': '200:00', '+/-': 9, 'BS': 0, 'PTS': 88},
+        ]
+        away_rows = [
+            {'#': 'TEAM / COACHES', 'OR': None, 'DR': 2, 'REB': 2, 'TO': 1, 'PF': None},
+            {'#': 'TOTAL', 'Min': '200:00', '+/-': -9, 'BS': 0, 'PTS': 79},
+        ]
+        match = {'home_team': 'Braves', 'away_team': 'Kings'}
+        payload = report_table_payload(
+            {'p_summary_dict': {'Braves': home_rows, 'Kings': away_rows}},
+            {},
+            match,
+        )
+        self.assertEqual(payload['p_summary_home'], home_rows)
+        self.assertEqual(payload['p_summary_away'], away_rows)
+
+        missing_away = report_table_payload(
+            {'p_summary_dict': {'Braves': home_rows}},
+            {},
+            match,
+        )
+        self.assertEqual(missing_away['p_summary_home'], home_rows)
+        self.assertEqual(missing_away['p_summary_away'], [])
+
+        empty = report_table_payload({}, {}, match)
+        self.assertEqual(empty['p_summary_home'], [])
+        self.assertEqual(empty['p_summary_away'], [])
+
+    def test_report_player_summary_css_js_and_pdf_contracts(self):
+        import os
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'assets')
+        with open(os.path.join(assets_dir, 'report.css'), encoding='utf-8') as handle:
+            css = handle.read()
+        with open(os.path.join(assets_dir, 'report_blocks.js'), encoding='utf-8') as handle:
+            blocks_js = handle.read()
+        with open(os.path.join(assets_dir, 'report_pdf.js'), encoding='utf-8') as handle:
+            pdf_js = handle.read()
+
+        self.assertIn('.report-js-table tfoot tr.report-summary-row td', css)
+        self.assertIn('background-color: #f1f5f9;', css)
+        self.assertIn('border-top: 2px solid #cbd5e1;', css)
+        self.assertIn('function summaryRowsFor', blocks_js)
+        self.assertIn("label === 'TEAM / COACHES' || isTotal", blocks_js)
+        self.assertIn('td.colSpan = 2;', blocks_js)
+        self.assertIn('formatCell(col, row[col], isTotal)', blocks_js)
+        self.assertIn('_summaryLabelNeed', blocks_js)
+        self.assertIn('borderTopWidth', pdf_js)
+
+
 
 
 

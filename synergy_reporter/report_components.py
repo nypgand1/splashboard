@@ -187,6 +187,24 @@ def _sorted_player_split(bs_dict, match_info, side):
     return df.to_json(orient='split')
 
 
+def _player_summary_rows(bs_dict, match_info, side):
+    summary_map = (bs_dict or {}).get('p_summary_dict') or {}
+    if not isinstance(summary_map, dict) or not summary_map:
+        return []
+    info = match_info or {}
+    name = info.get('home_team' if side == 'home' else 'away_team')
+    other = info.get('away_team' if side == 'home' else 'home_team')
+    if name and name in summary_map:
+        rows = summary_map[name]
+    elif name and other and other in summary_map:
+        return []
+    else:
+        rows = _pick_team_payload(summary_map, info, side)
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def report_table_payload(bs_dict, lineup_store_data, match_info):
     bs_dict = bs_dict or {}
     match_info = match_info or {}
@@ -199,6 +217,8 @@ def report_table_payload(bs_dict, lineup_store_data, match_info):
         'k_df': order_team_split_json(bs_dict.get('k_df'), away_name, home_name),
         'p_df_home': _sorted_player_split(bs_dict, match_info, 'home'),
         'p_df_away': _sorted_player_split(bs_dict, match_info, 'away'),
+        'p_summary_home': _player_summary_rows(bs_dict, match_info, 'home'),
+        'p_summary_away': _player_summary_rows(bs_dict, match_info, 'away'),
         'lineup_home': _lineup_table_json(lineup_store_data, match_info, 'home'),
         'lineup_away': _lineup_table_json(lineup_store_data, match_info, 'away'),
         'match': match_info,

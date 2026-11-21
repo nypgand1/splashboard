@@ -350,14 +350,14 @@
         return false;
     }
 
-    function formatCell(col, val) {
+    function formatCell(col, val, keepZero) {
         if (val === null || val === undefined || val === '') {
             return '';
         }
         if (col === 'S' && String(val).trim()) {
             return '○';
         }
-        if (isBlankZero(col, val)) {
+        if (!keepZero && isBlankZero(col, val)) {
             return '';
         }
         return String(val);
@@ -713,6 +713,26 @@
                 floors._nameNeed = width;
             }
         }
+        var labels = table.querySelectorAll('td.report-summary-label');
+        for (var j = 0; j < labels.length; j++) {
+            var labelEl = labels[j];
+            var labelW = pairTextWidth(labelEl);
+            var labelStyle = window.getComputedStyle(labelEl);
+            var labelPdf = pdfHeaderFloorPx(
+                (labelEl.textContent || '').trim(),
+                parseFloat(labelStyle.fontSize) || 9,
+                fontWeightNum(labelStyle) >= 600
+            );
+            if (!labelPdf) {
+                armPdfHeaderMeasure();
+            }
+            if (labelPdf > labelW) {
+                labelW = labelPdf;
+            }
+            if (labelW > (floors._summaryLabelNeed || 0)) {
+                floors._summaryLabelNeed = labelW;
+            }
+        }
         return floors;
     }
 
@@ -825,6 +845,12 @@
                 if (nameNeed < headerFloor) {
                     nameNeed = headerFloor;
                 }
+                if (nameCol === 'Player' && entry.floors._summaryLabelNeed) {
+                    var summaryNeed = entry.floors._summaryLabelNeed - (stat['#'] || 0);
+                    if (summaryNeed > nameNeed) {
+                        nameNeed = summaryNeed;
+                    }
+                }
                 entry.hostW = Math.floor(entry.host.clientWidth);
                 entry.nameCol = nameCol;
                 entry.nameNeed = nameNeed;
@@ -857,6 +883,12 @@
                 });
                 var nameW = entry.hostW - grown;
                 var headerFloor = entry.nameCol ? (entry.floors[entry.nameCol] || 0) : 0;
+                if (entry.nameCol === 'Player' && entry.floors._summaryLabelNeed) {
+                    var summaryFloor = entry.floors._summaryLabelNeed - (widths['#'] || 0);
+                    if (summaryFloor > headerFloor) {
+                        headerFloor = summaryFloor;
+                    }
+                }
                 if (nameW < headerFloor) {
                     nameW = headerFloor;
                 }
@@ -1363,6 +1395,19 @@
         return rIdx === 0 ? '#0077b6' : '#94a3b8';
     }
 
+    function summaryRowsFor(tableKey) {
+        var payload = tablePayload();
+        var key = tableKey === 'p_df_home'
+            ? 'p_summary_home'
+            : (tableKey === 'p_df_away' ? 'p_summary_away' : null);
+        if (!key || !Array.isArray(payload[key])) {
+            return [];
+        }
+        return payload[key].filter(function (row) {
+            return row && typeof row === 'object';
+        });
+    }
+
     function paintTable(host, tableKey) {
         if (!host) {
             return;
@@ -1480,6 +1525,44 @@
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
+        var summaryRows = summaryRowsFor(tableKey);
+        if (summaryRows.length) {
+            var tfoot = document.createElement('tfoot');
+            var hasSpanPair = columns.length >= 2 && columns[0] === '#' && columns[1] === 'Player';
+            summaryRows.forEach(function (row, sIdx) {
+                var tr = document.createElement('tr');
+                var label = String(row['#'] || '').trim();
+                var isTotal = label === 'TOTAL';
+                var spanLabel = hasSpanPair && (label === 'TEAM / COACHES' || isTotal);
+                tr.className = sIdx === 0
+                    ? 'report-summary-row report-summary-first'
+                    : 'report-summary-row';
+                columns.forEach(function (col, cIdx) {
+                    if (spanLabel && cIdx === 1) {
+                        return;
+                    }
+                    var td = document.createElement('td');
+                    td.textContent = formatCell(col, row[col], isTotal);
+                    if (spanLabel && cIdx === 0) {
+                        td.colSpan = 2;
+                        td.classList.add('report-summary-label');
+                    } else {
+                        td.setAttribute('data-col', col);
+                    }
+                    if (col === '+/-' && row[col] !== null && row[col] !== undefined && row[col] !== '') {
+                        var st = plusMinusStyle(row[col]);
+                        td.style.color = st.color;
+                        td.style.fontWeight = st.fontWeight;
+                    }
+                    if (edgeCols[col]) {
+                        td.classList.add('braves-group-end');
+                    }
+                    tr.appendChild(td);
+                });
+                tfoot.appendChild(tr);
+            });
+            table.appendChild(tfoot);
+        }
         table.setAttribute('data-cols', JSON.stringify(columns));
         host.appendChild(table);
         host.className = 'report-table-host';

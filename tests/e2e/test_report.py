@@ -326,6 +326,105 @@ def test_report_player_zero_made_shows_zero_pct(page, e2e_server):
     assert jersey['pts'] == '10', jersey
 
 
+def test_report_player_stats_includes_summary_rows_and_pdf_text(page, e2e_server):
+    from pypdf import PdfReader
+
+    _open_report(page, e2e_server)
+    _hydrate_report_page(page, 2)
+    page.locator('#report-paper-page-3 .grid-stack-item[data-table-key="p_df_home"] tfoot tr').first.wait_for(
+        state='attached', timeout=20000,
+    )
+    page.wait_for_timeout(400)
+    summary = page.evaluate(
+        '''() => {
+            const inspect = (key) => {
+                const table = document.querySelector(
+                    '#report-paper-page-3 .grid-stack-item[data-table-key="' + key + '"] .report-js-table'
+                );
+                if (!table) return { ok: false };
+                const bodyTd = table.querySelector('tbody tr td');
+                const footRows = [...table.querySelectorAll('tfoot tr')];
+                if (footRows.length !== 2) return { ok: false, count: footRows.length };
+                const coaches = footRows[0];
+                const total = footRows[1];
+                const cLabel = coaches.querySelector('td');
+                const tLabel = total.querySelector('td');
+                const cStyle = getComputedStyle(cLabel);
+                const tStyle = getComputedStyle(tLabel);
+                const bStyle = bodyTd ? getComputedStyle(bodyTd) : null;
+                const val = (tr, col) => {
+                    const td = tr.querySelector('td[data-col="' + col + '"]');
+                    return td ? (td.textContent || '').trim() : null;
+                };
+                const pmTd = total.querySelector('td[data-col="+/-"]');
+                return {
+                    ok: true,
+                    bodyBg: bStyle ? bStyle.backgroundColor : '',
+                    coachesLabel: (cLabel.textContent || '').trim(),
+                    coachesSpan: cLabel.colSpan,
+                    coachesBg: cStyle.backgroundColor,
+                    coachesWeight: cStyle.fontWeight,
+                    coachesTopWidth: cStyle.borderTopWidth,
+                    coachesTopColor: cStyle.borderTopColor,
+                    coachesClip: cLabel.scrollWidth > cLabel.clientWidth + 1,
+                    coachesOr: val(coaches, 'OR'),
+                    coachesDr: val(coaches, 'DR'),
+                    coachesTo: val(coaches, 'TO'),
+                    coachesPf: val(coaches, 'PF'),
+                    totalLabel: (tLabel.textContent || '').trim(),
+                    totalSpan: tLabel.colSpan,
+                    totalBg: tStyle.backgroundColor,
+                    totalWeight: tStyle.fontWeight,
+                    totalMin: val(total, 'Min'),
+                    totalBs: val(total, 'BS'),
+                    totalPts: val(total, 'PTS'),
+                    totalPmColor: pmTd ? getComputedStyle(pmTd).color : '',
+                };
+            };
+            return { away: inspect('p_df_away'), home: inspect('p_df_home') };
+        }'''
+    )
+    home = summary['home']
+    away = summary['away']
+    assert home['ok'] is True, home
+    assert away['ok'] is True, away
+    assert home['coachesLabel'] == 'TEAM / COACHES'
+    assert home['coachesSpan'] == 2
+    assert home['coachesBg'] == 'rgb(241, 245, 249)'
+    assert home['coachesBg'] != home['bodyBg']
+    assert home['coachesWeight'] in ('700', 'bold')
+    assert home['coachesTopWidth'] == '2px'
+    assert home['coachesTopColor'] == 'rgb(203, 213, 225)'
+    assert home['coachesClip'] is False
+    assert home['coachesOr'] == '1'
+    assert home['coachesDr'] == ''
+    assert home['coachesTo'] == ''
+    assert home['coachesPf'] == ''
+    assert home['totalLabel'] == 'TOTAL'
+    assert home['totalSpan'] == 2
+    assert home['totalBg'] == 'rgb(241, 245, 249)'
+    assert home['totalWeight'] in ('700', 'bold')
+    assert home['totalMin'] == '200:00'
+    assert home['totalBs'] == '0'
+    assert home['totalPts'] == '88'
+    assert home['totalPmColor'] == 'rgb(0, 119, 182)'
+    assert away['coachesLabel'] == 'TEAM / COACHES'
+    assert away['coachesDr'] == '2'
+    assert away['coachesTo'] == '1'
+    assert away['totalBs'] == '0'
+    assert away['totalPts'] == '79'
+    assert away['totalPmColor'] == 'rgb(230, 57, 70)'
+
+    with page.expect_download(timeout=60000) as download_info:
+        page.locator('#btn-export-pdf').click()
+        _confirm_pdf_crop_if_shown(page)
+    reader = PdfReader(str(download_info.value.path()))
+    pdf_text = '\n'.join((pdf_page.extract_text() or '') for pdf_page in reader.pages)
+    assert 'TEAM / COACHES' in pdf_text
+    assert 'TOTAL' in pdf_text
+    assert '200:00' in pdf_text
+
+
 def test_report_page_one_has_static_rotation(page, e2e_server):
     _open_report(page, e2e_server)
     first = page.locator('#report-papers .report-paper').first
