@@ -240,75 +240,73 @@ class PostGameReport():
         return self._period_team_metric_df('timeoutsUsed', 'TOut')
 
     def get_team_advance_stats_df(self, source=None, period_ids=None, share_mean=True, poss_by_entity=None):
-        stats = (self.team_stats_df if source is None else source).copy()
-        t_adv_df = pd.DataFrame()
-        t_adv_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
+        stats = self.team_stats_df if source is None else source
+        if stats is None or stats.empty:
+            return pd.DataFrame(columns=['Team', 'Pace', 'eFG%', 'TO%', 'ORB%', 'FT-R'])
         if poss_by_entity is None:
-            stats['poss'] = self._possession_totals(stats, period_ids)
+            poss_series = self._possession_totals(stats, period_ids)
+            poss_list = poss_series.tolist()
         else:
-            stats['poss'] = stats['entityId'].map(lambda entity_id: float(poss_by_entity.get(entity_id, 0)))
-        stats['duration'] = pd.to_timedelta(stats['minutes'].fillna('PT0S').astype(str).str.replace('PT', '', regex=False) \
-                                                                                    .str.replace('M', ' min ', regex=False) \
-                                                                                    .str.replace('S', 'sec', regex=False)).dt.total_seconds()/5
+            poss_list = [float(poss_by_entity.get(eid, 0)) for eid in stats['entityId'].tolist()]
         base = _regulation_base(getattr(self, 'regulation_minutes', None))
-
-        def _pace(row):
-            duration = row['duration']
-            if pd.isnull(duration) or duration <= 0 or pd.isnull(row['poss']):
-                return None
-            return base * 60 * row['poss'] / duration
-        t_adv_df['Pace'] = stats.apply(_pace, axis=1)
+        records = stats.to_dict('records')
+        paces = []
+        for row, poss in zip(records, poss_list):
+            duration = (clock_to_seconds(row.get('minutes')) or 0.0) / 5.0
+            if duration <= 0 or pd.isnull(poss):
+                paces.append(None)
+            else:
+                paces.append(base * 60.0 * poss / duration)
         if share_mean:
-            t_adv_df['Pace'] = t_adv_df['Pace'].mean()
-        t_adv_df['Pace'] = t_adv_df['Pace'].apply(lambda x: f"{x:0.1f}" if pd.notnull(x) else '')
+            valid = [p for p in paces if p is not None and pd.notnull(p)]
+            mean_pace = (sum(valid) / len(valid)) if valid else None
+            paces = [mean_pace] * len(records)
 
         def _rate(numer, denom, digits, scale=1):
             if pd.isnull(denom) or denom == 0 or pd.isnull(numer):
                 return ''
             return f"{(scale * numer / denom):.{digits}f}"
 
-        t_adv_df['eFG%'] = stats.apply(lambda x: f"{x['fieldGoalsEffectivePercentage']:0.1f}%" if pd.notnull(x.get('fieldGoalsEffectivePercentage')) else '', axis=1)
-        t_adv_df['TO%'] = stats.apply(lambda x: _rate(x['turnovers'], x['poss'], 1, scale=100), axis=1)
-        t_adv_df['TO%'] = t_adv_df['TO%'].apply(lambda text: f"{text}%" if text else '')
-        t_adv_df['ORB%'] = stats.apply(
-            lambda x: _rate(x['reboundsOffensive'], x['reboundsOffensive'] + x['reboundsDefensiveAgainst'], 1, scale=100),
-            axis=1,
-        )
-        t_adv_df['ORB%'] = t_adv_df['ORB%'].apply(lambda text: f"{text}%" if text else '')
-        t_adv_df['FT-R'] = stats.apply(
-            lambda x: _rate(x['freeThrowsAttempted'], x['fieldGoalsAttempted'], 1, scale=100),
-            axis=1,
-        )
-        t_adv_df['FT-R'] = t_adv_df['FT-R'].apply(lambda text: f"{text}%" if text else '')
-        t_adv_df.sort_values(by=['Team'], ascending=True, inplace=True)
-        return t_adv_df
+        rows_out = []
+        for row, poss, pace in zip(records, poss_list, paces):
+            efg_val = row.get('fieldGoalsEffectivePercentage')
+            to_txt = _rate(row.get('turnovers'), poss, 1, scale=100)
+            orb_for = row.get('reboundsOffensive')
+            orb_ag = row.get('reboundsDefensiveAgainst')
+            orb_denom = (orb_for + orb_ag) if (pd.notnull(orb_for) and pd.notnull(orb_ag)) else None
+            orb_txt = _rate(orb_for, orb_denom, 1, scale=100)
+            ftr_txt = _rate(row.get('freeThrowsAttempted'), row.get('fieldGoalsAttempted'), 1, scale=100)
+            rows_out.append({
+                'Team': display_name(self.id_table, row.get('entityId')),
+                'Pace': f"{pace:0.1f}" if (pace is not None and pd.notnull(pace)) else '',
+                'eFG%': f"{efg_val:0.1f}%" if pd.notnull(efg_val) else '',
+                'TO%': f"{to_txt}%" if to_txt else '',
+                'ORB%': f"{orb_txt}%" if orb_txt else '',
+                'FT-R': f"{ftr_txt}%" if ftr_txt else '',
+            })
+        rows_out.sort(key=lambda r: r['Team'])
+        return pd.DataFrame(rows_out)
 
     def get_team_advanced_df(self, source=None, period_ids=None, poss_by_entity=None):
-        stats = (self.team_stats_df if source is None else source).copy()
-        frame = pd.DataFrame()
-        frame['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
+        stats = self.team_stats_df if source is None else source
+        if stats is None or stats.empty:
+            return pd.DataFrame(columns=['Team', 'PPP', 'AS/TO', 'AST%', '3P-R', 'TS%'])
         if poss_by_entity is None:
-            stats['poss'] = self._possession_totals(stats, period_ids)
+            poss_list = self._possession_totals(stats, period_ids).tolist()
         else:
-            stats['poss'] = stats['entityId'].map(lambda entity_id: float(poss_by_entity.get(entity_id, 0)))
-        frame['PPP'] = stats.apply(lambda x: _rate_text(x.get('points'), x.get('poss'), 2), axis=1)
-        frame['AS/TO'] = stats.apply(lambda x: _rate_text(x.get('assists'), x.get('turnovers'), 2), axis=1)
-        frame['AST%'] = stats.apply(
-            lambda x: _rate_text(x.get('assists'), x.get('fieldGoalsMade'), 1, scale=100, suffix='%'),
-            axis=1,
-        )
-        frame['3P-R'] = stats.apply(
-            lambda x: _rate_text(
-                x.get('pointsThreeAttempted'), x.get('fieldGoalsAttempted'), 1, scale=100, suffix='%',
-            ),
-            axis=1,
-        )
-        frame['TS%'] = stats.apply(
-            lambda x: _true_shooting(x.get('points'), x.get('fieldGoalsAttempted'), x.get('freeThrowsAttempted')),
-            axis=1,
-        )
-        frame.sort_values(by=['Team'], ascending=True, inplace=True)
-        return frame
+            poss_list = [float(poss_by_entity.get(eid, 0)) for eid in stats['entityId'].tolist()]
+        rows_out = []
+        for row, poss in zip(stats.to_dict('records'), poss_list):
+            rows_out.append({
+                'Team': display_name(self.id_table, row.get('entityId')),
+                'PPP': _rate_text(row.get('points'), poss, 2),
+                'AS/TO': _rate_text(row.get('assists'), row.get('turnovers'), 2),
+                'AST%': _rate_text(row.get('assists'), row.get('fieldGoalsMade'), 1, scale=100, suffix='%'),
+                '3P-R': _rate_text(row.get('pointsThreeAttempted'), row.get('fieldGoalsAttempted'), 1, scale=100, suffix='%'),
+                'TS%': _true_shooting(row.get('points'), row.get('fieldGoalsAttempted'), row.get('freeThrowsAttempted')),
+            })
+        rows_out.sort(key=lambda r: r['Team'])
+        return pd.DataFrame(rows_out)
 
     def _lock(self):
         """Re-entrant lock. Reports built without ``__init__`` get one on first use."""
@@ -352,25 +350,31 @@ class PostGameReport():
         entities = []
         if self.team_stats_df is not None and len(self.team_stats_df) and 'entityId' in self.team_stats_df.columns:
             entities = list(self.team_stats_df['entityId'])
+        by_entity = {}
+        if len(source) and 'entityId' in source.columns:
+            for s_row in source.to_dict('records'):
+                by_entity.setdefault(s_row.get('entityId'), []).append(s_row)
         rows = []
         for entity_id in entities:
-            if len(source) and 'entityId' in source.columns:
-                matched = source[source['entityId'] == entity_id]
-            else:
-                matched = source.iloc[0:0]
-            if len(matched) == 1 and not recompute:
+            matched_rows = by_entity.get(entity_id, ())
+            if len(matched_rows) == 1 and not recompute:
                 row = _blank_team(entity_id)
-                for key, value in matched.iloc[0].to_dict().items():
+                for key, value in matched_rows[0].items():
                     if key != 'periodId':
                         row[key] = value
                 row['entityId'] = entity_id
                 _ensure_fga(row)
             else:
                 row = _blank_team(entity_id)
-                if len(matched):
-                    row.update(_sum_fields(matched, _TEAM_COUNT_FIELDS))
-                    if 'minutes' in matched.columns:
-                        row['minutes'] = _sum_clocks(matched['minutes'])
+                if matched_rows:
+                    for field in _TEAM_COUNT_FIELDS:
+                        total = 0.0
+                        for m_row in matched_rows:
+                            total += _num(m_row.get(field))
+                        row[field] = total
+                    clocks = [m_row.get('minutes') for m_row in matched_rows if 'minutes' in m_row]
+                    if clocks:
+                        row['minutes'] = _sum_clocks(clocks)
                 row['entityId'] = entity_id
                 _recompute_rates(row)
             rows.append(row)
@@ -379,22 +383,23 @@ class PostGameReport():
     def _slice_player_frame(self, period_ids, recompute):
         source = _filter_periods(getattr(self, 'player_stats_periods_df', None), period_ids)
         game = self.player_stats_df if self.player_stats_df is not None else pd.DataFrame()
+        by_key = {}
+        if len(source) and 'personId' in source.columns and 'entityId' in source.columns:
+            for s_row in source.to_dict('records'):
+                by_key.setdefault((s_row.get('personId'), s_row.get('entityId')), []).append(s_row)
         built = []
-        for _, game_row in game.iterrows():
+        for game_row in game.to_dict('records'):
             person_id = game_row.get('personId')
             entity_id = game_row.get('entityId')
             if _game_long_dnp(game_row):
-                kept = game_row.to_dict()
+                kept = dict(game_row)
                 kept['_blank_usage'] = False
                 built.append(kept)
                 continue
             played = not _minutes_missing(game_row.get('minutes'))
-            if len(source) and 'personId' in source.columns and 'entityId' in source.columns:
-                matched = source[(source['personId'] == person_id) & (source['entityId'] == entity_id)]
-            else:
-                matched = source.iloc[0:0]
-            if len(matched) == 1 and not recompute:
-                row = matched.iloc[0].to_dict()
+            matched_rows = by_key.get((person_id, entity_id), ())
+            if len(matched_rows) == 1 and not recompute:
+                row = dict(matched_rows[0])
                 row['personId'] = person_id
                 row['entityId'] = entity_id
                 row['starter'] = bool(game_row.get('starter', False))
@@ -416,10 +421,14 @@ class PostGameReport():
             })
             for field in _RATE_FIELDS:
                 row[field] = None
-            if len(matched):
-                row.update(_sum_fields(matched, _PLAYER_COUNT_FIELDS))
-                if 'minutes' in matched.columns:
-                    clocks = matched['minutes']
+            if matched_rows:
+                for field in _PLAYER_COUNT_FIELDS:
+                    total = 0.0
+                    for m_row in matched_rows:
+                        total += _num(m_row.get(field))
+                    row[field] = int(round(total)) if field != 'plusMinus' else round(total, 4)
+                clocks = [m_row.get('minutes') for m_row in matched_rows if 'minutes' in m_row]
+                if clocks:
                     if _clocks_present(clocks):
                         row['minutes'] = _sum_clocks(clocks)
                     elif played:
@@ -431,6 +440,9 @@ class PostGameReport():
 
     def box_score_slice_json(self):
         payload = {}
+        pbp = getattr(self, 'playbyplay_df', None)
+        use_pbp_poss = pbp is not None and len(pbp) > 0
+        lineup_frame = self._lineup_frame() if use_pbp_poss else None
         for chip in self.box_score_period_chips():
             value = chip['value']
             if value == 'all':
@@ -439,9 +451,10 @@ class PostGameReport():
             team = self._slice_team_frame(period_ids, recompute)
             players = self._slice_player_frame(period_ids, recompute)
             player_frames = self._get_player_stats_df_dict(players, blank_usage=recompute)
+            poss = possession_counts(lineup_frame, period_ids) if use_pbp_poss else None
             payload[value] = {
-                't_adv_df': self.get_team_advance_stats_df(team, period_ids).to_json(date_format='iso', orient='split'),
-                'adv_df': self.get_team_advanced_df(team, period_ids).to_json(date_format='iso', orient='split'),
+                't_adv_df': self.get_team_advance_stats_df(team, period_ids, poss_by_entity=poss).to_json(date_format='iso', orient='split'),
+                'adv_df': self.get_team_advanced_df(team, period_ids, poss_by_entity=poss).to_json(date_format='iso', orient='split'),
                 't_df': self.get_team_stats_df(team).to_json(date_format='iso', orient='split'),
                 'k_df': self.get_team_key_stats_df(team, period_ids).to_json(date_format='iso', orient='split'),
                 'p_df_dict': {
@@ -454,39 +467,39 @@ class PostGameReport():
 
     def get_team_stats_df(self, source=None):
         stats = self.team_stats_df if source is None else source
-        t_df = pd.DataFrame()
-        t_df['Team'] = stats.apply(lambda x: display_name(self.id_table, x.get('entityId')), axis=1)
-        t_df['Min'] = stats['minutes'].map(minutes_to_mmss)
-        t_df['2M'] = stats['pointsTwoMade'].fillna(0).astype(int)
-        t_df['2A'] = stats['pointsTwoAttempted'].fillna(0).astype(int)
-        t_df['2FG%'] = stats.apply(
-            lambda x: shot_pct_display(x.get('pointsTwoMade'), x.get('pointsTwoAttempted'), x.get('pointsTwoPercentage')),
-            axis=1,
-        )
-        t_df['3M'] = stats['pointsThreeMade'].fillna(0).astype(int)
-        t_df['3A'] = stats['pointsThreeAttempted'].fillna(0).astype(int)
-        t_df['3FG%'] = stats.apply(
-            lambda x: shot_pct_display(x.get('pointsThreeMade'), x.get('pointsThreeAttempted'), x.get('pointsThreePercentage')),
-            axis=1,
-        )
-        t_df['FTM'] = stats['freeThrowsMade'].fillna(0).astype(int)
-        t_df['FTA'] = stats['freeThrowsAttempted'].fillna(0).astype(int)
-        t_df['FT%'] = stats.apply(
-            lambda x: shot_pct_display(x.get('freeThrowsMade'), x.get('freeThrowsAttempted'), x.get('freeThrowsPercentage')),
-            axis=1,
-        )
-        t_df['OR'] = stats['reboundsOffensive'].fillna(0).astype(int)
-        t_df['DR'] = stats['reboundsDefensive'].fillna(0).astype(int)
-        t_df['REB'] = stats['rebounds'].fillna(0).astype(int)
-        t_df['AST'] = stats['assists'].fillna(0).astype(int)
-        t_df['TO'] = stats['turnovers'].fillna(0).astype(int)
-        t_df['ST'] = stats['steals'].fillna(0).astype(int)
-        t_df['BS'] = stats['blocks'].fillna(0).astype(int)
-        t_df['PF'] = stats['foulsTotal'].fillna(0).astype(int)
-        t_df['FD'] = stats['foulsDrawn'].fillna(0).astype(int) if 'foulsDrawn' in stats.columns else 0
-        t_df['PTS'] = stats['points'].fillna(0).astype(int)
-        t_df.sort_values(by=['Team'], ascending=True, inplace=True)
-        return t_df
+        if stats is None or stats.empty:
+            return pd.DataFrame(columns=[
+                'Team', 'Min', '2M', '2A', '2FG%', '3M', '3A', '3FG%',
+                'FTM', 'FTA', 'FT%', 'OR', 'DR', 'REB', 'AST', 'TO', 'ST', 'BS', 'PF', 'FD', 'PTS',
+            ])
+        has_fd = 'foulsDrawn' in stats.columns
+        rows_out = []
+        for x in stats.to_dict('records'):
+            rows_out.append({
+                'Team': display_name(self.id_table, x.get('entityId')),
+                'Min': minutes_to_mmss(x.get('minutes')),
+                '2M': _as_nonneg_int(x.get('pointsTwoMade')),
+                '2A': _as_nonneg_int(x.get('pointsTwoAttempted')),
+                '2FG%': shot_pct_display(x.get('pointsTwoMade'), x.get('pointsTwoAttempted'), x.get('pointsTwoPercentage')),
+                '3M': _as_nonneg_int(x.get('pointsThreeMade')),
+                '3A': _as_nonneg_int(x.get('pointsThreeAttempted')),
+                '3FG%': shot_pct_display(x.get('pointsThreeMade'), x.get('pointsThreeAttempted'), x.get('pointsThreePercentage')),
+                'FTM': _as_nonneg_int(x.get('freeThrowsMade')),
+                'FTA': _as_nonneg_int(x.get('freeThrowsAttempted')),
+                'FT%': shot_pct_display(x.get('freeThrowsMade'), x.get('freeThrowsAttempted'), x.get('freeThrowsPercentage')),
+                'OR': _as_nonneg_int(x.get('reboundsOffensive')),
+                'DR': _as_nonneg_int(x.get('reboundsDefensive')),
+                'REB': _as_nonneg_int(x.get('rebounds')),
+                'AST': _as_nonneg_int(x.get('assists')),
+                'TO': _as_nonneg_int(x.get('turnovers')),
+                'ST': _as_nonneg_int(x.get('steals')),
+                'BS': _as_nonneg_int(x.get('blocks')),
+                'PF': _as_nonneg_int(x.get('foulsTotal')),
+                'FD': _as_nonneg_int(x.get('foulsDrawn')) if has_fd else 0,
+                'PTS': _as_nonneg_int(x.get('points')),
+            })
+        rows_out.sort(key=lambda r: r['Team'])
+        return pd.DataFrame(rows_out)
             
     def get_team_key_stats_df(self, source=None, period_ids=None):
         stats = self.team_stats_df if source is None else source
@@ -528,15 +541,22 @@ class PostGameReport():
         return k_df
     
     def _get_player_stats_df_dict(self, source=None, blank_usage=False):
+        from synergy_reporter.report_components import sort_player_rows_for_report
+
         roster_shirt_dict = {r['personId']: r['shirtNumber'] for r in (self.roster or []) if r.get('shirtNumber') is not None}
         roster_starter_dict = {r['personId']: bool(r.get('starter')) for r in (self.roster or [])}
 
         players = self.player_stats_df if source is None else source
+        by_team = {}
+        if players is not None and not players.empty and 'entityId' in players.columns:
+            for row in players.to_dict('records'):
+                by_team.setdefault(row.get('entityId'), []).append(row)
+
         p_df_dict = dict()
         for t in self.team_stats_df['entityId'].to_list():
             team_name = display_name(self.id_table, t)
-            p_df = players[players['entityId']==t]
-            if p_df.empty:
+            team_rows = by_team.get(t, ())
+            if not team_rows:
                 p_df_dict[team_name] = pd.DataFrame(columns=[
                     '#', 'Player', 'S', 'Min', '+/-',
                     '2M', '2A', '2FG%', '3M', '3A', '3FG%',
@@ -546,84 +566,79 @@ class PostGameReport():
                 ])
                 continue
             starters_for_team = set(self.starter_dict.get(t, []))
+            rows_out = []
+            for x in team_rows:
+                pid = x.get('personId')
+                shirt = roster_shirt_dict.get(pid)
+                min_label = _player_min_label(x)
+                is_dnp = min_label == 'DNP'
+                pm_val = x.get('plusMinus')
+                if is_dnp or pd.isna(pm_val):
+                    plus_minus = ''
+                else:
+                    plus_minus = int(round(float(pm_val)))
 
-            p_df_t = pd.DataFrame()
-            p_df_t['#'] = p_df['personId'].apply(lambda pid: str(roster_shirt_dict.get(pid, '')) if roster_shirt_dict.get(pid) is not None else '')
-            p_df_t['Player'] = p_df['personId'].apply(lambda pid: person_name(self.id_table, pid))
-            p_df_t['_playerFull'] = p_df['personId'].apply(lambda pid: person_full_name(self.id_table, pid))
-            p_df_t['S'] = p_df['personId'].apply(lambda pid: '○' if (roster_starter_dict.get(pid) or pid in starters_for_team) else '')
+                two_m_raw = x.get('pointsTwoMade')
+                two_a_raw = x.get('pointsTwoAttempted')
+                three_m_raw = x.get('pointsThreeMade')
+                three_a_raw = x.get('pointsThreeAttempted')
+                ft_m_raw = x.get('freeThrowsMade')
+                ft_a_raw = x.get('freeThrowsAttempted')
 
-            p_df_t['Min'] = p_df.apply(_player_min_label, axis=1)
-            p_df_t['+/-'] = p_df.apply(lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' or pd.isna(x.get('plusMinus')) else int(round(float(x.get('plusMinus')))), axis=1)
+                if is_dnp:
+                    two_fg = ''
+                    three_fg = ''
+                    ft_fg = ''
+                    efg_str = ''
+                    usg_str = ''
+                    pm_str = ''
+                else:
+                    two_fg = shot_pct_display(two_m_raw, two_a_raw, x.get('pointsTwoPercentage'))
+                    three_fg = shot_pct_display(three_m_raw, three_a_raw, x.get('pointsThreePercentage'))
+                    ft_fg = shot_pct_display(ft_m_raw, ft_a_raw, x.get('freeThrowsPercentage'))
+                    efg_str = efg_pct_display(
+                        two_m_raw, two_a_raw,
+                        three_m_raw, three_a_raw,
+                        x.get('fieldGoalsEffectivePercentage'),
+                    )
+                    if blank_usage or x.get('_blank_usage') == True or clock_to_seconds(x.get('minutes')) is None:  # noqa: E712
+                        usg_str = ''
+                    else:
+                        usg_val = x.get('usageRate')
+                        usg_str = f"{usg_val:0.1f}%" if pd.notnull(usg_val) else '0.0%'
+                    pm_str = f"{_pm_side(x.get('plus'))}-{_pm_side(x.get('minus'))}"
 
-            p_df_t['2M'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsTwoMade')), axis=1)
-            p_df_t['2A'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsTwoAttempted')), axis=1)
-            p_df_t['2FG%'] = p_df.apply(
-                lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else shot_pct_display(
-                    x.get('pointsTwoMade'), x.get('pointsTwoAttempted'), x.get('pointsTwoPercentage'),
-                ),
-                axis=1,
-            )
-
-            p_df_t['3M'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsThreeMade')), axis=1)
-            p_df_t['3A'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('pointsThreeAttempted')), axis=1)
-            p_df_t['3FG%'] = p_df.apply(
-                lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else shot_pct_display(
-                    x.get('pointsThreeMade'), x.get('pointsThreeAttempted'), x.get('pointsThreePercentage'),
-                ),
-                axis=1,
-            )
-
-            p_df_t['FTM'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('freeThrowsMade')), axis=1)
-            p_df_t['FTA'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('freeThrowsAttempted')), axis=1)
-            p_df_t['FT%'] = p_df.apply(
-                lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else shot_pct_display(
-                    x.get('freeThrowsMade'), x.get('freeThrowsAttempted'), x.get('freeThrowsPercentage'),
-                ),
-                axis=1,
-            )
-
-            p_df_t['OR'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('reboundsOffensive')), axis=1)
-            p_df_t['DR'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('reboundsDefensive')), axis=1)
-            p_df_t['REB'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('rebounds')), axis=1)
-            p_df_t['AST'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('assists')), axis=1)
-            p_df_t['TO'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('turnovers')), axis=1)
-            p_df_t['ST'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('steals')), axis=1)
-            p_df_t['BS'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('blocks')), axis=1)
-            p_df_t['PF'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('foulsTotal')), axis=1)
-            p_df_t['FD'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('foulsDrawn')), axis=1)
-            p_df_t['PTS'] = p_df.apply(lambda x: _played_count(p_df_t.loc[x.name, 'Min'], x.get('points')), axis=1)
-
-            # eFG%: blank if FGA==0 or DNP, 0.0% if FGA>0 and 0 made
-            def _calc_efg(x):
-                if p_df_t.loc[x.name, 'Min'] == 'DNP':
-                    return ''
-                return efg_pct_display(
-                    x.get('pointsTwoMade'), x.get('pointsTwoAttempted'),
-                    x.get('pointsThreeMade'), x.get('pointsThreeAttempted'),
-                    x.get('fieldGoalsEffectivePercentage'),
-                )
-            p_df_t['eFG%'] = p_df.apply(_calc_efg, axis=1)
-
-            # USG%: blank if DNP or not played, 0.0% if played but 0 usage
-            def _calc_usg(x):
-                if p_df_t.loc[x.name, 'Min'] == 'DNP':
-                    return ''
-                if blank_usage or x.get('_blank_usage') == True:  # noqa: E712
-                    return ''
-                if clock_to_seconds(x.get('minutes')) is None:
-                    return ''
-                usg_val = x.get('usageRate')
-                return f"{usg_val:0.1f}%" if pd.notnull(usg_val) else '0.0%'
-            p_df_t['USG%'] = p_df.apply(_calc_usg, axis=1)
-
-            p_df_t['PM'] = p_df.apply(
-                lambda x: '' if p_df_t.loc[x.name, 'Min'] == 'DNP' else f"{_pm_side(x.get('plus'))}-{_pm_side(x.get('minus'))}",
-                axis=1,
-            )
-    
-            from synergy_reporter.report_components import sort_player_stats_for_report
-            p_df_t = sort_player_stats_for_report(p_df_t)
+                rows_out.append({
+                    '#': str(shirt) if shirt is not None else '',
+                    'Player': person_name(self.id_table, pid),
+                    '_playerFull': person_full_name(self.id_table, pid),
+                    'S': '○' if (roster_starter_dict.get(pid) or pid in starters_for_team) else '',
+                    'Min': min_label,
+                    '+/-': plus_minus,
+                    '2M': _played_count(min_label, two_m_raw),
+                    '2A': _played_count(min_label, two_a_raw),
+                    '2FG%': two_fg,
+                    '3M': _played_count(min_label, three_m_raw),
+                    '3A': _played_count(min_label, three_a_raw),
+                    '3FG%': three_fg,
+                    'FTM': _played_count(min_label, ft_m_raw),
+                    'FTA': _played_count(min_label, ft_a_raw),
+                    'FT%': ft_fg,
+                    'OR': _played_count(min_label, x.get('reboundsOffensive')),
+                    'DR': _played_count(min_label, x.get('reboundsDefensive')),
+                    'REB': _played_count(min_label, x.get('rebounds')),
+                    'AST': _played_count(min_label, x.get('assists')),
+                    'TO': _played_count(min_label, x.get('turnovers')),
+                    'ST': _played_count(min_label, x.get('steals')),
+                    'BS': _played_count(min_label, x.get('blocks')),
+                    'PF': _played_count(min_label, x.get('foulsTotal')),
+                    'FD': _played_count(min_label, x.get('foulsDrawn')),
+                    'PTS': _played_count(min_label, x.get('points')),
+                    'eFG%': efg_str,
+                    'USG%': usg_str,
+                    'PM': pm_str,
+                })
+            p_df_t = pd.DataFrame(sort_player_rows_for_report(rows_out))
             p_df_dict[team_name] = p_df_t
         return p_df_dict
 
@@ -1057,7 +1072,6 @@ class PostGameReport():
 
         col_list = ['timestamp', 'sequence', 'periodId', 'clock', 'entityId', 'Team', 'personId', 'Player', 'eventType', 'subType', 'success', 'scores', 'options', 'x', 'y', 'shirtNumber']
         col_list.extend(team_name_list)
-        col_list.extend(team_id_list)
         if 'ERROR' in df:
             col_list.append('ERROR')
     

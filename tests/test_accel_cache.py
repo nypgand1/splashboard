@@ -558,19 +558,39 @@ class LatestFinishedPrefetchTests(unittest.TestCase):
         cached.assert_not_called()
 
     def test_prefetch_requests_the_latest_finished_pair_in_order(self):
+        import synergy_inbounder.publisher as publisher
         frame = pd.DataFrame([
             {'fixtureId': 'early', 'status': 'FINISHED', 'startTimeLocal': '2026-10-01T12:00:00'},
             {'fixtureId': 'late', 'status': 'FINISHED', 'startTimeLocal': '2026-11-02T12:00:00'},
             {'fixtureId': 'draft', 'status': 'DRAFT', 'startTimeLocal': '2027-05-02T19:00:00'},
         ])
-        with patch('synergy_inbounder.runtime_cache.threading.Thread', _InlineThread), \
-                patch('synergy_inbounder.runtime_cache.get_cached_report') as cached:
-            prefetch_latest_games(frame, organization_id='b1vqz')
+        publisher.set_autostart(False)
+        publisher.reset()
+        try:
+            with patch.object(publisher, '_game_builder', None), \
+                    patch('synergy_inbounder.runtime_cache.get_cached_report') as cached, \
+                    patch('synergy_inbounder.runtime_cache.lookup_game_status', return_value='FINISHED'):
+                prefetch_latest_games(frame, organization_id='b1vqz')
+                self.assertEqual(publisher.run_once(now=0), 'prefetch_game')
+                self.assertEqual(publisher.run_once(now=0), 'prefetch_game')
+        finally:
+            publisher.set_autostart(True)
+            publisher.reset()
         self.assertEqual(
             [call.args[0] for call in cached.call_args_list],
-            ['early', 'late'],
+            ['late', 'early'],
         )
         self.assertTrue(all(call.args[1] == 'b1vqz' for call in cached.call_args_list))
+
+    def test_latest_finished_filters_by_team_and_game_type(self):
+        records = [
+            {'fixtureId': 'r1', 'status': 'FINISHED', 'fixtureType': 'REGULAR', 'teamIdHome': 't1', 'teamIdAway': 't2', 'startTimeLocal': '2026-10-01T12:00:00'},
+            {'fixtureId': 'r2', 'status': 'CONFIRMED', 'fixtureType': 'REGULAR', 'teamIdHome': 't3', 'teamIdAway': 't1', 'startTimeLocal': '2026-10-05T12:00:00'},
+            {'fixtureId': 'p1', 'status': 'FINISHED', 'fixtureType': 'PLAYOFF', 'teamIdHome': 't2', 'teamIdAway': 't3', 'startTimeLocal': '2026-11-01T12:00:00'},
+        ]
+        self.assertEqual(latest_finished_fixture_ids(records, 2, team='t1'), ['r1', 'r2'])
+        self.assertEqual(latest_finished_fixture_ids(records, 2, game_type='PLAYOFF'), ['p1'])
+        self.assertEqual(latest_finished_fixture_ids(records, 2, team='t1', game_type='PLAYOFF'), [])
 
 
 if __name__ == '__main__':

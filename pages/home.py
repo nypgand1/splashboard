@@ -365,6 +365,19 @@ def update_home_view(records, show, game_type, team=None):
         game_type = game_type_for_show(rows, show, game_type, team)
     head = rows[0] if rows else None
     league = head.get('league') if isinstance(head, dict) and head.get('league') else LEAGUE_PLG
+    if triggered in ('home-team', 'home-game-type', 'home-show') and rows:
+        try:
+            from synergy_inbounder.runtime_cache import prefetch_latest_games
+            prefetch_latest_games(
+                rows,
+                max_games=2,
+                organization_id=_organization_for_home_league(league),
+                team=team,
+                game_type=game_type,
+                league=league,
+            )
+        except Exception:
+            log_unexpected.exception('home adaptive prefetch failed')
     rows = _apply_live_clocks(rows, show, game_type, league, team)
     return render_schedule_list(rows, show, game_type, team)
 
@@ -1043,7 +1056,8 @@ def _organization_for_home_league(league):
 def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
     org = _organization_for_home_league(league)
     default_season = EASL_SEASON_ID if league == LEAGUE_EASL else SYNERGY_SEASON_ID
-    game_list_df = Parser.parse_season_game_list_df(org, season_id or default_season)
+    resolved_season = season_id or default_season
+    game_list_df = Parser.parse_season_game_list_df(org, resolved_season)
     id_table = Parser.parse_id_tables(org)
 
     if prefetch:
@@ -1053,6 +1067,8 @@ def df_data(prefetch=True, league=LEAGUE_PLG, season_id=None):
                 game_list_df,
                 max_games=2,
                 organization_id=org,
+                season_id=resolved_season,
+                league=league,
             )
         except Exception:
             log_unexpected.exception('home prefetch failed to start')

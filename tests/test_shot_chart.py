@@ -179,7 +179,7 @@ class CourtZoneTests(unittest.TestCase):
         zones = _by_area(court_zones([
             _shot(x=6, y=50),
             _shot(x=17, y=50, success=False),
-            _shot(x=48, y=50, success=False),
+            _shot(x=48, y=50, eventType="3pt", success=False),
         ], "away"))
         self.assertEqual(zones[1]["fg"], "100.0%")
         self.assertEqual(zones[1]["count"], "1 / 1")
@@ -194,14 +194,23 @@ class CourtZoneTests(unittest.TestCase):
         self.assertEqual(zones[1]["count"], "1 / 1")
         self.assertEqual(zones[2]["fg"], "-")
 
-    def test_half_court_line_stays_and_the_other_half_is_dropped(self):
+    def test_half_court_line_and_opposite_half_heave_land_in_area_13(self):
         events = [_shot(x=20, y=50) for _ in range(5)]
-        events.append(_shot(x=50, y=50, success=False))
-        events.append(_shot(x=80, y=50, success=True))
+        events.append(_shot(x=50, y=50, eventType="3pt", success=False))
+        events.append(_shot(x=62, y=50, eventType="3pt", clock="PT0M1S", success=True))
         zones = court_zones(events, "away")
         placed = sum(int(zone["count"].split(" / ")[1]) for zone in zones if zone["count"])
-        self.assertEqual(placed, 6)
-        self.assertEqual(_by_area(zones)[13]["count"], "0 / 1")
+        self.assertEqual(placed, 7)
+        self.assertEqual(_by_area(zones)[13]["count"], "1 / 2")
+
+    def test_opposite_half_misrecorded_2pt_and_3pt_fold_onto_opposite_basket(self):
+        events = [_shot(x=20, y=50) for _ in range(5)]
+        events.append(_shot(x=94, y=50, eventType="2pt", clock="PT10M10S", success=True))
+        events.append(_shot(x=94, y=5, eventType="3pt", clock="PT11M8S", success=False))
+        zones = _by_area(court_zones(events, "away"))
+        self.assertEqual(zones[1]["count"], "1 / 1")
+        self.assertEqual(zones[12]["count"], "0 / 1")
+        self.assertEqual(zones[13]["fg"], "-")
 
     def test_halftime_flip_folds_both_ends_onto_the_same_hoop(self):
         zones = _by_area(court_zones([
@@ -213,15 +222,15 @@ class CourtZoneTests(unittest.TestCase):
 
     def test_one_heave_does_not_flip_the_team_basket(self):
         events = [_shot(x=90, y=50, personId="other") for _ in range(8)]
-        events.append(_shot(x=10, y=50, personId="heave", success=True))
+        events.append(_shot(x=38, y=50, eventType="3pt", clock="PT0M1S", personId="heave", success=True))
         zones = _by_area(court_zones(events, "away", player_id="heave"))
-        self.assertEqual(zones[13]["fg"], "-")
+        self.assertEqual(zones[13]["count"], "1 / 1")
         self.assertEqual(zones[1]["fg"], "-")
 
     def test_tied_basket_logs_and_still_folds_right(self):
         events = [
             _shot(x=90, y=50),
-            _shot(x=10, y=50, success=False),
+            _shot(x=40, y=50, eventType="3pt", clock="PT0M1S", success=False),
         ]
         with self.assertLogs("synergy.data", level="WARNING") as caught:
             zones = _by_area(court_zones(events, "away", fixture_id="g1"))
@@ -230,7 +239,7 @@ class CourtZoneTests(unittest.TestCase):
             caught.output[0],
         )
         self.assertEqual(zones[1]["count"], "1 / 1")
-        self.assertEqual(zones[13]["fg"], "-")
+        self.assertEqual(zones[13]["count"], "0 / 1")
 
     def test_one_sided_period_does_not_log_a_tie(self):
         with self.assertNoLogs("synergy.data", level="WARNING"):
@@ -272,7 +281,21 @@ class CourtZoneTests(unittest.TestCase):
         right = _by_area(court_zones([_shot(x=94, y=10)], "away"))
         left_area = next(area for area, zone in left.items() if zone["count"])
         right_area = next(area for area, zone in right.items() if zone["count"])
+        self.assertEqual(left_area, 3)
+        self.assertEqual(right_area, 7)
         self.assertNotEqual(left_area, right_area)
+
+    def test_out_of_bounds_coordinates_clamp_into_border_zone(self):
+        zones = _by_area(court_zones([_shot(x=6.67, y=-13.33, eventType="3pt", success=True)], "away"))
+        self.assertEqual(zones[8]["count"], "1 / 1")
+
+    def test_event_type_snaps_across_three_point_arc_to_nearest_valid_zone(self):
+        three_in_two = _by_area(court_zones([_shot(x=69.96, y=55.97, eventType="3pt", success=True)], "away"))
+        self.assertEqual(three_in_two[10]["count"], "1 / 1")
+        self.assertEqual(three_in_two[5]["fg"], "-")
+        two_in_three = _by_area(court_zones([_shot(x=43.75, y=37.50, eventType="2pt", success=True)], "away"))
+        self.assertEqual(two_in_three[5]["count"], "1 / 1")
+        self.assertEqual(two_in_three[13]["fg"], "-")
 
     def test_filters_ignore_free_throws_and_shots_without_coordinates(self):
         events = [

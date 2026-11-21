@@ -85,29 +85,35 @@ def _df_from_split(payload):
     return df
 
 
+def _player_sort_key(row):
+    is_dnp = 1 if str(row.get('Min', '')) == 'DNP' else 0
+    pm_val = row.get('+/-')
+    try:
+        pm_num = -9999.0 if pm_val in (None, '') or pd.isna(pm_val) else float(pm_val)
+    except (TypeError, ValueError):
+        pm_num = -9999.0
+    pts_val = row.get('PTS')
+    try:
+        pts_num = -9999.0 if pts_val in (None, '') or pd.isna(pts_val) else float(pts_val)
+    except (TypeError, ValueError):
+        pts_num = -9999.0
+    shirt = str(row.get('#', '')).strip()
+    shirt_num = int(shirt) if shirt.isdigit() else 999
+    return (is_dnp, -pm_num, -pts_num, shirt_num)
+
+
+def sort_player_rows_for_report(rows):
+    if not rows:
+        return rows
+    return sorted(rows, key=_player_sort_key)
+
+
 def sort_player_stats_for_report(df):
     if df is None or df.empty or '+/-' not in df.columns:
         return df
-    res = df.copy()
-    res['_is_dnp'] = res['Min'].apply(lambda m: 1 if str(m) == 'DNP' else 0) if 'Min' in res.columns else 0
-    res['_pm_num'] = pd.to_numeric(res['+/-'], errors='coerce').fillna(-9999)
-    if 'PTS' in res.columns:
-        res['_pts_num'] = pd.to_numeric(res['PTS'], errors='coerce').fillna(-9999)
-    else:
-        res['_pts_num'] = 0
-    if '#' in res.columns:
-        res['_shirt_num'] = res['#'].apply(
-            lambda s: int(s) if str(s).strip().isdigit() else 999
-        )
-    else:
-        res['_shirt_num'] = 0
-    res = res.sort_values(
-        by=['_is_dnp', '_pm_num', '_pts_num', '_shirt_num'],
-        ascending=[True, False, False, True],
-        kind='mergesort',
-    )
-    res = res.drop(columns=['_is_dnp', '_pm_num', '_pts_num', '_shirt_num'])
-    return res
+    records = df.to_dict('records')
+    order = sorted(range(len(records)), key=lambda idx: _player_sort_key(records[idx]))
+    return df.iloc[order].copy()
 
 
 CAPTIONED_TABLE_KEYS = ('p_df_home', 'p_df_away', 'lineup_home', 'lineup_away')

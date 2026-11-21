@@ -108,6 +108,8 @@ def _rotation_view(view_store):
         for key in DEFAULT_ROTATION_VIEW:
             if key in data:
                 merged[key] = data[key]
+        if data.get('reattached'):
+            merged['reattached'] = True
     return merged
 
 
@@ -217,6 +219,7 @@ def apply_rotation_view_event(
     if triggered_id == 'rotation-live':
         view['follow_live'] = True
         view['t'] = live_playhead_t(payload)
+        view['reattached'] = True
         return view
 
     if triggered_id == 'rotation-show-dnp':
@@ -224,6 +227,7 @@ def apply_rotation_view_event(
         if checked == bool(view.get('show_dnp')):
             return no_update
         view['show_dnp'] = checked
+        view['reattached'] = True
         return view
 
     if isinstance(triggered_id, dict) and triggered_id.get('type') == 'rotation-run':
@@ -236,6 +240,7 @@ def apply_rotation_view_event(
         run = runs[index]
         view['t'] = run['start']
         view['follow_live'] = False
+        view.pop('reattached', None)
         return view
 
     if triggered_id == 'rotation-click-t':
@@ -252,13 +257,14 @@ def apply_rotation_view_event(
                 t_val = min(max(0.0, t_val), float(limit))
         view['t'] = t_val
         view['follow_live'] = False
+        view.pop('reattached', None)
         return view
 
     if triggered_id in ('rotation_store', 'match_info_store'):
         info = match_info_store if isinstance(match_info_store, dict) else safe_loads(match_info_store)
         status = info.get('status')
         if is_live_play_status(status):
-            changed = False
+            changed = bool(view.pop('reattached', None))
             if not view.get('saw_live'):
                 view['saw_live'] = True
                 changed = True

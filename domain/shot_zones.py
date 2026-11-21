@@ -2,6 +2,7 @@
 """Pure 13-zone half-court shot geometry, basket folding, and eFG% zone math."""
 from decimal import Decimal, ROUND_HALF_UP
 
+from domain.clocks import clock_to_seconds
 from domain.ids import same_id, shirt_sort_key
 from domain.periods import build_period_chips, period_matches
 from domain.rates import num, shot_made
@@ -15,6 +16,10 @@ COURT_W = 380.0
 HALF_Y = 354.3
 _CURVE_STEPS = 24
 _EDGE_EPS = 1.0
+_OPP_RESCUE_MAX_DIST = 35.0
+_HEAVE_CLOCK_MAX_SEC = 4.0
+TWO_PT_AREAS = (1, 2, 7, 3, 6, 4, 5)
+THREE_PT_AREAS = (12, 8, 11, 9, 10, 13)
 
 # (area, tx, ty, path d or None, rect (w, h) or None). Paths are local to tx,ty.
 ZONE_ART = (
@@ -122,7 +127,9 @@ def court_totals(events, team_id, period="all", player_id="all", fixture_id=None
 
     Basket side is voted from that team's shots in the period, before the
     player filter. A tie with both sides greater than zero logs one warning
-    and still uses the right basket. A shot from the other half is dropped.
+    and still uses the right basket. Opposite-half 2pt attempts and non-heave
+    3pt attempts within 35% of the opposite baseline fold onto the opposite
+    basket; remaining opposite-half 3pt heaves land in area 13.
     """
     rows = [row for row in _shot_rows(events) if same_id(row["team"], team_id) and row["x"] is not None and row["y"] is not None]
     grouped = {}
@@ -138,10 +145,7 @@ def court_totals(events, team_id, period="all", player_id="all", fixture_id=None
     for row in rows:
         if not period_matches(row["period"], period) or not _player_ok(row["person"], player_id):
             continue
-        point = _fold(row["x"], row["y"], sides.get(row["period"], "right"))
-        if point is None:
-            continue
-        area = _zone_at(*point)
+        area = _classify_shot(row, sides.get(row["period"], "right"))
         if area is None:
             continue
         bucket = totals[area]
@@ -250,6 +254,7 @@ def _shot_rows(events):
             "made": shot_made(item.get("success")),
             "x": num(item.get("x")),
             "y": num(item.get("y")),
+            "clock_seconds": clock_to_seconds(item.get("clock")),
         })
     return rows
 
@@ -284,20 +289,48 @@ def _offensive_side(rows):
     return "right" if rights >= lefts else "left"
 
 
+def _clamp_percent(value):
+    return max(0.0, min(100.0, float(value)))
+
+
 def _fold(x, y, side):
+    xc = _clamp_percent(x)
+    yc = _clamp_percent(y)
     if side == "right":
-        if x < 50:
+        if xc < 50.0:
             return None
-        distance = 100 - x
-        y_norm = 100 - y
+        distance = 100.0 - xc
+        y_norm = yc
     else:
-        if x > 50:
+        if xc > 50.0:
             return None
-        distance = x
-        y_norm = y
-    if distance > 50:
+        distance = xc
+        y_norm = 100.0 - yc
+    if distance > 50.0:
         return None
     return (y_norm / 100.0) * COURT_W, (distance / 50.0) * HALF_Y
+
+
+def _classify_shot(row, side):
+    x = row["x"]
+    y = row["y"]
+    kind = row.get("kind")
+    point = _fold(x, y, side)
+    if point is not None:
+        return _zone_for_kind(point[0], point[1], kind)
+    xc = _clamp_percent(x)
+    opp_side = "left" if side == "right" else "right"
+    dist_opp = xc if side == "right" else (100.0 - xc)
+    clock_seconds = row.get("clock_seconds")
+    if kind == "2pt" or (
+        dist_opp < _OPP_RESCUE_MAX_DIST
+        and (clock_seconds is None or clock_seconds > _HEAVE_CLOCK_MAX_SEC)
+    ):
+        opp_point = _fold(x, y, opp_side)
+        if opp_point is None:
+            return None
+        return _zone_for_kind(opp_point[0], opp_point[1], kind)
+    return 13
 
 
 def _read_number(text, index):
@@ -448,18 +481,22 @@ def _rect_hit(tx, ty, width, height, x, y):
 def _build_art():
     art = {}
     hits = {}
+    area_rings = {}
     for area, tx, ty, d, rect in ZONE_ART:
         art[area] = {"tx": tx, "ty": ty, "d": d, "rect": rect}
         if rect:
             width, height = rect
+            rings = [[(tx, ty), (tx + width, ty), (tx + width, ty + height), (tx, ty + height), (tx, ty)]]
+            area_rings[area] = rings
             hits[area] = lambda x, y, tx=tx, ty=ty, width=width, height=height: _rect_hit(tx, ty, width, height, x, y)
         else:
             rings = _rings(d, tx, ty)
+            area_rings[area] = rings
             hits[area] = lambda x, y, rings=rings: _ring_hit(rings, x, y)
-    return art, hits
+    return art, hits, area_rings
 
 
-ART, _HITS = _build_art()
+ART, _HITS, _AREA_RINGS = _build_art()
 
 
 def _zone_at(x, y):
@@ -467,3 +504,28 @@ def _zone_at(x, y):
         if _HITS[area](x, y):
             return area
     return None
+
+
+def _dist_to_area(area, x, y):
+    if _HITS[area](x, y):
+        return 0.0
+    best = float("inf")
+    for ring in _AREA_RINGS[area]:
+        for (x1, y1), (x2, y2) in zip(ring, ring[1:]):
+            dist = _seg_dist(x, y, x1, y1, x2, y2)
+            if dist < best:
+                best = dist
+    return best
+
+
+def _zone_for_kind(x, y, kind):
+    raw_area = _zone_at(x, y)
+    if kind not in ("2pt", "3pt"):
+        return raw_area
+    allowed = THREE_PT_AREAS if kind == "3pt" else TWO_PT_AREAS
+    if raw_area in allowed:
+        return raw_area
+    return min(
+        allowed,
+        key=lambda area: (round(_dist_to_area(area, x, y), 6), CLOSER_FIRST.index(area)),
+    )
