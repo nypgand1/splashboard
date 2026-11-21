@@ -824,6 +824,16 @@
     background-color: var(--row-alt);
 }
 
+.report-js-table tfoot tr.report-summary-row td {
+    background-color: #f1f5f9;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.report-js-table tfoot tr.report-summary-first td {
+    border-top: 2px solid #cbd5e1;
+}
+
 .report-dialog-message {
     margin: 0;
     font-size: 14px;

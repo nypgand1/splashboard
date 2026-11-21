@@ -302,10 +302,18 @@
             pdf.setFillColor(fill[0], fill[1], fill[2]);
             pdf.rect(box.x, box.y, box.w, box.h, 'F');
         }
-        var border = parseRgb(style.borderTopColor) || [222, 226, 230];
+        var border = parseRgb(style.borderBottomColor) || parseRgb(style.borderTopColor) || [222, 226, 230];
         pdf.setDrawColor(border[0], border[1], border[2]);
         pdf.setLineWidth(0.12);
         pdf.rect(box.x, box.y, box.w, box.h, 'S');
+        var topBorderW = parseFloat(style.borderTopWidth) || 0;
+        if (topBorderW >= 1.5) {
+            var topColor = parseRgb(style.borderTopColor) || [203, 213, 225];
+            pdf.setDrawColor(topColor[0], topColor[1], topColor[2]);
+            pdf.setLineWidth(Math.max(0.35, topBorderW * scaleXY(scale).y));
+            pdf.line(box.x, box.y, box.x + box.w, box.y);
+            pdf.setLineWidth(0.12);
+        }
         if (cell.classList && cell.classList.contains('braves-group-end')) {
             pdf.setDrawColor(203, 213, 225);
             pdf.line(box.x + box.w, box.y, box.x + box.w, box.y + box.h);

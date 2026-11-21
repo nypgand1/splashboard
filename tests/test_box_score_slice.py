@@ -742,3 +742,50 @@ class BoxScoreMinutesTests(unittest.TestCase):
         self.assertEqual(half_by['Miss']['USG%'], '')
         self.assertEqual(half_by['Keep']['Min'], '8:00')
         self.assertEqual(half_by['NoChip']['Min'], '')
+
+    def test_team_coaches_summary_blanks_zeros_while_total_keeps_zeros(self):
+        team = pd.DataFrame([
+            _team_row(
+                'home', 1,
+                reboundsTeamOffensive=0,
+                reboundsTeamDefensive=2,
+                reboundsTeamTotal=2,
+                turnoversTeam=0,
+                foulsCoachTechnical=0,
+                foulsBenchTechnical=0,
+                foulsCoachDisqualifying=0,
+                pointsTwoMade=0,
+                pointsTwoAttempted=0,
+                pointsThreeMade=0,
+                pointsThreeAttempted=0,
+                freeThrowsMade=0,
+                freeThrowsAttempted=0,
+                reboundsOffensive=0,
+                reboundsDefensive=2,
+                rebounds=2,
+                assists=0,
+                turnovers=0,
+                steals=0,
+                blocks=0,
+                foulsTotal=0,
+                foulsDrawn=0,
+                points=0,
+                pointsAgainst=10,
+                plusMinus=-10,
+            ),
+        ])
+        report = _report(team_stats_df=team, id_table={'home': 'Braves'})
+        coaches, total = report.get_player_box_score_summary_json_dict()['Braves']
+        self.assertEqual(coaches['#'], 'TEAM / COACHES')
+        self.assertIsNone(coaches['OR'])
+        self.assertEqual(coaches['DR'], 2)
+        self.assertEqual(coaches['REB'], 2)
+        self.assertIsNone(coaches['TO'])
+        self.assertIsNone(coaches['PF'])
+        self.assertEqual(total['#'], 'TOTAL')
+        self.assertEqual(total['2M'], 0)
+        self.assertEqual(total['AST'], 0)
+        self.assertEqual(total['BS'], 0)
+        self.assertEqual(total['PTS'], 0)
+        self.assertEqual(total['FD'], 0)
+        self.assertEqual(total['+/-'], -10)
